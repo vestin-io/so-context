@@ -9,6 +9,7 @@ use rmcp::{
     transport::stdio,
 };
 
+/// Starts the built-in MCP server over stdio transport and blocks until exit.
 pub async fn run_stdio_server() -> Result<()> {
     let server = BuiltinServer::new();
     server.serve(stdio()).await?.waiting().await?;
@@ -20,6 +21,7 @@ pub(crate) struct BuiltinServer {
 }
 
 impl BuiltinServer {
+    /// Constructs the built-in MCP server and registers all tool routes.
     fn new() -> Self {
         let mut tool_router = rmcp::handler::server::router::tool::ToolRouter::<Self>::new();
         tool_router.add_route(ToolRoute::new_dyn(
@@ -58,6 +60,7 @@ impl BuiltinServer {
 }
 
 impl ServerHandler for BuiltinServer {
+    /// Returns server capabilities and high-level usage instructions.
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
             "so-context MCP server for context-efficient file access.\n\
@@ -69,6 +72,7 @@ Use `so_search` to search indexed symbols/content in the project graph.",
         )
     }
 
+    /// Dispatches incoming tool call requests to the registered tool router.
     fn call_tool(
         &self,
         request: rmcp::model::CallToolRequestParams,
@@ -78,6 +82,7 @@ Use `so_search` to search indexed symbols/content in the project graph.",
         async move { self.tool_router.call(ToolCallContext::new(self, request, context)).await }
     }
 
+    /// Returns the list of currently registered tools.
     fn list_tools(
         &self,
         _request: Option<rmcp::model::PaginatedRequestParams>,
@@ -93,6 +98,7 @@ Use `so_search` to search indexed symbols/content in the project graph.",
     }
 }
 
+/// Builds JSON schema for `so_read` tool arguments.
 fn so_read_schema() -> Arc<serde_json::Map<String, serde_json::Value>> {
     let schema = serde_json::json!({
         "type": "object",
@@ -109,6 +115,7 @@ fn so_read_schema() -> Arc<serde_json::Map<String, serde_json::Value>> {
     Arc::new(schema)
 }
 
+/// Handles `so_read` tool invocation and returns the resulting text content.
 fn so_read_tool(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rmcp::ErrorData> {
     let args = ctx
         .arguments
@@ -130,6 +137,7 @@ fn so_read_tool(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResul
     Ok(CallToolResult::success(vec![Content::text(output)]))
 }
 
+/// Builds JSON schema for `so_search` tool arguments.
 fn so_search_schema() -> Arc<serde_json::Map<String, serde_json::Value>> {
     let schema = serde_json::json!({
         "type": "object",
@@ -147,6 +155,7 @@ fn so_search_schema() -> Arc<serde_json::Map<String, serde_json::Value>> {
     Arc::new(schema)
 }
 
+/// Handles `so_search` tool invocation and returns search results as text.
 fn so_search_tool(
     ctx: ToolCallContext<'_, BuiltinServer>,
 ) -> Result<CallToolResult, rmcp::ErrorData> {

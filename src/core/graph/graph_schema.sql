@@ -86,7 +86,6 @@ CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(
   signature,
   doc,
   path,
-  content='',
   tokenize='unicode61'
 );
 
@@ -108,4 +107,3 @@ CREATE INDEX IF NOT EXISTS idx_edges_project_kind ON edges(project_id, kind);
 CREATE INDEX IF NOT EXISTS idx_edges_from ON edges(from_node_id);
 CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(to_node_id);
 CREATE INDEX IF NOT EXISTS idx_unref_project_kind ON unresolved_refs(project_id, ref_kind);
-

@@ -1,5 +1,9 @@
 use std::{fs, path::PathBuf};
 
+/// Reads file/project content according to mode:
+/// - `full`: returns full file content
+/// - `outline`: returns structural outline lines
+/// - `graph`: indexes a project into the graph database
 pub fn read(path: &str, mode: &str) -> Result<String, String> {
     match mode {
         "graph" => crate::core_graph::index_project(path),
@@ -19,6 +23,7 @@ pub fn read(path: &str, mode: &str) -> Result<String, String> {
     }
 }
 
+/// Resolves a path to an absolute path using current working directory for relative inputs.
 fn resolve_path(input: &str) -> std::io::Result<PathBuf> {
     let p = PathBuf::from(input);
     if p.is_absolute() {
@@ -28,6 +33,7 @@ fn resolve_path(input: &str) -> std::io::Result<PathBuf> {
     }
 }
 
+/// Builds a lightweight outline by extracting common heading/symbol declaration lines.
 fn build_outline(content: &str) -> String {
     let mut out = Vec::new();
     for (idx, line) in content.lines().enumerate() {

@@ -1,6 +1,6 @@
 #[path = "core/read.rs"]
 mod core_read;
-#[path = "core/graph.rs"]
+#[path = "core/graph/mod.rs"]
 mod core_graph;
 mod mcp;
 
@@ -32,6 +32,7 @@ enum Commands {
     },
 }
 
+/// Parses CLI arguments and dispatches to daemon/index/watch execution paths.
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
