@@ -39,10 +39,18 @@ impl BuiltinServer {
         tool_router.add_route(ToolRoute::new_dyn(
             Tool::new(
                 "so_read",
-                "Read file content by path. mode=full (default) or outline",
+                "Read file/project by path. mode=full (default), outline, or graph.",
                 so_read_schema(),
             ),
             |ctx| Box::pin(async move { so_read_tool(ctx) }),
+        ));
+        tool_router.add_route(ToolRoute::new_dyn(
+            Tool::new(
+                "so_search",
+                "Search indexed project code graph (FTS). Run graph index first.",
+                so_search_schema(),
+            ),
+            |ctx| Box::pin(async move { so_search_tool(ctx) }),
         ));
 
         Self { tool_router }
@@ -54,9 +62,10 @@ impl ServerHandler for BuiltinServer {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
             "so-context MCP server for context-efficient file access.\n\
 Use `so_read` with:\n\
-- `path` (required): absolute or relative file path\n\
-- `mode` (optional): `full` (default) or `outline`\n\
-Prefer `outline` for quick structure, then `full` only when needed.",
+- `path` (required): file path for `full/outline`, project folder path for `graph`\n\
+- `mode` (optional): `full` (default), `outline`, or `graph`\n\
+Prefer `outline` for quick structure, `full` for full content, and `graph` to index project code into SQLite.\n\
+Use `so_search` to search indexed symbols/content in the project graph.",
         )
     }
 
@@ -89,7 +98,7 @@ fn so_read_schema() -> Arc<serde_json::Map<String, serde_json::Value>> {
         "type": "object",
         "properties": {
             "path": { "type": "string" },
-            "mode": { "type": "string", "enum": ["full", "outline"] }
+            "mode": { "type": "string", "enum": ["full", "outline", "graph"] }
         },
         "required": ["path"]
     })
@@ -117,6 +126,51 @@ fn so_read_tool(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResul
 
     let output =
         crate::core_read::read(path, mode).map_err(|e| rmcp::ErrorData::internal_error(e, None))?;
+
+    Ok(CallToolResult::success(vec![Content::text(output)]))
+}
+
+fn so_search_schema() -> Arc<serde_json::Map<String, serde_json::Value>> {
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "query": { "type": "string" },
+            "path": { "type": "string", "default": "." },
+            "limit": { "type": "integer", "minimum": 1, "maximum": 200, "default": 20 }
+        },
+        "required": ["query"]
+    })
+    .as_object()
+    .cloned()
+    .unwrap_or_default();
+
+    Arc::new(schema)
+}
+
+fn so_search_tool(
+    ctx: ToolCallContext<'_, BuiltinServer>,
+) -> Result<CallToolResult, rmcp::ErrorData> {
+    let args = ctx
+        .arguments
+        .ok_or_else(|| rmcp::ErrorData::invalid_params("missing arguments", None))?;
+
+    let query = args
+        .get("query")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| rmcp::ErrorData::invalid_params("missing string argument: query", None))?;
+
+    let path = args
+        .get("path")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(".");
+
+    let limit = args
+        .get("limit")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(20) as usize;
+
+    let output = crate::core_graph::search_project(path, query, limit)
+        .map_err(|e| rmcp::ErrorData::internal_error(e, None))?;
 
     Ok(CallToolResult::success(vec![Content::text(output)]))
 }

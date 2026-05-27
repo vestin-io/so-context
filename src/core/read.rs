@@ -1,15 +1,20 @@
 use std::{fs, path::PathBuf};
 
 pub fn read(path: &str, mode: &str) -> Result<String, String> {
-    let resolved = resolve_path(path).map_err(|e| format!("failed to resolve path: {e}"))?;
-    let content =
-        fs::read_to_string(&resolved).map_err(|e| format!("failed to read file: {e}"))?;
-
     match mode {
-        "full" => Ok(content),
-        "outline" => Ok(build_outline(&content)),
+        "graph" => crate::core_graph::index_project(path),
+        "full" | "outline" => {
+            let resolved = resolve_path(path).map_err(|e| format!("failed to resolve path: {e}"))?;
+            let content =
+                fs::read_to_string(&resolved).map_err(|e| format!("failed to read file: {e}"))?;
+            if mode == "full" {
+                Ok(content)
+            } else {
+                Ok(build_outline(&content))
+            }
+        }
         other => Err(format!(
-            "unsupported mode: {other}; expected full or outline"
+            "unsupported mode: {other}; expected full, outline, or graph"
         )),
     }
 }
