@@ -4,6 +4,7 @@ mod core_read;
 mod core_graph;
 mod daemon;
 mod mcp;
+mod setup;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -33,6 +34,12 @@ enum Commands {
         #[arg(default_value = ".")]
         path: String,
     },
+    /// Install so-context as an MCP server in Claude, OpenCode, and Codex configs.
+    Setup {
+        /// Path to the so-context binary (default: current executable).
+        #[arg(long)]
+        binary: Option<String>,
+    },
 }
 
 /// Parses CLI arguments and dispatches to the appropriate execution path.
@@ -48,6 +55,15 @@ async fn main() -> Result<()> {
         }
         Commands::Watch { path } => {
             core_graph::watch_project(&path).map_err(anyhow::Error::msg)
+        }
+        Commands::Setup { binary } => {
+            let bin = match binary {
+                Some(b) => b,
+                None => std::env::current_exe()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|_| "so-context".to_string()),
+            };
+            setup::install_all(&bin)
         }
     }
 }
