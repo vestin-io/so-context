@@ -8,7 +8,8 @@ pub fn read(path: &str, mode: &str) -> Result<String, String> {
     match mode {
         "graph" => crate::core_graph::index_project(path),
         "full" | "outline" => {
-            let resolved = resolve_path(path).map_err(|e| format!("failed to resolve path: {e}"))?;
+            let resolved =
+                resolve_path(path).map_err(|e| format!("failed to resolve path: {e}"))?;
             let content =
                 fs::read_to_string(&resolved).map_err(|e| format!("failed to read file: {e}"))?;
             if mode == "full" {

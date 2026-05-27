@@ -162,7 +162,7 @@ impl GraphDb {
 // Path helpers
 // ---------------------------------------------------------------------------
 
-pub(super) fn validate_project_root(project_path: &str) -> Result<PathBuf, String> {
+pub fn validate_project_root(project_path: &str) -> Result<PathBuf, String> {
     let root = PathBuf::from(project_path);
     if root.is_dir() {
         Ok(root)
@@ -171,7 +171,7 @@ pub(super) fn validate_project_root(project_path: &str) -> Result<PathBuf, Strin
     }
 }
 
-pub(super) fn graph_db_path(project_root: &Path) -> PathBuf {
+pub fn graph_db_path(project_root: &Path) -> PathBuf {
     project_root.join(GRAPH_DB_DIR).join(GRAPH_DB_NAME)
 }
 

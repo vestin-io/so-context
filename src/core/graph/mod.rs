@@ -15,10 +15,8 @@ mod symbols;
 mod util;
 pub mod watch;
 
-pub use db::GraphDb;
+pub use db::{GraphDb, validate_project_root};
 pub use watch::watch_project;
-
-use db::validate_project_root;
 
 // ---------------------------------------------------------------------------
 // Constants (shared across sub-modules via `super::`)

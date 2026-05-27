@@ -63,7 +63,7 @@ pub fn watch_project(project_path: &str) -> Result<(), String> {
 // ---------------------------------------------------------------------------
 
 /// Returns whether a filesystem event should trigger a sync.
-pub(super) fn is_meaningful_change(event: &Event) -> bool {
+pub fn is_meaningful_change(event: &Event) -> bool {
     match event.kind {
         EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_) => {}
         _ => return false,
