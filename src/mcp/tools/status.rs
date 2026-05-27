@@ -1,4 +1,4 @@
-//! `graph_status` tool — list all watched projects and their state.
+//! `so_status` tool — list all watched projects and their state.
 
 use std::sync::Arc;
 
@@ -12,7 +12,7 @@ use crate::daemon::WatchManager;
 pub fn route(wm: Arc<WatchManager>) -> ToolRoute<BuiltinServer> {
     ToolRoute::new_dyn(
         Tool::new(
-            "graph_status",
+            "so_status",
             "List all auto-discovered projects currently being watched and their sync state.",
             Arc::new(serde_json::Map::new()),
         ),

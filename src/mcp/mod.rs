@@ -221,7 +221,7 @@ Projects are auto-discovered from workspace roots on connect — no setup needed
 Tools:\n\
   so_read      — read a file (mode: full / outline / graph)\n\
   so_search    — FTS search over an indexed project graph\n\
-  graph_status — list all watched projects and their current state",
+  so_status    — list all watched projects and their current state",
         )
     }
 
