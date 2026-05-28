@@ -47,22 +47,10 @@ pub fn install(binary: &str) -> Result<()> {
         );
 
     // --- Hooks ---
-    // SessionStart: ensure-watch $PWD
-    install_hook(
-        obj,
-        "SessionStart",
-        binary,
-        &["ensure-watch"],
-        "$PWD",
-    );
-    // SessionEnd: unwatch $PWD
-    install_hook(
-        obj,
-        "SessionEnd",
-        binary,
-        &["unwatch"],
-        "$PWD",
-    );
+    // SessionStart: ensure-watch $CLAUDE_PROJECT_DIR with session_id from stdin
+    install_hook(obj, "SessionStart", binary, "ensure-watch");
+    // SessionEnd: unwatch $CLAUDE_PROJECT_DIR with session_id from stdin
+    install_hook(obj, "SessionEnd", binary, "unwatch");
 
     let text = serde_json::to_string_pretty(&root)?;
     fs::write(&path, text).with_context(|| format!("write {}", path.display()))?;
@@ -72,26 +60,22 @@ pub fn install(binary: &str) -> Result<()> {
 
 /// Adds (or replaces) a so-context hook handler under `hooks.<event>`.
 ///
-/// The hook command is: `<binary> <subcommand...> <path_arg>`
-/// e.g. `so-context ensure-watch $PWD`
+/// The hook reads `session_id` from the JSON Claude Code passes on stdin,
+/// then calls: `<binary> <subcommand> $CLAUDE_PROJECT_DIR --agent-id "claude:<session_id>"`
 ///
-/// We store the hook in a matcher group with `matcher: "*"` so it fires on
-/// every occurrence of the event, and we de-duplicate by checking for an
-/// existing entry with the same command + args before inserting.
-fn install_hook(
-    root: &mut Map<String, Value>,
-    event: &str,
-    binary: &str,
-    subcommand: &[&str],
-    path_arg: &str,
-) {
-    let mut args: Vec<Value> = subcommand.iter().map(|s| json!(s)).collect();
-    args.push(json!(path_arg));
+/// `jq` is used to extract the session ID; if unavailable the agent ID falls
+/// back to `"claude:unknown"`.
+fn install_hook(root: &mut Map<String, Value>, event: &str, binary: &str, subcommand: &str) {
+    // Shell-form command — runs via `sh -c` so $() subshell and $CLAUDE_PROJECT_DIR work.
+    // Claude Code passes the event JSON on stdin; we extract session_id with jq.
+    // Falls back to "unknown" if jq is not installed.
+    let command = format!(
+        r#"SESSION_ID=$(jq -r '.session_id // "unknown"' 2>/dev/null || echo "unknown"); {binary} {subcommand} "$CLAUDE_PROJECT_DIR" --agent-id "claude:$SESSION_ID""#
+    );
 
     let new_hook = json!({
         "type": "command",
-        "command": binary,
-        "args": args
+        "command": command
     });
 
     let hooks_obj = root
@@ -106,9 +90,6 @@ fn install_hook(
         .as_array_mut()
         .unwrap();
 
-    // Find or create a matcher group for our hooks.
-    // We use a dedicated group identified by having a "hooks" array containing
-    // a command matching our binary so we don't clobber user groups.
     let group = find_or_create_so_context_group(event_arr, binary);
 
     let inner = group
@@ -120,13 +101,11 @@ fn install_hook(
         .unwrap();
 
     // Replace existing so-context entry for this subcommand, or append.
-    let subcommand_key = subcommand.first().copied().unwrap_or("");
     let existing = inner.iter_mut().find(|h| {
-        h.get("args")
-            .and_then(|a| a.as_array())
-            .and_then(|a| a.first())
-            .and_then(|v| v.as_str())
-            == Some(subcommand_key)
+        h.get("command")
+            .and_then(|c| c.as_str())
+            .map(|c| c.contains(subcommand))
+            .unwrap_or(false)
     });
 
     match existing {

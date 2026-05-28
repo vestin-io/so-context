@@ -66,8 +66,8 @@ pub fn install(binary: &str) -> Result<()> {
     // We write the hooks as a flat command string: `<binary> <subcommand> $PWD`
     // Codex runs hooks with the session cwd, so $PWD resolves correctly.
 
-    install_hook(&mut doc, "SessionStart", binary, "ensure-watch", "$PWD");
-    install_hook(&mut doc, "Stop", binary, "unwatch", "$PWD");
+    install_hook(&mut doc, "SessionStart", binary, "ensure-watch", "$PWD", "codex");
+    install_hook(&mut doc, "Stop", binary, "unwatch", "$PWD", "codex");
 
     fs::write(&path, doc.to_string())
         .with_context(|| format!("write {}", path.display()))?;
@@ -92,8 +92,10 @@ fn install_hook(
     binary: &str,
     subcommand: &str,
     path_arg: &str,
+    agent_name: &str,
 ) {
-    let command_str = format!("{binary} {subcommand} {path_arg}");
+    // Agent ID is "<agent_name>:<path>" — unique per agent type + project directory.
+    let command_str = format!(r#"{binary} {subcommand} {path_arg} --agent-id "{agent_name}:{path_arg}""#);
 
     // Ensure [hooks] table exists.
     if doc.get("hooks").is_none() {

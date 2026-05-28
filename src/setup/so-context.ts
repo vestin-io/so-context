@@ -17,11 +17,12 @@ export const SoContextPlugin: Plugin = async ({ directory: projectDir, $ }) => {
   return {
     event: async ({ event }) => {
       if (event.type === "session.created" || event.type === "session.deleted") {
-        const sessionId = (event.properties as any)?.sessionID ?? "opencode";
+        const sessionId = (event.properties as any)?.sessionID ?? "unknown";
+        const agentId = `opencode:${sessionId}`;
         // Prefer the session's own directory over the plugin context directory.
         const dir = (event.properties as any)?.info?.directory ?? projectDir ?? ".";
         const cmd = event.type === "session.created" ? "ensure-watch" : "unwatch";
-        await $!`${binary} ${cmd} ${dir} --agent-id ${sessionId}`.nothrow().quiet();
+        await $!`${binary} ${cmd} ${dir} --agent-id ${agentId}`.nothrow().quiet();
       }
     },
   };
