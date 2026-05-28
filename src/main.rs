@@ -46,6 +46,11 @@ enum Commands {
         /// Project directory to watch (default: current directory).
         #[arg(default_value = ".")]
         path: String,
+        /// Agent session identifier to track as a consumer.
+        /// Pass the session ID from the hook context so the daemon can track
+        /// which agent sessions are actively watching each project.
+        #[arg(long)]
+        agent_id: Option<String>,
     },
     /// Tell the running daemon to stop watching a project directory.
     /// Intended for use in agent session-end hooks.
@@ -53,6 +58,9 @@ enum Commands {
         /// Project directory to unwatch (default: current directory).
         #[arg(default_value = ".")]
         path: String,
+        /// Agent session identifier — must match the value passed to ensure-watch.
+        #[arg(long)]
+        agent_id: Option<String>,
     },
     /// Install so-context as an MCP server in Claude, OpenCode, and Codex configs.
     Setup {
@@ -77,13 +85,13 @@ async fn main() -> Result<()> {
         Commands::Watch { path } => {
             core_graph::watch_project(&path).map_err(anyhow::Error::msg)
         }
-        Commands::EnsureWatch { path } => {
-            let pid = std::process::id().to_string();
-            mcp::call_daemon_tool("so_watch", &path, Some(&pid)).await
+        Commands::EnsureWatch { path, agent_id } => {
+            let id = agent_id.unwrap_or_else(|| format!("pid:{}", std::process::id()));
+            mcp::call_daemon_tool("so_watch", &path, Some(&id)).await
         }
-        Commands::Unwatch { path } => {
-            let pid = std::process::id().to_string();
-            mcp::call_daemon_tool("so_unwatch", &path, Some(&pid)).await
+        Commands::Unwatch { path, agent_id } => {
+            let id = agent_id.unwrap_or_else(|| format!("pid:{}", std::process::id()));
+            mcp::call_daemon_tool("so_unwatch", &path, Some(&id)).await
         }
         Commands::Setup { binary } => {
             let bin = match binary {
