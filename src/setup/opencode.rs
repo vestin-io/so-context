@@ -26,7 +26,7 @@ pub fn config_path() -> PathBuf {
 }
 
 pub fn plugin_path() -> PathBuf {
-    config_dir().join("plugins").join("so-context.js")
+    config_dir().join("plugins").join("so-context.mjs")
 }
 
 pub fn install(binary: &str) -> Result<()> {
@@ -89,22 +89,24 @@ fn plugin_source(binary: &str) -> String {
 // Tracks project watch sessions: calls ensure-watch on session start and
 // unwatch on session end, passing the OpenCode session ID so the daemon can
 // maintain an accurate per-session consumer list.
+//
+// Event shape (from opencode/src/session/session.ts):
+//   session.created / session.deleted
+//     properties.sessionID  — the session identifier
+//     properties.info       — full Session.Info object
+//     properties.info.directory — the session's working directory
 
-export const SoContextPlugin = async ({{ directory }}) => {{
+export const SoContextPlugin = async ({{ directory: projectDir }}) => {{
   const binary = "{bin}";
 
   return {{
     event: async ({{ event }}) => {{
-      if (event.type === "session.created") {{
-        const sessionId = event.properties?.sessionID ?? event.properties?.id ?? "opencode";
-        const dir = directory ?? ".";
-        await Bun.$`${{binary}} ensure-watch ${{dir}} --agent-id ${{sessionId}}`.nothrow().quiet();
-      }}
-
-      if (event.type === "session.deleted") {{
-        const sessionId = event.properties?.sessionID ?? event.properties?.id ?? "opencode";
-        const dir = directory ?? ".";
-        await Bun.$`${{binary}} unwatch ${{dir}} --agent-id ${{sessionId}}`.nothrow().quiet();
+      if (event.type === "session.created" || event.type === "session.deleted") {{
+        const sessionId = event.properties?.sessionID ?? "opencode";
+        // Prefer the session's own directory over the plugin context directory.
+        const dir = event.properties?.info?.directory ?? projectDir ?? ".";
+        const cmd = event.type === "session.created" ? "ensure-watch" : "unwatch";
+        await Bun.$`${{binary}} ${{cmd}} ${{dir}} --agent-id ${{sessionId}}`.nothrow().quiet();
       }}
     }},
   }};
