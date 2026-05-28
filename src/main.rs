@@ -99,10 +99,10 @@ async fn main() -> Result<()> {
             core_graph::watch_project(&path).map_err(anyhow::Error::msg)
         }
         Commands::EnsureWatch { path, agent, session_id } => {
-            mcp::call_daemon_tool("so_watch", &path, agent.as_deref(), session_id.as_deref()).await
+            mcp::send_ctrl_request("watch", &path, agent.as_deref(), session_id.as_deref()).await
         }
         Commands::Unwatch { path, agent, session_id } => {
-            mcp::call_daemon_tool("so_unwatch", &path, agent.as_deref(), session_id.as_deref()).await
+            mcp::send_ctrl_request("unwatch", &path, agent.as_deref(), session_id.as_deref()).await
         }
         Commands::Setup { binary } => {
             let bin = resolve_binary(binary);

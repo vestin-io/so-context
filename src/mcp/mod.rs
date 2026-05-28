@@ -44,7 +44,7 @@ use uuid::Uuid;
 
 use crate::daemon::WatchManager;
 use crate::daemon::watch_manager::file_uri_to_path;
-use crate::socket::{MCP_ENDPOINT, socket_path};
+use crate::socket::{MCP_ENDPOINT, ctrl_socket_path, socket_path};
 
 const ROOTS_LIST_TIMEOUT_MS: u64 = 5_000;
 
@@ -52,19 +52,22 @@ const ROOTS_LIST_TIMEOUT_MS: u64 = 5_000;
 // Bridge: stdio → Unix socket (used by `so-context mcp`)
 // ---------------------------------------------------------------------------
 
-/// Connect to the running daemon and call a single MCP tool, then exit.
+/// Sends a JSON-RPC notification to the daemon's ctrl socket.
 ///
 /// Used by `so-context ensure-watch` and `so-context unwatch` CLI subcommands,
-/// which are invoked by agent session hooks.
-pub async fn call_daemon_tool(
-    tool_name: &str,
+/// invoked by agent session hooks.
+pub async fn send_ctrl_request(
+    method: &str,
     path: &str,
     agent: Option<&str>,
     session_id: Option<&str>,
 ) -> Result<()> {
-    let sock = socket_path();
+    use tokio::io::AsyncWriteExt;
+    use tokio::net::UnixStream;
+
+    let sock = ctrl_socket_path();
     if !sock.exists() {
-        eprintln!("so-context: daemon not running, skipping {tool_name} for {path}");
+        eprintln!("so-context: daemon not running, skipping {method} for {path}");
         return Ok(());
     }
 
@@ -76,37 +79,24 @@ pub async fn call_daemon_tool(
             .unwrap_or_else(|_| path.to_string())
     };
 
-    let transport =
-        StreamableHttpClientTransport::from_unix_socket(sock.to_str().unwrap(), MCP_ENDPOINT);
-
-    let client: RunningService<RoleClient, ()> = ()
-        .serve(transport)
-        .await
-        .map_err(|e| anyhow::anyhow!("connect to daemon: {e}"))?;
-
-    let mut args = serde_json::json!({ "path": abs_path });
-    if let Some(a) = agent {
-        args["agent"] = serde_json::Value::String(a.to_string());
-    }
-    if let Some(s) = session_id {
-        args["session_id"] = serde_json::Value::String(s.to_string());
-    }
-
-    let result = client
-        .peer()
-        .call_tool(
-            CallToolRequestParams::new(tool_name.to_owned())
-                .with_arguments(args.as_object().unwrap().clone()),
-        )
-        .await
-        .map_err(|e| anyhow::anyhow!("{tool_name} failed: {e}"))?;
-
-    // Print any text content from the tool result.
-    for content in &result.content {
-        if let Some(text) = content.as_text() {
-            println!("{}", text.text);
+    let msg = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": method,
+        "params": {
+            "path":       abs_path,
+            "agent":      agent,
+            "session_id": session_id,
         }
-    }
+    });
+
+    let mut line = serde_json::to_string(&msg)?;
+    line.push('\n');
+
+    let mut stream = UnixStream::connect(&sock)
+        .await
+        .map_err(|e| anyhow::anyhow!("connect to ctrl socket: {e}"))?;
+    stream.write_all(line.as_bytes()).await
+        .map_err(|e| anyhow::anyhow!("write to ctrl socket: {e}"))?;
 
     Ok(())
 }
@@ -243,9 +233,6 @@ impl BuiltinServer {
         tool_router.add_route(tools::read::route());
         tool_router.add_route(tools::search::route());
         tool_router.add_route(tools::status::route(Arc::clone(&wm)));
-        tool_router.add_route(tools::watch::route(Arc::clone(&wm)));
-        tool_router.add_route(tools::unwatch::route(Arc::clone(&wm)));
-        tool_router.add_route(tools::events::route());
 
         Self {
             tool_router,
@@ -400,9 +387,7 @@ Projects are auto-discovered from workspace roots on connect — no setup needed
 Tools:\n\
   so_read      — read a file (mode: full / outline / graph)\n\
   so_search    — FTS search over an indexed project graph\n\
-  so_status    — list all watched projects and their current state\n\
-  so_watch     — register a project directory for watching\n\
-  so_unwatch   — deregister a project directory from watching",
+  so_status    — list all watched projects and their current state",
         )
     }
 

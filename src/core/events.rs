@@ -14,7 +14,7 @@
 //! - `so_read graph`   : estimated = full file content chars / 4
 //!                       actual    = graph result chars / 4
 //! - `so_read full`    : estimated = actual (no saving)
-//! - `so_watch/unwatch/status`: estimated = 0, actual = result chars / 4
+//! - `so_watch/unwatch`: estimated = 0, actual = result chars / 4
 
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};

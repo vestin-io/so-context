@@ -1,12 +1,8 @@
 //! Daemon — long-running background process.
 //!
-//! Binds a Unix domain socket, serves the MCP streamable-HTTP server over it,
-//! and owns all background services (WatchManager, graph DB).
-//!
-//! Multiple agent sessions connect via the `so-context mcp` bridge, which
-//! forwards stdio ↔ the daemon socket. Because every agent shares the same
-//! daemon process there is exactly one WatchManager and one SQLite database
-//! per machine user.
+//! Binds two Unix domain sockets:
+//!   - MCP socket  (`so-context.sock`)       — streamable HTTP, for agent sessions
+//!   - ctrl socket (`so-context-ctrl.sock`)  — newline-delimited JSON-RPC, for CLI hooks
 
 pub mod watch_manager;
 
@@ -19,16 +15,17 @@ use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService,
     session::local::LocalSessionManager,
 };
-use tokio::net::UnixListener;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::net::{UnixListener, UnixStream};
 use tokio_util::sync::CancellationToken;
 use tower_service::Service as _;
 
 pub use watch_manager::WatchManager;
 
 use crate::mcp::BuiltinServer;
-use crate::socket::socket_path;
+use crate::socket::{ctrl_socket_path, socket_path};
 
-/// The daemon runtime. Construct with [`Daemon::new`] and start with [`Daemon::run`].
+/// The daemon runtime.
 pub struct Daemon {
     pub watch_manager: Arc<WatchManager>,
 }
@@ -40,37 +37,50 @@ impl Daemon {
         }
     }
 
-    /// Binds the Unix socket and serves the MCP HTTP server until the process exits.
     pub async fn run(self) -> Result<()> {
-        let path = socket_path();
+        let wm = Arc::clone(&self.watch_manager);
 
-        // Remove stale socket file from a previous run.
-        if path.exists() {
-            fs::remove_file(&path)
-                .with_context(|| format!("remove stale socket {}", path.display()))?;
+        // --- MCP socket ---
+        let mcp_path = socket_path();
+        if mcp_path.exists() {
+            fs::remove_file(&mcp_path)
+                .with_context(|| format!("remove stale socket {}", mcp_path.display()))?;
         }
+        let mcp_listener = UnixListener::bind(&mcp_path)
+            .with_context(|| format!("bind MCP socket {}", mcp_path.display()))?;
+        eprintln!("so-context daemon: MCP  on {}", mcp_path.display());
 
-        let listener = UnixListener::bind(&path)
-            .with_context(|| format!("bind Unix socket {}", path.display()))?;
+        // --- ctrl socket ---
+        let ctrl_path = ctrl_socket_path();
+        if ctrl_path.exists() {
+            fs::remove_file(&ctrl_path)
+                .with_context(|| format!("remove stale ctrl socket {}", ctrl_path.display()))?;
+        }
+        let ctrl_listener = UnixListener::bind(&ctrl_path)
+            .with_context(|| format!("bind ctrl socket {}", ctrl_path.display()))?;
+        eprintln!("so-context daemon: ctrl on {}", ctrl_path.display());
 
-        eprintln!("so-context daemon listening on {}", path.display());
+        // Spawn ctrl listener on its own task.
+        let wm_ctrl = Arc::clone(&wm);
+        tokio::spawn(async move {
+            run_ctrl_listener(ctrl_listener, wm_ctrl).await;
+        });
 
+        // --- MCP HTTP server ---
         let ct = CancellationToken::new();
-        let watch_manager = Arc::clone(&self.watch_manager);
-
-        let service: StreamableHttpService<BuiltinServer, LocalSessionManager> =
+        let wm_mcp = Arc::clone(&wm);
+        let mcp_service: StreamableHttpService<BuiltinServer, LocalSessionManager> =
             StreamableHttpService::new(
-                move || Ok(BuiltinServer::new(Arc::clone(&watch_manager))),
+                move || Ok(BuiltinServer::new(Arc::clone(&wm_mcp))),
                 Default::default(),
                 StreamableHttpServerConfig::default()
                     .with_cancellation_token(ct.child_token()),
             );
 
-        let router = Router::new().nest_service("/mcp", service);
+        let router = Router::new().nest_service("/mcp", mcp_service);
 
-        // Serve over the Unix socket using hyper directly.
         loop {
-            let (stream, _addr) = listener.accept().await?;
+            let (stream, _addr) = mcp_listener.accept().await?;
             let router = router.clone();
             tokio::spawn(async move {
                 let io = TokioIo::new(stream);
@@ -84,9 +94,65 @@ impl Daemon {
                     .serve_connection(io, hyper_svc)
                     .await
                 {
-                    eprintln!("so-context daemon: connection error: {e}");
+                    eprintln!("so-context daemon: MCP connection error: {e}");
                 }
             });
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ctrl socket — newline-delimited JSON-RPC 2.0 (notifications only)
+// ---------------------------------------------------------------------------
+
+async fn run_ctrl_listener(listener: UnixListener, wm: Arc<WatchManager>) {
+    loop {
+        match listener.accept().await {
+            Ok((stream, _)) => {
+                let wm = Arc::clone(&wm);
+                tokio::spawn(async move { handle_ctrl_connection(stream, wm).await });
+            }
+            Err(e) => {
+                eprintln!("so-context daemon: ctrl accept error: {e}");
+            }
+        }
+    }
+}
+
+async fn handle_ctrl_connection(stream: UnixStream, wm: Arc<WatchManager>) {
+    let mut lines = BufReader::new(stream).lines();
+    while let Ok(Some(line)) = lines.next_line().await {
+        let line = line.trim().to_string();
+        if line.is_empty() { continue; }
+        if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&line) {
+            dispatch_ctrl(&msg, &wm);
+        } else {
+            eprintln!("so-context daemon: ctrl invalid JSON: {line}");
+        }
+    }
+}
+
+/// Dispatches a JSON-RPC notification to the appropriate WatchManager operation.
+///
+/// Expected shape:
+/// ```json
+/// {"jsonrpc":"2.0","method":"watch","params":{"path":"...","agent":"...","session_id":"..."}}
+/// {"jsonrpc":"2.0","method":"unwatch","params":{"path":"...","agent":"...","session_id":"..."}}
+/// ```
+fn dispatch_ctrl(msg: &serde_json::Value, wm: &WatchManager) {
+    let method = msg.get("method").and_then(|v| v.as_str()).unwrap_or("");
+    let params = msg.get("params");
+    let path = params.and_then(|p| p.get("path")).and_then(|v| v.as_str()).unwrap_or("");
+    if path.is_empty() {
+        eprintln!("so-context daemon: ctrl missing path in {method} message");
+        return;
+    }
+    let agent      = params.and_then(|p| p.get("agent")).and_then(|v| v.as_str());
+    let session_id = params.and_then(|p| p.get("session_id")).and_then(|v| v.as_str());
+
+    match method {
+        "watch"   => { wm.ensure_watching(path, agent, session_id); }
+        "unwatch" => { wm.unwatch(path, agent, session_id); }
+        other     => { eprintln!("so-context daemon: ctrl unknown method: {other}"); }
     }
 }

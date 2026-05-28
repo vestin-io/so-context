@@ -1,28 +1,32 @@
-//! Shared Unix socket path for daemon ↔ MCP bridge communication.
+//! Shared Unix socket paths for daemon communication.
+//!
+//! Two sockets:
+//!   - MCP socket   — streamable HTTP, for agent MCP sessions only
+//!   - ctrl socket  — newline-delimited JSON-RPC, for CLI hook commands (watch/unwatch)
 
 use std::path::PathBuf;
 
-/// Returns the path to the Unix domain socket the daemon listens on.
-///
-/// Uses `$XDG_RUNTIME_DIR/so-context.sock` when available, otherwise
-/// falls back to `/tmp/so-context-<uid>.sock`.
-pub fn socket_path() -> PathBuf {
+fn runtime_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
-        return PathBuf::from(dir).join("so-context.sock");
+        return PathBuf::from(dir);
     }
-    // Fallback: /tmp/so-context-<uid>.sock (uid avoids collisions between users)
     let uid = {
         #[cfg(unix)]
-        {
-            // SAFETY: getuid() is always safe.
-            unsafe { libc::getuid() }
-        }
+        unsafe { libc::getuid() }
         #[cfg(not(unix))]
-        {
-            0u32
-        }
+        0u32
     };
-    PathBuf::from(format!("/tmp/so-context-{uid}.sock"))
+    PathBuf::from(format!("/tmp/so-context-{uid}"))
+}
+
+/// Unix socket the daemon serves MCP (streamable HTTP) over — agents only.
+pub fn socket_path() -> PathBuf {
+    runtime_dir().join("so-context.sock")
+}
+
+/// Unix socket the daemon listens on for CLI control messages (watch/unwatch).
+pub fn ctrl_socket_path() -> PathBuf {
+    runtime_dir().join("so-context-ctrl.sock")
 }
 
 /// The HTTP endpoint the daemon serves MCP over (relative to socket root).
