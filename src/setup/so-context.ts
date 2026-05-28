@@ -21,9 +21,7 @@ export const SoContextPlugin: Plugin = async ({ directory: projectDir, $ }) => {
         event.type === "session.deleted"
       ) {
         const sessionId = (event.properties as any)?.sessionID ?? "unknown";
-        const dir = (event.properties as any)?.info?.directory ?? projectDir ?? ".";
-        const cmd = event.type === "session.created" ? "ensure-watch" : "unwatch";
-        await $!`${binary} ${cmd} ${dir} --agent opencode --session-id ${sessionId}`
+        await $`${binary} ${cmd} ${dir} --agent opencode --session-id ${sessionId}`
           .nothrow()
           .quiet();
       }
