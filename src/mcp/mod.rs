@@ -52,9 +52,13 @@ const ROOTS_LIST_TIMEOUT_MS: u64 = 5_000;
 
 /// Connect to the running daemon and call a single MCP tool, then exit.
 ///
+/// `agent_id` is forwarded as the `agent_id` argument in the tool call so the
+/// daemon can track which caller is registering / deregistering the project.
+/// Pass the process PID (formatted as a string) for CLI hook invocations.
+///
 /// Used by `so-context ensure-watch` and `so-context unwatch` CLI subcommands,
 /// which are invoked by agent session hooks.
-pub async fn call_daemon_tool(tool_name: &str, path: &str) -> Result<()> {
+pub async fn call_daemon_tool(tool_name: &str, path: &str, agent_id: Option<&str>) -> Result<()> {
     let sock = socket_path();
     if !sock.exists() {
         // Daemon not running — silently succeed so hooks don't break agent startup.
@@ -84,10 +88,13 @@ pub async fn call_daemon_tool(tool_name: &str, path: &str) -> Result<()> {
     let result = client
         .peer()
         .call_tool(CallToolRequestParams::new(tool_name.to_owned()).with_arguments(
-            serde_json::json!({ "path": abs_path })
-                .as_object()
-                .unwrap()
-                .clone(),
+            {
+                let mut args = serde_json::json!({ "path": abs_path });
+                if let Some(id) = agent_id {
+                    args["agent_id"] = serde_json::Value::String(id.to_string());
+                }
+                args.as_object().unwrap().clone()
+            }
         ))
         .await
         .map_err(|e| anyhow::anyhow!("{tool_name} failed: {e}"))?;
@@ -219,6 +226,9 @@ pub struct BuiltinServer {
     tool_router: ToolRouter<Self>,
     wm: Arc<WatchManager>,
     client_supports_roots: std::sync::atomic::AtomicBool,
+    /// Identifies the connected agent session — set from `client_info` during
+    /// the MCP handshake so it can be passed to WatchManager as a consumer ID.
+    session_id: Arc<std::sync::Mutex<Option<String>>>,
 }
 
 impl BuiltinServer {
@@ -234,7 +244,13 @@ impl BuiltinServer {
             tool_router,
             wm,
             client_supports_roots: std::sync::atomic::AtomicBool::new(false),
+            session_id: Arc::new(std::sync::Mutex::new(None)),
         }
+    }
+
+    /// Returns the agent session ID if one was captured during the handshake.
+    fn agent_id(&self) -> Option<String> {
+        self.session_id.lock().unwrap().clone()
     }
 }
 
@@ -257,17 +273,24 @@ impl ServerHandler for BuiltinServer {
         self.client_supports_roots
             .store(supports_roots, std::sync::atomic::Ordering::Relaxed);
 
+        // Capture client identity as session_id: "<name>/<version>".
+        {
+            let info = &request.client_info;
+            let id = format!("{}/{}", info.name, info.version);
+            *self.session_id.lock().unwrap() = Some(id);
+        }
+
         if let Some(peer_info) = context.peer.peer_info() {
             if let Ok(v) = serde_json::to_value(&peer_info) {
                 for key in ["rootUri", "root_uri"] {
                     if let Some(uri) = v.get(key).and_then(|v| v.as_str()) {
-                        self.wm.ensure_watching(&file_uri_to_path(uri));
+                        self.wm.ensure_watching(&file_uri_to_path(uri), self.agent_id().as_deref());
                     }
                 }
                 if let Some(folders) = v.get("workspaceFolders").and_then(|v| v.as_array()) {
                     for folder in folders {
                         if let Some(uri) = folder.get("uri").and_then(|v| v.as_str()) {
-                            self.wm.ensure_watching(&file_uri_to_path(uri));
+                            self.wm.ensure_watching(&file_uri_to_path(uri), self.agent_id().as_deref());
                         }
                     }
                 }
@@ -296,7 +319,7 @@ impl ServerHandler for BuiltinServer {
                 .load(std::sync::atomic::Ordering::Relaxed)
             {
                 if let Ok(cwd) = std::env::current_dir() {
-                    self.wm.ensure_watching(cwd.to_string_lossy().as_ref());
+                    self.wm.ensure_watching(cwd.to_string_lossy().as_ref(), self.agent_id().as_deref());
                 }
                 return;
             }
@@ -312,24 +335,24 @@ impl ServerHandler for BuiltinServer {
                     if roots_result.roots.is_empty() {
                         eprintln!("[mcp] client returned no roots; falling back to cwd");
                         if let Ok(cwd) = std::env::current_dir() {
-                            self.wm.ensure_watching(cwd.to_string_lossy().as_ref());
+                            self.wm.ensure_watching(cwd.to_string_lossy().as_ref(), self.agent_id().as_deref());
                         }
                     } else {
                         for root in &roots_result.roots {
-                            self.wm.ensure_watching(&file_uri_to_path(&root.uri));
+                            self.wm.ensure_watching(&file_uri_to_path(&root.uri), self.agent_id().as_deref());
                         }
                     }
                 }
                 Ok(Err(e)) => {
                     eprintln!("[mcp] roots/list failed: {e}; falling back to cwd");
                     if let Ok(cwd) = std::env::current_dir() {
-                        self.wm.ensure_watching(cwd.to_string_lossy().as_ref());
+                        self.wm.ensure_watching(cwd.to_string_lossy().as_ref(), self.agent_id().as_deref());
                     }
                 }
                 Err(_timeout) => {
                     eprintln!("[mcp] roots/list timed out; falling back to cwd");
                     if let Ok(cwd) = std::env::current_dir() {
-                        self.wm.ensure_watching(cwd.to_string_lossy().as_ref());
+                        self.wm.ensure_watching(cwd.to_string_lossy().as_ref(), self.agent_id().as_deref());
                     }
                 }
             }
@@ -349,7 +372,7 @@ impl ServerHandler for BuiltinServer {
            + '_ {
         async move {
             if let Ok(cwd) = std::env::current_dir() {
-                self.wm.ensure_watching(cwd.to_string_lossy().as_ref());
+                self.wm.ensure_watching(cwd.to_string_lossy().as_ref(), self.agent_id().as_deref());
             }
 
             self.tool_router

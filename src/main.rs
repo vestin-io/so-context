@@ -77,8 +77,14 @@ async fn main() -> Result<()> {
         Commands::Watch { path } => {
             core_graph::watch_project(&path).map_err(anyhow::Error::msg)
         }
-        Commands::EnsureWatch { path } => mcp::call_daemon_tool("so_watch", &path).await,
-        Commands::Unwatch { path } => mcp::call_daemon_tool("so_unwatch", &path).await,
+        Commands::EnsureWatch { path } => {
+            let pid = std::process::id().to_string();
+            mcp::call_daemon_tool("so_watch", &path, Some(&pid)).await
+        }
+        Commands::Unwatch { path } => {
+            let pid = std::process::id().to_string();
+            mcp::call_daemon_tool("so_unwatch", &path, Some(&pid)).await
+        }
         Commands::Setup { binary } => {
             let bin = match binary {
                 Some(b) => b,

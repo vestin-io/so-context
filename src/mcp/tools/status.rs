@@ -13,7 +13,8 @@ pub fn route(wm: Arc<WatchManager>) -> ToolRoute<BuiltinServer> {
     ToolRoute::new_dyn(
         Tool::new(
             "so_status",
-            "List all auto-discovered projects currently being watched and their sync state.",
+            "List all auto-discovered projects currently being watched, their sync state, \
+             ref-count, and the list of agent consumers.",
             Arc::new(serde_json::Map::new()),
         ),
         move |_ctx| {
@@ -34,11 +35,22 @@ fn handler(wm: &WatchManager) -> Result<CallToolResult, rmcp::ErrorData> {
         .iter()
         .map(|s| {
             let state = match &s.state {
-                WatchState::Indexing => "indexing".to_string(),
-                WatchState::Running  => "running".to_string(),
+                WatchState::Indexing  => "indexing".to_string(),
+                WatchState::Running   => "running".to_string(),
                 WatchState::Failed(e) => format!("failed: {e}"),
             };
-            format!("{} — {state}", s.path.display())
+            let mut consumers = s.consumers.clone();
+            consumers.sort();
+            let consumer_str = if consumers.is_empty() {
+                "none".to_string()
+            } else {
+                consumers.join(", ")
+            };
+            format!(
+                "{} — {state}  [refs: {}, consumers: {consumer_str}]",
+                s.path.display(),
+                s.ref_count,
+            )
         })
         .collect();
     Ok(CallToolResult::success(vec![Content::text(lines.join("\n"))]))
