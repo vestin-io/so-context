@@ -111,6 +111,25 @@ impl WatchManager {
         }
     }
 
+    /// Removes a project from the watch registry.
+    ///
+    /// The background thread is not explicitly stopped (it will exit on its own
+    /// when the channel disconnects). The entry is removed from the registry so
+    /// future `ensure_watching` calls will re-register it.
+    ///
+    /// Returns `true` if the project was registered, `false` if it was not known.
+    pub fn unwatch(&self, path: &str) -> bool {
+        let root = match resolve_project_root(path) {
+            Some(r) => r,
+            None => return false,
+        };
+        let removed = self.inner.lock().unwrap().projects.remove(&root).is_some();
+        if removed {
+            eprintln!("[watch] unwatched: {}", root.display());
+        }
+        removed
+    }
+
     /// Returns a snapshot of all currently registered projects and their state.
     pub fn status(&self) -> Vec<ProjectStatus> {
         let inner = self.inner.lock().unwrap();

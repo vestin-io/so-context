@@ -40,6 +40,20 @@ enum Commands {
         #[arg(default_value = ".")]
         path: String,
     },
+    /// Tell the running daemon to start watching a project directory.
+    /// Intended for use in agent session-start hooks.
+    EnsureWatch {
+        /// Project directory to watch (default: current directory).
+        #[arg(default_value = ".")]
+        path: String,
+    },
+    /// Tell the running daemon to stop watching a project directory.
+    /// Intended for use in agent session-end hooks.
+    Unwatch {
+        /// Project directory to unwatch (default: current directory).
+        #[arg(default_value = ".")]
+        path: String,
+    },
     /// Install so-context as an MCP server in Claude, OpenCode, and Codex configs.
     Setup {
         /// Path to the so-context binary (default: current executable).
@@ -63,6 +77,8 @@ async fn main() -> Result<()> {
         Commands::Watch { path } => {
             core_graph::watch_project(&path).map_err(anyhow::Error::msg)
         }
+        Commands::EnsureWatch { path } => mcp::call_daemon_tool("so_watch", &path).await,
+        Commands::Unwatch { path } => mcp::call_daemon_tool("so_unwatch", &path).await,
         Commands::Setup { binary } => {
             let bin = match binary {
                 Some(b) => b,

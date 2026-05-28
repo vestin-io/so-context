@@ -6,5 +6,7 @@
 pub mod read;
 pub mod search;
 pub mod status;
+pub mod watch;
+pub mod unwatch;
 
 pub(crate) use super::BuiltinServer;

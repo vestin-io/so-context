@@ -50,6 +50,58 @@ const ROOTS_LIST_TIMEOUT_MS: u64 = 5_000;
 // Bridge: stdio → Unix socket (used by `so-context mcp`)
 // ---------------------------------------------------------------------------
 
+/// Connect to the running daemon and call a single MCP tool, then exit.
+///
+/// Used by `so-context ensure-watch` and `so-context unwatch` CLI subcommands,
+/// which are invoked by agent session hooks.
+pub async fn call_daemon_tool(tool_name: &str, path: &str) -> Result<()> {
+    let sock = socket_path();
+    if !sock.exists() {
+        // Daemon not running — silently succeed so hooks don't break agent startup.
+        eprintln!(
+            "so-context: daemon not running, skipping {tool_name} for {path}"
+        );
+        return Ok(());
+    }
+
+    // Resolve to absolute path before sending.
+    let abs_path = if std::path::Path::new(path).is_absolute() {
+        path.to_string()
+    } else {
+        std::env::current_dir()
+            .map(|d| d.join(path).to_string_lossy().to_string())
+            .unwrap_or_else(|_| path.to_string())
+    };
+
+    let transport =
+        StreamableHttpClientTransport::from_unix_socket(sock.to_str().unwrap(), MCP_ENDPOINT);
+
+    let client: RunningService<RoleClient, ()> = ()
+        .serve(transport)
+        .await
+        .map_err(|e| anyhow::anyhow!("connect to daemon: {e}"))?;
+
+    let result = client
+        .peer()
+        .call_tool(CallToolRequestParams::new(tool_name.to_owned()).with_arguments(
+            serde_json::json!({ "path": abs_path })
+                .as_object()
+                .unwrap()
+                .clone(),
+        ))
+        .await
+        .map_err(|e| anyhow::anyhow!("{tool_name} failed: {e}"))?;
+
+    // Print any text content from the tool result.
+    for content in &result.content {
+        if let Some(text) = content.as_text() {
+            println!("{}", text.text);
+        }
+    }
+
+    Ok(())
+}
+
 /// Connects to the daemon's Unix socket and bridges it to stdio.
 ///
 /// Starts an MCP client connection to the daemon (via Unix socket / streamable
@@ -175,6 +227,8 @@ impl BuiltinServer {
         tool_router.add_route(tools::read::route());
         tool_router.add_route(tools::search::route());
         tool_router.add_route(tools::status::route(Arc::clone(&wm)));
+        tool_router.add_route(tools::watch::route(Arc::clone(&wm)));
+        tool_router.add_route(tools::unwatch::route(Arc::clone(&wm)));
 
         Self {
             tool_router,
@@ -317,7 +371,9 @@ Projects are auto-discovered from workspace roots on connect — no setup needed
 Tools:\n\
   so_read      — read a file (mode: full / outline / graph)\n\
   so_search    — FTS search over an indexed project graph\n\
-  so_status    — list all watched projects and their current state",
+  so_status    — list all watched projects and their current state\n\
+  so_watch     — register a project directory for watching\n\
+  so_unwatch   — deregister a project directory from watching",
         )
     }
 
