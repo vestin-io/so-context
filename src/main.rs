@@ -2,6 +2,8 @@
 mod core_read;
 #[path = "core/graph/mod.rs"]
 mod core_graph;
+#[path = "core/events.rs"]
+pub mod core_events;
 mod daemon;
 mod mcp;
 mod setup;

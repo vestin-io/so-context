@@ -118,8 +118,9 @@ impl GraphDb {
     // Search
     // -----------------------------------------------------------------------
 
-    /// FTS search over indexed symbols. Returns formatted `path:line [kind] name` lines.
-    pub fn search(&self, query: &str, limit: usize) -> Result<String, String> {
+    /// FTS search over indexed symbols. Returns formatted results and total
+    /// on-disk char count of matched files (used for token saving estimates).
+    pub fn search_with_stats(&self, query: &str, limit: usize) -> Result<(String, usize), String> {
         let mut stmt = self
             .conn
             .prepare(
@@ -144,16 +145,24 @@ impl GraphDb {
             .map_err(|e| format!("failed to execute search query: {e}"))?;
 
         let mut out = Vec::new();
+        let mut matched_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
         for row in rows {
             let (path, kind, name, line) =
                 row.map_err(|e| format!("failed to read row: {e}"))?;
             out.push(format!("{path}:{line} [{kind}] {name}"));
+            matched_paths.insert(path);
         }
 
+        // Sum on-disk sizes of matched files for token saving estimate.
+        let matched_files_chars: usize = matched_paths.iter().map(|rel| {
+            let abs = self.project_root.join(rel);
+            std::fs::metadata(&abs).map(|m| m.len() as usize).unwrap_or(0)
+        }).sum();
+
         if out.is_empty() {
-            Ok("No results.".to_string())
+            Ok(("No results.".to_string(), 0))
         } else {
-            Ok(out.join("\n"))
+            Ok((out.join("\n"), matched_files_chars))
         }
     }
 }

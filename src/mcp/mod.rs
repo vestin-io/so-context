@@ -245,6 +245,7 @@ impl BuiltinServer {
         tool_router.add_route(tools::status::route(Arc::clone(&wm)));
         tool_router.add_route(tools::watch::route(Arc::clone(&wm)));
         tool_router.add_route(tools::unwatch::route(Arc::clone(&wm)));
+        tool_router.add_route(tools::events::route());
 
         Self {
             tool_router,
