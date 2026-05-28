@@ -10,8 +10,6 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, Transaction, params};
 
-use super::GRAPH_DB_DIR;
-use super::GRAPH_DB_NAME;
 use super::index::index_files;
 use super::sync::{load_tracked_files, sync_files};
 use super::symbols::resolve_reference_edges;
@@ -171,6 +169,40 @@ impl GraphDb {
 // Path helpers
 // ---------------------------------------------------------------------------
 
+/// Returns the centralized graphs directory: `~/.local/share/so-context/graphs/`.
+pub fn graphs_dir() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_default();
+    PathBuf::from(home)
+        .join(".local")
+        .join("share")
+        .join("so-context")
+        .join("graphs")
+}
+
+/// Returns the path to the graph DB for a given project root.
+///
+/// Uses a SHA-256 hex digest of the canonical absolute path as the filename,
+/// so the DB lives outside the project tree and never needs `.gitignore`.
+///
+/// Example: `~/.local/share/so-context/graphs/a3f2c1….db`
+pub fn graph_db_path(project_root: &Path) -> PathBuf {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    // Use the canonical path if available, otherwise the raw path string.
+    let key = project_root
+        .canonicalize()
+        .unwrap_or_else(|_| project_root.to_path_buf());
+    let key_str = key.to_string_lossy();
+
+    // Simple 64-bit hash is sufficient for a per-user local store.
+    let mut hasher = DefaultHasher::new();
+    key_str.hash(&mut hasher);
+    let hash = hasher.finish();
+
+    graphs_dir().join(format!("{hash:016x}.db"))
+}
+
 pub fn validate_project_root(project_path: &str) -> Result<PathBuf, String> {
     let root = PathBuf::from(project_path);
     if root.is_dir() {
@@ -178,10 +210,6 @@ pub fn validate_project_root(project_path: &str) -> Result<PathBuf, String> {
     } else {
         Err(format!("path is not a directory: {}", root.display()))
     }
-}
-
-pub fn graph_db_path(project_root: &Path) -> PathBuf {
-    project_root.join(GRAPH_DB_DIR).join(GRAPH_DB_NAME)
 }
 
 pub(super) fn ensure_parent_dir(path: &Path) -> Result<(), String> {

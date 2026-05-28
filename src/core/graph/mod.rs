@@ -7,6 +7,10 @@
 //! - `symbols` — tree-sitter symbol extraction and reference resolution
 //! - `watch`   — filesystem watcher loop
 //! - `util`    — shared utilities (content hash, skip predicate)
+//!
+//! Graph databases are stored centrally at:
+//!   `~/.local/share/so-context/graphs/<hash>.db`
+//! where `<hash>` is a 64-bit hash of the canonical project root path.
 
 mod db;
 mod index;
@@ -22,8 +26,6 @@ pub use watch::watch_project;
 // Constants (shared across sub-modules via `super::`)
 // ---------------------------------------------------------------------------
 
-pub(self) const GRAPH_DB_DIR: &str = ".so-context";
-pub(self) const GRAPH_DB_NAME: &str = "graph.db";
 pub(self) const REINDEX_DEBOUNCE_MS: u64 = 700;
 pub(self) const WATCH_POLL_SECS: u64 = 1;
 
