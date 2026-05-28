@@ -42,6 +42,10 @@ impl Daemon {
 
         // --- MCP socket ---
         let mcp_path = socket_path();
+        if let Some(parent) = mcp_path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("create MCP socket dir {}", parent.display()))?;
+        }
         if mcp_path.exists() {
             fs::remove_file(&mcp_path)
                 .with_context(|| format!("remove stale socket {}", mcp_path.display()))?;
@@ -52,6 +56,10 @@ impl Daemon {
 
         // --- ctrl socket ---
         let ctrl_path = ctrl_socket_path();
+        if let Some(parent) = ctrl_path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("create ctrl socket dir {}", parent.display()))?;
+        }
         if ctrl_path.exists() {
             fs::remove_file(&ctrl_path)
                 .with_context(|| format!("remove stale ctrl socket {}", ctrl_path.display()))?;

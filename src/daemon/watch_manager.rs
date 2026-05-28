@@ -265,6 +265,7 @@ fn watch_loop(
     state: &Arc<Mutex<WatchState>>,
     stop_rx: &mpsc::Receiver<StopSignal>,
 ) -> Result<(), String> {
+    eprintln!("[watch] initial index start: {}", project_root.display());
     let mut db = GraphDb::open(project_root.clone())?;
 
     let summary = db.index()?;

@@ -7,7 +7,8 @@ use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::model::{CallToolResult, Content, Tool};
 
 use super::BuiltinServer;
-use crate::core_events::{EventRecord, Timer, chars_to_tokens};
+use crate::core_events::{EventRecord, Timer, enqueue};
+use crate::core_tokens::count_tokens;
 use crate::daemon::watch_manager::WatchState;
 use crate::daemon::WatchManager;
 
@@ -22,8 +23,17 @@ pub fn route(wm: Arc<WatchManager>) -> ToolRoute<BuiltinServer> {
         move |ctx: ToolCallContext<'_, BuiltinServer>| {
             let wm = Arc::clone(&wm);
             Box::pin(async move {
-                let agent      = ctx.service.agent();
-                let session_id = ctx.service.session_id();
+                let meta_args = ctx.arguments.as_ref();
+                let agent = meta_args
+                    .and_then(|a| a.get("_so_agent"))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| ctx.service.agent());
+                let session_id = meta_args
+                    .and_then(|a| a.get("_so_session_id"))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| ctx.service.session_id());
 
                 let timer = Timer::start();
                 let result = handler(&wm);
@@ -35,16 +45,16 @@ pub fn route(wm: Arc<WatchManager>) -> ToolRoute<BuiltinServer> {
 
                 match &result {
                     Ok(r) => {
-                        let text_len: usize = r.content.iter()
+                        let tokens: i64 = r.content.iter()
                             .filter_map(|c| c.as_text())
-                            .map(|t| t.text.len())
+                            .map(|t| count_tokens(&t.text))
                             .sum();
-                        ev.actual_tokens = Some(chars_to_tokens(text_len));
+                        ev.actual_tokens = Some(tokens);
                         ev.result_ok = true;
                     }
                     Err(_) => { ev.result_ok = false; }
                 }
-                ev.insert();
+                enqueue(ev);
                 result
             })
         },

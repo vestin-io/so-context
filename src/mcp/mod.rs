@@ -130,6 +130,8 @@ pub async fn run_mcp_bridge() -> Result<()> {
     // Wrap the daemon client in a BridgeServer and serve it over stdio.
     let bridge = BridgeServer {
         daemon: Arc::new(client_to_daemon),
+        agent: Arc::new(std::sync::Mutex::new("unknown".to_string())),
+        session_id: Arc::new(std::sync::Mutex::new(uuid::Uuid::new_v4().to_string())),
     };
     bridge
         .serve(stdio())
@@ -149,17 +151,23 @@ pub async fn run_mcp_bridge() -> Result<()> {
 /// MCP server handler that proxies all requests to a connected daemon client.
 struct BridgeServer {
     daemon: Arc<RunningService<RoleClient, ()>>,
+    agent: Arc<std::sync::Mutex<String>>,
+    session_id: Arc<std::sync::Mutex<String>>,
 }
 
 impl ServerHandler for BridgeServer {
     fn initialize(
         &self,
-        _request: InitializeRequestParams,
+        request: InitializeRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<InitializeResult, ErrorData>>
            + MaybeSendFuture
            + '_ {
         async move {
+            // Capture upstream (real) client identity so forwarded tool calls can
+            // preserve agent/session attribution in the daemon event log.
+            *self.agent.lock().unwrap() = request.client_info.name;
+            *self.session_id.lock().unwrap() = request.client_info.version;
             // Return the daemon's own server info so the agent sees accurate metadata.
             Ok(self.get_info())
         }
@@ -195,12 +203,23 @@ impl ServerHandler for BridgeServer {
 
     fn call_tool(
         &self,
-        request: CallToolRequestParams,
+        mut request: CallToolRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<CallToolResult, ErrorData>>
            + MaybeSendFuture
            + '_ {
         async move {
+            let agent = self.agent.lock().unwrap().clone();
+            let session_id = self.session_id.lock().unwrap().clone();
+
+            let mut args = request.arguments.unwrap_or_default();
+            args.insert("_so_agent".to_string(), serde_json::Value::String(agent));
+            args.insert(
+                "_so_session_id".to_string(),
+                serde_json::Value::String(session_id),
+            );
+            request.arguments = Some(args);
+
             self.daemon
                 .peer()
                 .call_tool(request)

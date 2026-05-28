@@ -4,6 +4,8 @@ mod core_read;
 mod core_graph;
 #[path = "core/events.rs"]
 pub mod core_events;
+#[path = "core/tokens.rs"]
+pub mod core_tokens;
 mod daemon;
 mod mcp;
 mod setup;

@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS files (
   content_hash TEXT,                          -- optional fast-change detection
   mtime_unix INTEGER,                         -- optional fs-based invalidation
   size_bytes INTEGER,
+  token_count INTEGER,                        -- canonical tokenizer count of full file content
   indexed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(project_id, path),
   FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE

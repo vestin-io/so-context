@@ -13,6 +13,7 @@ use walkdir::WalkDir;
 use super::index::{insert_file_record_full, purge_file_data, reindex_file};
 use super::symbols::collect_symbols;
 use super::util::{content_hash, should_skip};
+use crate::core_tokens::count_tokens;
 
 // ---------------------------------------------------------------------------
 // Tracked file snapshot
@@ -133,6 +134,7 @@ pub(super) fn sync_files(
             Err(_) => continue,
         };
         let hash = content_hash(&content);
+        let token_count = count_tokens(&content);
 
         if let Some(rec) = tracked.get(&rel_path) {
             if rec.hash == hash {
@@ -146,13 +148,13 @@ pub(super) fn sync_files(
             } else {
                 // Genuinely modified: purge old data and reparse.
                 purge_file_data(tx, rec.id)?;
-                reindex_file(tx, &mut parser, path, project_id, rec.id, &lang_name, &content, size, mtime, &hash)?;
+                reindex_file(tx, &mut parser, path, project_id, rec.id, &lang_name, &content, size, mtime, &hash, token_count)?;
                 counts.modified += 1;
             }
         } else {
             // New file.
             let (file_id, file_node_id) = insert_file_record_full(
-                tx, project_root, path, project_id, &lang_name, size, mtime, &hash,
+                tx, project_root, path, project_id, &lang_name, size, mtime, &hash, token_count,
             )?;
             let language = get_language(&lang_name).map_err(|e| {
                 format!("failed to load tree-sitter language '{lang_name}': {e}")

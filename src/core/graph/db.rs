@@ -117,27 +117,34 @@ impl GraphDb {
     // -----------------------------------------------------------------------
 
     /// FTS search over indexed symbols. Returns formatted results and total
-    /// on-disk char count of matched files (used for token saving estimates).
-    pub fn search_with_stats(&self, query: &str, limit: usize) -> Result<(String, usize), String> {
+    /// token count of matched files (used for token saving estimates).
+    pub fn search_with_stats(&self, query: &str, limit: usize) -> Result<(String, i64), String> {
+        let fts_query = build_fts_query(query);
+        if fts_query.is_empty() {
+            return Ok(("No results.".to_string(), 0));
+        }
+
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT f.path, n.kind, n.name, n.start_line
-                 FROM nodes_fts fts
-                 JOIN nodes n ON n.id = fts.rowid
+                "SELECT f.path, n.kind, n.name, n.start_line, bm25(nodes_fts, 0, 20, 5, 1, 2) as score
+                 FROM nodes_fts
+                 JOIN nodes n ON n.id = nodes_fts.rowid
                  JOIN files f ON f.id = n.file_id
-                 WHERE fts MATCH ?1
+                 WHERE nodes_fts MATCH ?1
+                 ORDER BY score ASC
                  LIMIT ?2",
             )
             .map_err(|e| format!("failed to prepare search query: {e}"))?;
 
         let rows = stmt
-            .query_map(params![query, limit as i64], |row| {
+            .query_map(params![fts_query, limit as i64], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
                     row.get::<_, i64>(3)?,
+                    row.get::<_, f64>(4)?,
                 ))
             })
             .map_err(|e| format!("failed to execute search query: {e}"))?;
@@ -145,24 +152,63 @@ impl GraphDb {
         let mut out = Vec::new();
         let mut matched_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
         for row in rows {
-            let (path, kind, name, line) =
+            let (path, kind, name, line, score) =
                 row.map_err(|e| format!("failed to read row: {e}"))?;
-            out.push(format!("{path}:{line} [{kind}] {name}"));
+            out.push(format!("{path}:{line} [{kind}] {name} (score={:.4})", score.abs()));
             matched_paths.insert(path);
         }
 
-        // Sum on-disk sizes of matched files for token saving estimate.
-        let matched_files_chars: usize = matched_paths.iter().map(|rel| {
-            let abs = self.project_root.join(rel);
-            std::fs::metadata(&abs).map(|m| m.len() as usize).unwrap_or(0)
-        }).sum();
+        let matched_files_tokens = if matched_paths.is_empty() {
+            0
+        } else {
+            let placeholders = std::iter::repeat_n("?", matched_paths.len()).collect::<Vec<_>>().join(",");
+            let sql = format!(
+                "SELECT COALESCE(SUM(COALESCE(token_count, 0)), 0)
+                 FROM files
+                 WHERE path IN ({placeholders})"
+            );
+            let params: Vec<&dyn rusqlite::ToSql> = matched_paths
+                .iter()
+                .map(|p| p as &dyn rusqlite::ToSql)
+                .collect();
+            self.conn
+                .query_row(&sql, params.as_slice(), |row| row.get::<_, i64>(0))
+                .map_err(|e| format!("failed to sum matched file tokens: {e}"))?
+        };
 
         if out.is_empty() {
             Ok(("No results.".to_string(), 0))
         } else {
-            Ok((out.join("\n"), matched_files_chars))
+            Ok((out.join("\n"), matched_files_tokens))
         }
     }
+}
+
+/// Normalizes user text into a robust FTS5 query with prefix matching.
+///
+/// Pipeline:
+/// - replace `::` with space
+/// - strip FTS special chars: `'"*():^`
+/// - split into terms
+/// - remove boolean operator tokens (AND/OR/NOT/NEAR)
+/// - convert each term to `"term"*` prefix form
+/// - join terms with ` OR `
+fn build_fts_query(input: &str) -> String {
+    let cleaned = input
+        .replace("::", " ")
+        .chars()
+        .filter(|c| !matches!(c, '\'' | '"' | '*' | '(' | ')' | ':' | '^'))
+        .collect::<String>();
+
+    cleaned
+        .split_whitespace()
+        .filter(|term| {
+            let u = term.to_ascii_uppercase();
+            !matches!(u.as_str(), "AND" | "OR" | "NOT" | "NEAR")
+        })
+        .map(|term| format!("\"{term}\"*"))
+        .collect::<Vec<_>>()
+        .join(" OR ")
 }
 
 // ---------------------------------------------------------------------------
@@ -226,9 +272,7 @@ pub(super) fn ensure_parent_dir(path: &Path) -> Result<(), String> {
 /// Creates/updates all required graph schema tables and indexes.
 /// Called once per connection open — not on every operation.
 pub(super) fn init_schema(conn: &Connection) -> Result<(), String> {
-    // Recreate FTS table to guarantee mutable semantics (contentless FTS forbids DELETE).
-    conn.execute_batch("DROP TABLE IF EXISTS nodes_fts;")
-        .map_err(|e| format!("failed to reset fts table: {e}"))?;
+    // Keep existing data intact across opens; only create missing tables/indexes.
     conn.execute_batch(include_str!("graph_schema.sql"))
         .map_err(|e| format!("failed to init schema: {e}"))
 }
