@@ -14,10 +14,7 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 libc = "0.2"
 rmcp = { version = "1.7.0", default-features = false, features = [
   "server",
-  "client",
   "transport-io",
-  "transport-streamable-http-server",
-  "transport-streamable-http-client-unix-socket",
 ] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -25,8 +22,6 @@ serde_json = "1.0"
 toml_edit = "0.22"
 tokio = { version = "1.48", features = ["macros", "rt-multi-thread", "net", "process"] }
 tiktoken-rs = "0.11.0"
-tokio-util = "0.7"
-tower-service = "0.3"
 tree-sitter = "0.26"
 tree-sitter-language-pack = "1.8.0"
 walkdir = "2.5"

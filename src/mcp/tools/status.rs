@@ -18,22 +18,17 @@ pub fn route(wm: Arc<WatchManager>) -> ToolRoute<BuiltinServer> {
             "so_status",
             "List all auto-discovered projects currently being watched, their sync state, \
              ref-count, and the list of agent consumers.",
-            Arc::new(serde_json::Map::new()),
+            Arc::new({
+                let mut m = serde_json::Map::new();
+                m.insert("type".to_string(), serde_json::Value::String("object".to_string()));
+                m
+            }),
         ),
         move |ctx: ToolCallContext<'_, BuiltinServer>| {
             let wm = Arc::clone(&wm);
             Box::pin(async move {
-                let meta_args = ctx.arguments.as_ref();
-                let agent = meta_args
-                    .and_then(|a| a.get("_so_agent"))
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string)
-                    .unwrap_or_else(|| ctx.service.agent());
-                let session_id = meta_args
-                    .and_then(|a| a.get("_so_session_id"))
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string)
-                    .unwrap_or_else(|| ctx.service.session_id());
+                let agent      = ctx.service.agent();
+                let session_id = ctx.service.session_id();
 
                 let timer = Timer::start();
                 let result = handler(&wm);

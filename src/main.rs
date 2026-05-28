@@ -8,6 +8,8 @@ pub mod core_events;
 pub mod core_tokens;
 mod daemon;
 mod mcp;
+
+use libc;
 mod setup;
 mod socket;
 
@@ -90,7 +92,12 @@ enum Commands {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Daemon => Daemon::new().run().await,
+        Commands::Daemon => {
+            // Ignore SIGHUP so the daemon survives terminal disconnects.
+            #[cfg(unix)]
+            unsafe { libc::signal(libc::SIGHUP, libc::SIG_IGN); }
+            Daemon::new().run().await
+        }
         Commands::Mcp => mcp::run_mcp_bridge().await,
         Commands::Index { path } => {
             let output = core_graph::index_project(&path).map_err(anyhow::Error::msg)?;

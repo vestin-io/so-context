@@ -8,8 +8,13 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS events (
   id                       INTEGER PRIMARY KEY,
   ts                       TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  client                   TEXT,                     -- MCP client_info.name
+  client_version           TEXT,                     -- MCP client_info.version
   agent                    TEXT    NOT NULL,
+  agent_version            TEXT,                     -- MCP client version (e.g. 0.134.0)
+  agent_source             TEXT    NOT NULL,         -- forwarded | hook | client_info | env | fallback
   session_id               TEXT    NOT NULL,
+  session_source           TEXT    NOT NULL,         -- forwarded | hook | client_info | env | fallback
   project                  TEXT,                     -- absolute project root, nullable
   tool                     TEXT    NOT NULL,          -- so_read / so_search / so_watch / ...
   params                   TEXT,                     -- JSON blob of tool arguments

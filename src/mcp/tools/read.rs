@@ -23,17 +23,8 @@ pub fn route() -> ToolRoute<BuiltinServer> {
 }
 
 fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rmcp::ErrorData> {
-    let meta_args = ctx.arguments.as_ref();
-    let agent = meta_args
-        .and_then(|a| a.get("_so_agent"))
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
-        .unwrap_or_else(|| ctx.service.agent());
-    let session_id = meta_args
-        .and_then(|a| a.get("_so_session_id"))
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
-        .unwrap_or_else(|| ctx.service.session_id());
+    let agent      = ctx.service.agent();
+    let session_id = ctx.service.session_id();
 
     let args = ctx
         .arguments
@@ -49,8 +40,6 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
         .and_then(serde_json::Value::as_str)
         .unwrap_or("full");
 
-    // For outline/graph modes, read the raw file size before processing so we
-    // can compute estimated_origin_tokens (what the agent would have read in full).
     let full_file_tokens: Option<i64> = if mode == "outline" || mode == "graph" {
         std::fs::read_to_string(path).ok().map(|c| count_tokens(&c))
     } else {
@@ -71,11 +60,7 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
             let actual = count_tokens(&output);
             ev.actual_tokens = Some(actual);
             ev.estimated_origin_tokens = Some(match mode {
-                // outline/graph: agent would have read the full file
-                "outline" | "graph" => {
-                    full_file_tokens.unwrap_or(actual)
-                }
-                // full: no saving — same as actual
+                "outline" | "graph" => full_file_tokens.unwrap_or(actual),
                 _ => actual,
             });
             ev.result_ok = true;

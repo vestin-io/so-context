@@ -23,17 +23,8 @@ pub fn route() -> ToolRoute<BuiltinServer> {
 }
 
 fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rmcp::ErrorData> {
-    let meta_args = ctx.arguments.as_ref();
-    let agent = meta_args
-        .and_then(|a| a.get("_so_agent"))
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
-        .unwrap_or_else(|| ctx.service.agent());
-    let session_id = meta_args
-        .and_then(|a| a.get("_so_session_id"))
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
-        .unwrap_or_else(|| ctx.service.session_id());
+    let agent      = ctx.service.agent();
+    let session_id = ctx.service.session_id();
 
     let args = ctx
         .arguments
@@ -65,9 +56,9 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
 
     match call_result {
         Ok((output, matched_files_tokens)) => {
-            ev.actual_tokens            = Some(count_tokens(&output));
-            ev.estimated_origin_tokens  = Some(matched_files_tokens);
-            ev.result_ok                = true;
+            ev.actual_tokens           = Some(count_tokens(&output));
+            ev.estimated_origin_tokens = Some(matched_files_tokens);
+            ev.result_ok               = true;
             enqueue(ev);
             Ok(CallToolResult::success(vec![Content::text(output)]))
         }
