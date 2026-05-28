@@ -27,14 +27,18 @@ pub fn route(wm: Arc<WatchManager>) -> ToolRoute<BuiltinServer> {
         move |ctx: ToolCallContext<'_, BuiltinServer>| {
             let wm = Arc::clone(&wm);
             Box::pin(async move {
-                let agent      = ctx.service.agent();
-                let session_id = ctx.service.session_id();
+                let agent         = ctx.service.agent();
+                let agent_version = ctx.service.agent_version();
+                let session_id    = ctx.service.session_id();
 
                 let timer = Timer::start();
                 let result = handler(&wm);
                 let duration_ms = timer.elapsed_ms();
 
                 let mut ev = EventRecord::new(&agent, &session_id, "so_status");
+                ev.agent_version  = agent_version;
+                ev.agent_source   = "client_info".to_string();
+                ev.session_source = "generated".to_string();
                 ev.duration_ms             = Some(duration_ms);
                 ev.estimated_origin_tokens = Some(0);
 
