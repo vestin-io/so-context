@@ -1,13 +1,8 @@
-//! Installs so-context into OpenCode's global config.
+//! Installs/uninstalls so-context into OpenCode's global config.
 //!
 //! Writes:
 //!   - MCP server entry in `~/.config/opencode/opencode.json`
-//!   - Plugin file at `~/.config/opencode/plugins/so-context.js`
-//!
-//! The plugin subscribes to `session.created` and `session.deleted` events to
-//! call `so-context ensure-watch` / `so-context unwatch` with the session ID
-//! and project directory, giving the daemon accurate per-session consumer
-//! tracking including the OpenCode session ID as agent identity.
+//!   - Plugin file at `~/.config/opencode/plugins/so-context.ts`
 
 use anyhow::{Context, Result};
 use serde_json::{Map, Value};
@@ -32,6 +27,12 @@ pub fn plugin_path() -> PathBuf {
 pub fn install(binary: &str) -> Result<()> {
     install_mcp(binary)?;
     install_plugin(binary)?;
+    Ok(())
+}
+
+pub fn uninstall() -> Result<()> {
+    uninstall_mcp()?;
+    uninstall_plugin()?;
     Ok(())
 }
 
@@ -76,8 +77,43 @@ fn install_mcp(binary: &str) -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// Plugin file
+// Uninstall
 // ---------------------------------------------------------------------------
+
+fn uninstall_mcp() -> Result<()> {
+    let path = config_path();
+    if !path.exists() {
+        println!("OpenCode: config not found, nothing to remove");
+        return Ok(());
+    }
+
+    let text = fs::read_to_string(&path)
+        .with_context(|| format!("read {}", path.display()))?;
+    let mut root: Value = serde_json::from_str(&text).unwrap_or(Value::Object(Map::new()));
+
+    if let Some(mcp) = root.as_object_mut()
+        .and_then(|o| o.get_mut("mcp"))
+        .and_then(|v| v.as_object_mut())
+    {
+        mcp.remove(SERVER_NAME);
+    }
+
+    let text = serde_json::to_string_pretty(&root)?;
+    fs::write(&path, text).with_context(|| format!("write {}", path.display()))?;
+    println!("OpenCode: removed MCP entry from {}", path.display());
+    Ok(())
+}
+
+fn uninstall_plugin() -> Result<()> {
+    let path = plugin_path();
+    if path.exists() {
+        fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
+        println!("OpenCode: removed plugin {}", path.display());
+    } else {
+        println!("OpenCode: plugin not found, nothing to remove");
+    }
+    Ok(())
+}
 
 fn install_plugin(binary: &str) -> Result<()> {
     let path = plugin_path();

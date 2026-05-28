@@ -1,4 +1,4 @@
-//! Installs so-context into Codex CLI's global config.toml.
+//! Installs/uninstalls so-context into Codex CLI's global config.toml.
 //!
 //! Config path: ~/.codex/config.toml
 //!
@@ -73,6 +73,73 @@ pub fn install(binary: &str) -> Result<()> {
         .with_context(|| format!("write {}", path.display()))?;
     println!("Codex: wrote MCP + hooks to {}", path.display());
     Ok(())
+}
+
+pub fn uninstall() -> Result<()> {
+    let path = config_path();
+    if !path.exists() {
+        println!("Codex: config not found, nothing to remove");
+        return Ok(());
+    }
+
+    let text = fs::read_to_string(&path)
+        .with_context(|| format!("read {}", path.display()))?;
+    let mut doc: DocumentMut = text.parse::<DocumentMut>().unwrap_or_else(|_| DocumentMut::new());
+
+    // Remove MCP server entry.
+    if let Some(mcp) = doc.get_mut("mcp_servers").and_then(|v| v.as_table_mut()) {
+        mcp.remove(SERVER_NAME);
+    }
+
+    // Remove hook groups for each event that contain our binary.
+    for event in &["SessionStart", "Stop"] {
+        remove_hook_group(&mut doc, event);
+    }
+
+    fs::write(&path, doc.to_string())
+        .with_context(|| format!("write {}", path.display()))?;
+    println!("Codex: removed MCP + hooks from {}", path.display());
+    Ok(())
+}
+
+/// Removes all `[[hooks.<event>]]` groups whose inner hooks array contains
+/// a command referencing `so-context`.
+fn remove_hook_group(doc: &mut DocumentMut, event: &str) {
+    let hooks_table = match doc.get_mut("hooks").and_then(|v| v.as_table_mut()) {
+        Some(t) => t,
+        None => return,
+    };
+
+    let aot = match hooks_table.get_mut(event).and_then(|v| v.as_array_of_tables_mut()) {
+        Some(a) => a,
+        None => return,
+    };
+
+    // Collect indices of groups referencing so-context, then remove them.
+    let to_remove: Vec<usize> = aot
+        .iter()
+        .enumerate()
+        .filter(|(_, group)| {
+            group
+                .get("hooks")
+                .and_then(|h| h.as_array_of_tables())
+                .map(|inner| {
+                    inner.iter().any(|h| {
+                        h.get("command")
+                            .and_then(|c| c.as_str())
+                            .map(|c| c.contains(SERVER_NAME))
+                            .unwrap_or(false)
+                    })
+                })
+                .unwrap_or(false)
+        })
+        .map(|(i, _)| i)
+        .collect();
+
+    // Remove in reverse order to keep indices stable.
+    for idx in to_remove.into_iter().rev() {
+        aot.remove(idx);
+    }
 }
 
 /// Installs (or replaces) a so-context hook in a Codex config.toml document.

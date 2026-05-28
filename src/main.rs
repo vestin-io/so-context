@@ -72,6 +72,13 @@ enum Commands {
         #[arg(long)]
         binary: Option<String>,
     },
+    /// Remove all so-context entries from Claude, OpenCode, and Codex configs.
+    Uninstall {
+        /// Path to the so-context binary used during setup (default: current executable).
+        /// Used to identify hook commands to remove.
+        #[arg(long)]
+        binary: Option<String>,
+    },
 }
 
 /// Parses CLI arguments and dispatches to the appropriate execution path.
@@ -96,13 +103,20 @@ async fn main() -> Result<()> {
             mcp::call_daemon_tool("so_unwatch", &path, agent.as_deref(), session_id.as_deref()).await
         }
         Commands::Setup { binary } => {
-            let bin = match binary {
-                Some(b) => b,
-                None => std::env::current_exe()
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_else(|_| "so-context".to_string()),
-            };
+            let bin = resolve_binary(binary);
             setup::install_all(&bin)
         }
+        Commands::Uninstall { binary } => {
+            let bin = resolve_binary(binary);
+            setup::uninstall_all(&bin)
+        }
     }
+}
+
+fn resolve_binary(binary: Option<String>) -> String {
+    binary.unwrap_or_else(|| {
+        std::env::current_exe()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "so-context".to_string())
+    })
 }
