@@ -9,7 +9,7 @@
 //     properties.info       — full Session.Info object
 //     properties.info.directory — the session's working directory
 
-export const SoContextPlugin = async ({ directory: projectDir }) => {
+export const SoContextPlugin = async ({ directory: projectDir, $ }) => {
   const binary = "{BINARY}";
 
   return {
@@ -19,7 +19,7 @@ export const SoContextPlugin = async ({ directory: projectDir }) => {
         // Prefer the session's own directory over the plugin context directory.
         const dir = event.properties?.info?.directory ?? projectDir ?? ".";
         const cmd = event.type === "session.created" ? "ensure-watch" : "unwatch";
-        await Bun.$`${binary} ${cmd} ${dir} --agent-id ${sessionId}`.nothrow().quiet();
+        await $`${binary} ${cmd} ${dir} --agent-id ${sessionId}`.nothrow().quiet();
       }
     },
   };
