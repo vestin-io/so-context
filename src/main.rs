@@ -5,6 +5,7 @@ mod core_graph;
 mod daemon;
 mod mcp;
 mod setup;
+mod socket;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -20,8 +21,13 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Run the daemon: starts the MCP stdio server and all background services.
+    /// Run the background daemon: binds a Unix socket and serves the MCP HTTP server.
+    /// Start this once; it stays alive across multiple agent sessions.
     Daemon,
+    /// Start the MCP stdio bridge for an agent session.
+    /// Connects to the running daemon and forwards MCP messages over stdio.
+    /// This is the command to register in Claude / OpenCode / Codex configs.
+    Mcp,
     /// Index a project folder into the local code graph SQLite database.
     Index {
         /// Project folder path (default: current directory).
@@ -48,6 +54,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Daemon => Daemon::new().run().await,
+        Commands::Mcp => mcp::run_mcp_bridge().await,
         Commands::Index { path } => {
             let output = core_graph::index_project(&path).map_err(anyhow::Error::msg)?;
             println!("{output}");

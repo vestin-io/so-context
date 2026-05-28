@@ -42,7 +42,7 @@ pub fn install(binary: &str) -> Result<()> {
         SERVER_NAME.to_string(),
         serde_json::json!({
             "command": binary,
-            "args": ["daemon"]
+            "args": ["mcp"]
         }),
     );
 

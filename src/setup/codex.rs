@@ -3,7 +3,7 @@
 //! Config path: ~/.codex/config.toml
 //! MCP section: [mcp_servers.so-context]
 //!              command = "..."
-//!              args = ["daemon"]
+//!              args = ["mcp"]
 
 use anyhow::{Context, Result};
 use std::fs;
@@ -44,7 +44,7 @@ pub fn install(binary: &str) -> Result<()> {
     let mut server_table = Table::new();
     server_table["command"] = value(binary);
     let mut args = Array::new();
-    args.push("daemon");
+    args.push("mcp");
     server_table["args"] = value(args);
 
     mcp_servers[SERVER_NAME] = Item::Table(server_table);
