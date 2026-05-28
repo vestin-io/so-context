@@ -54,23 +54,20 @@ const ROOTS_LIST_TIMEOUT_MS: u64 = 5_000;
 
 /// Connect to the running daemon and call a single MCP tool, then exit.
 ///
-/// `agent_id` is forwarded as the `agent_id` argument in the tool call so the
-/// daemon can track which caller is registering / deregistering the project.
-/// Pass the process PID (formatted as a string) for CLI hook invocations.
-///
 /// Used by `so-context ensure-watch` and `so-context unwatch` CLI subcommands,
 /// which are invoked by agent session hooks.
-pub async fn call_daemon_tool(tool_name: &str, path: &str, agent_id: Option<&str>) -> Result<()> {
+pub async fn call_daemon_tool(
+    tool_name: &str,
+    path: &str,
+    agent: Option<&str>,
+    session_id: Option<&str>,
+) -> Result<()> {
     let sock = socket_path();
     if !sock.exists() {
-        // Daemon not running — silently succeed so hooks don't break agent startup.
-        eprintln!(
-            "so-context: daemon not running, skipping {tool_name} for {path}"
-        );
+        eprintln!("so-context: daemon not running, skipping {tool_name} for {path}");
         return Ok(());
     }
 
-    // Resolve to absolute path before sending.
     let abs_path = if std::path::Path::new(path).is_absolute() {
         path.to_string()
     } else {
@@ -87,17 +84,20 @@ pub async fn call_daemon_tool(tool_name: &str, path: &str, agent_id: Option<&str
         .await
         .map_err(|e| anyhow::anyhow!("connect to daemon: {e}"))?;
 
+    let mut args = serde_json::json!({ "path": abs_path });
+    if let Some(a) = agent {
+        args["agent"] = serde_json::Value::String(a.to_string());
+    }
+    if let Some(s) = session_id {
+        args["session_id"] = serde_json::Value::String(s.to_string());
+    }
+
     let result = client
         .peer()
-        .call_tool(CallToolRequestParams::new(tool_name.to_owned()).with_arguments(
-            {
-                let mut args = serde_json::json!({ "path": abs_path });
-                if let Some(id) = agent_id {
-                    args["agent_id"] = serde_json::Value::String(id.to_string());
-                }
-                args.as_object().unwrap().clone()
-            }
-        ))
+        .call_tool(
+            CallToolRequestParams::new(tool_name.to_owned())
+                .with_arguments(args.as_object().unwrap().clone()),
+        )
         .await
         .map_err(|e| anyhow::anyhow!("{tool_name} failed: {e}"))?;
 
@@ -228,10 +228,12 @@ pub struct BuiltinServer {
     tool_router: ToolRouter<Self>,
     wm: Arc<WatchManager>,
     client_supports_roots: std::sync::atomic::AtomicBool,
-    /// Identifies the connected agent session. Seeded with a UUID v4 on
-    /// construction so every connection is unique even before the MCP handshake
-    /// fires. Overwritten with `"<name>/<version>"` from `client_info` once
-    /// `initialize()` is called, giving a human-readable label when available.
+    /// Agent name extracted from `client_info.name` during the MCP handshake.
+    /// Defaults to `"unknown"` until handshake fires.
+    agent: Arc<std::sync::Mutex<String>>,
+    /// Per-connection session ID — seeded with a UUID v4 so every connection
+    /// is unique even before the handshake. Overwritten with `client_info.version`
+    /// (or left as UUID for anonymous MCP callers).
     session_id: Arc<std::sync::Mutex<String>>,
 }
 
@@ -248,14 +250,13 @@ impl BuiltinServer {
             tool_router,
             wm,
             client_supports_roots: std::sync::atomic::AtomicBool::new(false),
+            agent: Arc::new(std::sync::Mutex::new("unknown".to_string())),
             session_id: Arc::new(std::sync::Mutex::new(Uuid::new_v4().to_string())),
         }
     }
 
-    /// Returns the agent session ID.
-    fn agent_id(&self) -> String {
-        self.session_id.lock().unwrap().clone()
-    }
+    fn agent(&self) -> String { self.agent.lock().unwrap().clone() }
+    fn session_id(&self) -> String { self.session_id.lock().unwrap().clone() }
 }
 
 impl ServerHandler for BuiltinServer {
@@ -277,24 +278,24 @@ impl ServerHandler for BuiltinServer {
         self.client_supports_roots
             .store(supports_roots, std::sync::atomic::Ordering::Relaxed);
 
-        // Refine session_id to "<name>/<version>" now that we have client info.
+        // Extract agent name and session ID from client_info.
         {
             let info = &request.client_info;
-            let id = format!("{}/{}", info.name, info.version);
-            *self.session_id.lock().unwrap() = id;
+            *self.agent.lock().unwrap() = info.name.clone();
+            *self.session_id.lock().unwrap() = info.version.clone();
         }
 
         if let Some(peer_info) = context.peer.peer_info() {
             if let Ok(v) = serde_json::to_value(&peer_info) {
                 for key in ["rootUri", "root_uri"] {
                     if let Some(uri) = v.get(key).and_then(|v| v.as_str()) {
-                        self.wm.ensure_watching(&file_uri_to_path(uri), Some(self.agent_id()).as_deref());
+                        self.wm.ensure_watching(&file_uri_to_path(uri), Some(&self.agent()), Some(&self.session_id()));
                     }
                 }
                 if let Some(folders) = v.get("workspaceFolders").and_then(|v| v.as_array()) {
                     for folder in folders {
                         if let Some(uri) = folder.get("uri").and_then(|v| v.as_str()) {
-                            self.wm.ensure_watching(&file_uri_to_path(uri), Some(self.agent_id()).as_deref());
+                            self.wm.ensure_watching(&file_uri_to_path(uri), Some(&self.agent()), Some(&self.session_id()));
                         }
                     }
                 }
@@ -323,7 +324,7 @@ impl ServerHandler for BuiltinServer {
                 .load(std::sync::atomic::Ordering::Relaxed)
             {
                 if let Ok(cwd) = std::env::current_dir() {
-                    self.wm.ensure_watching(cwd.to_string_lossy().as_ref(), Some(self.agent_id()).as_deref());
+                    self.wm.ensure_watching(cwd.to_string_lossy().as_ref(), Some(&self.agent()), Some(&self.session_id()));
                 }
                 return;
             }
@@ -339,24 +340,24 @@ impl ServerHandler for BuiltinServer {
                     if roots_result.roots.is_empty() {
                         eprintln!("[mcp] client returned no roots; falling back to cwd");
                         if let Ok(cwd) = std::env::current_dir() {
-                            self.wm.ensure_watching(cwd.to_string_lossy().as_ref(), Some(self.agent_id()).as_deref());
+                            self.wm.ensure_watching(cwd.to_string_lossy().as_ref(), Some(&self.agent()), Some(&self.session_id()));
                         }
                     } else {
                         for root in &roots_result.roots {
-                            self.wm.ensure_watching(&file_uri_to_path(&root.uri), Some(self.agent_id()).as_deref());
+                            self.wm.ensure_watching(&file_uri_to_path(&root.uri), Some(&self.agent()), Some(&self.session_id()));
                         }
                     }
                 }
                 Ok(Err(e)) => {
                     eprintln!("[mcp] roots/list failed: {e}; falling back to cwd");
                     if let Ok(cwd) = std::env::current_dir() {
-                        self.wm.ensure_watching(cwd.to_string_lossy().as_ref(), Some(self.agent_id()).as_deref());
+                        self.wm.ensure_watching(cwd.to_string_lossy().as_ref(), Some(&self.agent()), Some(&self.session_id()));
                     }
                 }
                 Err(_timeout) => {
                     eprintln!("[mcp] roots/list timed out; falling back to cwd");
                     if let Ok(cwd) = std::env::current_dir() {
-                        self.wm.ensure_watching(cwd.to_string_lossy().as_ref(), Some(self.agent_id()).as_deref());
+                        self.wm.ensure_watching(cwd.to_string_lossy().as_ref(), Some(&self.agent()), Some(&self.session_id()));
                     }
                 }
             }
@@ -376,7 +377,7 @@ impl ServerHandler for BuiltinServer {
            + '_ {
         async move {
             if let Ok(cwd) = std::env::current_dir() {
-                self.wm.ensure_watching(cwd.to_string_lossy().as_ref(), Some(self.agent_id()).as_deref());
+                self.wm.ensure_watching(cwd.to_string_lossy().as_ref(), Some(&self.agent()), Some(&self.session_id()));
             }
 
             self.tool_router

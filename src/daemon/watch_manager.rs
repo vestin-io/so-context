@@ -12,7 +12,7 @@
 //! URI helpers (`file_uri_to_path`) are also kept here so MCP tools have a
 //! single import point.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -25,8 +25,35 @@ use crate::core_graph::GraphDb;
 use crate::core_graph::watch::is_meaningful_change;
 
 // ---------------------------------------------------------------------------
-// Public status types
+// Public types
 // ---------------------------------------------------------------------------
+
+/// Identifies one agent session consuming a project watch.
+#[derive(Debug, Clone)]
+pub struct Consumer {
+    /// Agent name — e.g. `"claude"`, `"opencode"`, `"codex"`.
+    /// Defaults to `"unknown"` if not provided.
+    pub agent: String,
+    /// Session identifier within the agent. Auto-generated UUID if not provided.
+    pub session_id: String,
+}
+
+impl Consumer {
+    /// Build a `Consumer`, generating a UUID session_id when none is given.
+    pub fn new(agent: Option<&str>, session_id: Option<&str>) -> Self {
+        Self {
+            agent: agent.unwrap_or("unknown").to_string(),
+            session_id: session_id
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+        }
+    }
+
+    /// The unique key used in the consumer map: `"<agent>:<session_id>"`.
+    pub fn key(&self) -> String {
+        format!("{}:{}", self.agent, self.session_id)
+    }
+}
 
 /// Snapshot of a single watched project's runtime state.
 #[derive(Debug, Clone)]
@@ -35,8 +62,8 @@ pub struct ProjectStatus {
     pub state: WatchState,
     /// Number of active consumers holding a watch reference.
     pub ref_count: usize,
-    /// Agent IDs (or other caller-supplied strings) currently watching.
-    pub consumers: Vec<String>,
+    /// Active consumers currently watching this project.
+    pub consumers: Vec<Consumer>,
 }
 
 #[derive(Debug, Clone)]
@@ -62,8 +89,8 @@ struct StopSignal;
 
 struct WatchHandle {
     state: Arc<Mutex<WatchState>>,
-    /// Active consumer IDs. A `None` entry represents an anonymous caller.
-    consumers: HashSet<String>,
+    /// Active consumers, keyed by `Consumer::key()` (`"<agent>:<session_id>"`).
+    consumers: HashMap<String, Consumer>,
     /// Dropping this sender causes the watch thread to stop.
     _stop_tx: Sender<StopSignal>,
     _thread: JoinHandle<()>,
@@ -100,15 +127,16 @@ impl WatchManager {
 
     // -----------------------------------------------------------------------
     // Public API
-    // -----------------------------------------------------------------------    /// Resolves `path` to its canonical project root and starts watching it if
-    /// not already registered.
+    // -----------------------------------------------------------------------
+
+    /// Resolves `path` to its canonical project root and starts watching it if
+    /// not already registered. If already registered, increments the ref-count.
     ///
-    /// If already registered, the ref-count is incremented and `agent_id` is
-    /// added to the consumer set (if provided) — the watch thread is reused.
-    ///
-    /// `agent_id` should be a unique string identifying the calling agent
-    /// session (e.g. `"claude-abc123"`). Pass `None` for anonymous callers.
-    pub fn ensure_watching(&self, path: &str, agent_id: Option<&str>) {
+    /// - `agent` — name of the calling agent (`"claude"`, `"opencode"`, …).
+    ///   Defaults to `"unknown"` if `None`.
+    /// - `session_id` — unique ID for this agent session. Auto-generated UUID
+    ///   if `None`, ensuring multiple anonymous callers are tracked separately.
+    pub fn ensure_watching(&self, path: &str, agent: Option<&str>, session_id: Option<&str>) {
         let root = match resolve_project_root(path) {
             Some(r) => r,
             None => {
@@ -117,23 +145,23 @@ impl WatchManager {
             }
         };
 
+        let consumer = Consumer::new(agent, session_id);
+        let key = consumer.key();
+
         let mut inner = self.inner.lock().unwrap();
 
         if let Some(handle) = inner.projects.get_mut(&root) {
-            // Already watching — just record the new consumer.
-            let id = agent_id.unwrap_or("anonymous").to_string();
-            handle.consumers.insert(id.clone());
+            handle.consumers.insert(key.clone(), consumer);
             eprintln!(
-                "[watch] ref+1 for {} (consumer: {id}, total: {})",
+                "[watch] ref+1 for {} (consumer: {key}, total: {})",
                 root.display(),
                 handle.ref_count()
             );
             return;
         }
 
-        // Not yet watching — spawn the thread.
-        drop(inner); // release lock before potentially slow work
-        match self.start_watch_thread(root.clone(), agent_id) {
+        drop(inner);
+        match self.start_watch_thread(root.clone(), consumer) {
             Ok(()) => eprintln!("[watch] watching: {}", root.display()),
             Err(e) => eprintln!("[watch] failed to watch {}: {e}", root.display()),
         }
@@ -141,17 +169,17 @@ impl WatchManager {
 
     /// Decrements the ref-count for the project at `path`.
     ///
-    /// `agent_id` should match the value passed to `ensure_watching`. If the
-    /// ref-count reaches zero the watch thread is stopped and the entry is
-    /// removed from the registry.
+    /// The consumer is matched by `"<agent>:<session_id>"`. If the ref-count
+    /// reaches zero the watch thread is stopped.
     ///
-    /// Returns `true` if the project was registered (even if not fully stopped
-    /// yet), `false` if it was not known.
-    pub fn unwatch(&self, path: &str, agent_id: Option<&str>) -> bool {
+    /// Returns `true` if the project was registered, `false` if unknown.
+    pub fn unwatch(&self, path: &str, agent: Option<&str>, session_id: Option<&str>) -> bool {
         let root = match resolve_project_root(path) {
             Some(r) => r,
             None => return false,
         };
+
+        let key = Consumer::new(agent, session_id).key();
 
         let mut inner = self.inner.lock().unwrap();
         let handle = match inner.projects.get_mut(&root) {
@@ -159,16 +187,14 @@ impl WatchManager {
             None => return false,
         };
 
-        let id = agent_id.unwrap_or("anonymous").to_string();
-        handle.consumers.remove(&id);
+        handle.consumers.remove(&key);
 
         if handle.ref_count() == 0 {
-            // Last consumer gone — drop the handle (stop_tx disconnects, thread exits).
             inner.projects.remove(&root);
             eprintln!("[watch] stopped (no consumers): {}", root.display());
         } else {
             eprintln!(
-                "[watch] ref-1 for {} (removed: {id}, remaining: {})",
+                "[watch] ref-1 for {} (removed: {key}, remaining: {})",
                 root.display(),
                 handle.ref_count()
             );
@@ -187,20 +213,12 @@ impl WatchManager {
                 path: path.clone(),
                 state: handle.state.lock().unwrap().clone(),
                 ref_count: handle.ref_count(),
-                consumers: handle.consumers.iter().cloned().collect(),
+                consumers: handle.consumers.values().cloned().collect(),
             })
             .collect()
     }
 
-    // -----------------------------------------------------------------------
-    // Internal
-    // -----------------------------------------------------------------------
-
-    fn start_watch_thread(
-        &self,
-        root: PathBuf,
-        agent_id: Option<&str>,
-    ) -> Result<(), String> {
+    fn start_watch_thread(&self, root: PathBuf, consumer: Consumer) -> Result<(), String> {
         let state = Arc::new(Mutex::new(WatchState::Indexing));
         let (stop_tx, stop_rx) = mpsc::channel::<StopSignal>();
 
@@ -213,17 +231,12 @@ impl WatchManager {
             })
             .map_err(|e| format!("failed to spawn watch thread: {e}"))?;
 
-        let mut consumers = HashSet::new();
-        consumers.insert(agent_id.unwrap_or("anonymous").to_string());
+        let mut consumers = HashMap::new();
+        consumers.insert(consumer.key(), consumer);
 
         self.inner.lock().unwrap().projects.insert(
             root,
-            WatchHandle {
-                state,
-                consumers,
-                _stop_tx: stop_tx,
-                _thread: thread,
-            },
+            WatchHandle { state, consumers, _stop_tx: stop_tx, _thread: thread },
         );
 
         Ok(())

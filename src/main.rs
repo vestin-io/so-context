@@ -46,11 +46,12 @@ enum Commands {
         /// Project directory to watch (default: current directory).
         #[arg(default_value = ".")]
         path: String,
-        /// Agent session identifier to track as a consumer.
-        /// Pass the session ID from the hook context so the daemon can track
-        /// which agent sessions are actively watching each project.
+        /// Name of the calling agent (e.g. "claude", "opencode", "codex").
         #[arg(long)]
-        agent_id: Option<String>,
+        agent: Option<String>,
+        /// Session identifier for this agent instance. Auto-generated if omitted.
+        #[arg(long)]
+        session_id: Option<String>,
     },
     /// Tell the running daemon to stop watching a project directory.
     /// Intended for use in agent session-end hooks.
@@ -58,9 +59,12 @@ enum Commands {
         /// Project directory to unwatch (default: current directory).
         #[arg(default_value = ".")]
         path: String,
-        /// Agent session identifier — must match the value passed to ensure-watch.
+        /// Agent name — must match the value passed to ensure-watch.
         #[arg(long)]
-        agent_id: Option<String>,
+        agent: Option<String>,
+        /// Session ID — must match the value passed to ensure-watch.
+        #[arg(long)]
+        session_id: Option<String>,
     },
     /// Install so-context as an MCP server in Claude, OpenCode, and Codex configs.
     Setup {
@@ -85,13 +89,11 @@ async fn main() -> Result<()> {
         Commands::Watch { path } => {
             core_graph::watch_project(&path).map_err(anyhow::Error::msg)
         }
-        Commands::EnsureWatch { path, agent_id } => {
-            let id = agent_id.unwrap_or_else(|| format!("pid:{}", std::process::id()));
-            mcp::call_daemon_tool("so_watch", &path, Some(&id)).await
+        Commands::EnsureWatch { path, agent, session_id } => {
+            mcp::call_daemon_tool("so_watch", &path, agent.as_deref(), session_id.as_deref()).await
         }
-        Commands::Unwatch { path, agent_id } => {
-            let id = agent_id.unwrap_or_else(|| format!("pid:{}", std::process::id()));
-            mcp::call_daemon_tool("so_unwatch", &path, Some(&id)).await
+        Commands::Unwatch { path, agent, session_id } => {
+            mcp::call_daemon_tool("so_unwatch", &path, agent.as_deref(), session_id.as_deref()).await
         }
         Commands::Setup { binary } => {
             let bin = match binary {

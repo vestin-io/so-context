@@ -40,11 +40,15 @@ fn handler(wm: &WatchManager) -> Result<CallToolResult, rmcp::ErrorData> {
                 WatchState::Failed(e) => format!("failed: {e}"),
             };
             let mut consumers = s.consumers.clone();
-            consumers.sort();
+            consumers.sort_by(|a, b| a.key().cmp(&b.key()));
             let consumer_str = if consumers.is_empty() {
                 "none".to_string()
             } else {
-                consumers.join(", ")
+                consumers
+                    .iter()
+                    .map(|c| format!("{}({})", c.agent, c.session_id))
+                    .collect::<Vec<_>>()
+                    .join(", ")
             };
             format!(
                 "{} — {state}  [refs: {}, consumers: {consumer_str}]",

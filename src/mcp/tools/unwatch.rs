@@ -1,7 +1,4 @@
 //! `so_unwatch` tool — deregister a project path from watching.
-//!
-//! Decrements the ref-count for the project. The watch thread is only stopped
-//! when the last consumer calls unwatch.
 
 use std::sync::Arc;
 
@@ -16,20 +13,18 @@ pub fn route(wm: Arc<WatchManager>) -> ToolRoute<BuiltinServer> {
     let mut schema = Map::new();
     schema.insert("type".into(), Value::String("object".into()));
     let mut props = Map::new();
-    props.insert(
-        "path".into(),
-        json!({
-            "type": "string",
-            "description": "Absolute path to the project directory to stop watching."
-        }),
-    );
-    props.insert(
-        "agent_id".into(),
-        json!({
-            "type": "string",
-            "description": "The agent_id that was passed to so_watch. Must match to correctly decrement the ref-count."
-        }),
-    );
+    props.insert("path".into(), json!({
+        "type": "string",
+        "description": "Absolute path to the project directory to stop watching."
+    }));
+    props.insert("agent".into(), json!({
+        "type": "string",
+        "description": "Agent name — must match the value passed to so_watch."
+    }));
+    props.insert("session_id".into(), json!({
+        "type": "string",
+        "description": "Session ID — must match the value passed to so_watch."
+    }));
     schema.insert("properties".into(), Value::Object(props));
     schema.insert("required".into(), json!(["path"]));
 
@@ -49,18 +44,16 @@ pub fn route(wm: Arc<WatchManager>) -> ToolRoute<BuiltinServer> {
                     .and_then(|v| v.as_str())
                     .unwrap_or(".")
                     .to_string();
-                let agent_id = args
-                    .and_then(|a| a.get("agent_id"))
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
+                let agent = args.and_then(|a| a.get("agent")).and_then(|v| v.as_str()).map(str::to_string);
+                let session_id = args.and_then(|a| a.get("session_id")).and_then(|v| v.as_str()).map(str::to_string);
 
-                let removed = wm.unwatch(&path, agent_id.as_deref());
-
+                let removed = wm.unwatch(&path, agent.as_deref(), session_id.as_deref());
                 let msg = if removed {
-                    match agent_id {
-                        Some(id) => format!("unwatched: {path} (agent: {id})"),
-                        None    => format!("unwatched: {path}"),
-                    }
+                    format!(
+                        "unwatched: {path} (agent: {}, session: {})",
+                        agent.as_deref().unwrap_or("unknown"),
+                        session_id.as_deref().unwrap_or("auto"),
+                    )
                 } else {
                     format!("not watched: {path}")
                 };

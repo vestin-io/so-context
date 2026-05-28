@@ -70,7 +70,7 @@ fn install_hook(root: &mut Map<String, Value>, event: &str, binary: &str, subcom
     // Claude Code passes the event JSON on stdin; we extract session_id with jq.
     // Falls back to "unknown" if jq is not installed.
     let command = format!(
-        r#"SESSION_ID=$(jq -r '.session_id // "unknown"' 2>/dev/null || echo "unknown"); {binary} {subcommand} "$CLAUDE_PROJECT_DIR" --agent-id "claude:$SESSION_ID""#
+        r#"SESSION_ID=$(jq -r '.session_id // "unknown"' 2>/dev/null || echo "unknown"); {binary} {subcommand} "$CLAUDE_PROJECT_DIR" --agent claude --session-id "$SESSION_ID""#
     );
 
     let new_hook = json!({

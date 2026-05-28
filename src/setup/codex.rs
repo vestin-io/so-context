@@ -95,7 +95,7 @@ fn install_hook(
     agent_name: &str,
 ) {
     // Agent ID is "<agent_name>:<path>" — unique per agent type + project directory.
-    let command_str = format!(r#"{binary} {subcommand} {path_arg} --agent-id "{agent_name}:{path_arg}""#);
+    let command_str = format!(r#"{binary} {subcommand} {path_arg} --agent {agent_name} --session-id "{path_arg}""#);
 
     // Ensure [hooks] table exists.
     if doc.get("hooks").is_none() {
