@@ -59,9 +59,8 @@ fn open_db() -> Result<Connection, String> {
 pub struct EventRecord {
     pub client:                  Option<String>,
     pub client_version:          Option<String>,
-    pub agent:                   String,
-    pub agent_version:           Option<String>,
-    pub agent_source:            String,
+    pub client_source:           String,
+    pub agent:                   Option<String>,
     pub session_id:              String,
     pub session_source:          String,
     pub project:                 Option<String>,
@@ -74,14 +73,13 @@ pub struct EventRecord {
 }
 
 impl EventRecord {
-    pub fn new(agent: &str, session_id: &str, tool: &str) -> Self {
+    pub fn new(session_id: &str, tool: &str) -> Self {
         Self {
-            agent:      agent.to_string(),
-            agent_source: "fallback".to_string(),
-            session_id: session_id.to_string(),
+            client_source:  "fallback".to_string(),
+            session_id:     session_id.to_string(),
             session_source: "fallback".to_string(),
-            tool:       tool.to_string(),
-            result_ok:  true,
+            tool:           tool.to_string(),
+            result_ok:      true,
             ..Default::default()
         }
     }
@@ -165,18 +163,17 @@ fn flush_batch(conn: &Connection, batch: &mut Vec<EventRecord>) {
     for ev in batch.iter() {
         if let Err(e) = tx.execute(
             "INSERT INTO events(
-                client, client_version,
-                agent, agent_version, agent_source,
+                client, client_version, client_source,
+                agent,
                 session_id, session_source, project, tool, params,
                 result_ok, duration_ms,
                 estimated_origin_tokens, actual_tokens
-             ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
+             ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
             params![
                 ev.client,
                 ev.client_version,
+                ev.client_source,
                 ev.agent,
-                ev.agent_version,
-                ev.agent_source,
                 ev.session_id,
                 ev.session_source,
                 ev.project,
@@ -211,9 +208,8 @@ pub struct EventRow {
     pub ts:                      String,
     pub client:                  Option<String>,
     pub client_version:          Option<String>,
-    pub agent:                   String,
-    pub agent_version:           Option<String>,
-    pub agent_source:            String,
+    pub client_source:           String,
+    pub agent:                   Option<String>,
     pub session_id:              String,
     pub session_source:          String,
     pub project:                 Option<String>,
@@ -235,7 +231,7 @@ impl EventRow {
 }
 
 pub struct EventQuery {
-    pub agent:      Option<String>,
+    pub client:     Option<String>,
     pub session_id: Option<String>,
     pub tool:       Option<String>,
     pub project:    Option<String>,
@@ -244,7 +240,7 @@ pub struct EventQuery {
 
 impl Default for EventQuery {
     fn default() -> Self {
-        Self { agent: None, session_id: None, tool: None, project: None, limit: 50 }
+        Self { client: None, session_id: None, tool: None, project: None, limit: 50 }
     }
 }
 
@@ -254,8 +250,8 @@ pub fn query_events(q: &EventQuery) -> Result<Vec<EventRow>, String> {
     let mut conditions: Vec<String> = Vec::new();
     let mut values: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
-    if let Some(a) = &q.agent {
-        conditions.push(format!("agent = ?{}", values.len() + 1));
+    if let Some(a) = &q.client {
+        conditions.push(format!("client = ?{}", values.len() + 1));
         values.push(Box::new(a.clone()));
     }
     if let Some(s) = &q.session_id {
@@ -281,8 +277,8 @@ pub fn query_events(q: &EventQuery) -> Result<Vec<EventRow>, String> {
     let limit_param = values.len();
 
     let sql = format!(
-        "SELECT id, ts, client, client_version,
-                agent, agent_version, agent_source, session_id, session_source, project, tool, params,
+        "SELECT id, ts, client, client_version, client_source,
+                agent, session_id, session_source, project, tool, params,
                 result_ok, duration_ms, estimated_origin_tokens, actual_tokens
          FROM events
          {where_clause}
@@ -300,18 +296,17 @@ pub fn query_events(q: &EventQuery) -> Result<Vec<EventRow>, String> {
                 ts:                      row.get(1)?,
                 client:                  row.get(2)?,
                 client_version:          row.get(3)?,
-                agent:                   row.get(4)?,
-                agent_version:           row.get(5)?,
-                agent_source:            row.get(6)?,
-                session_id:              row.get(7)?,
-                session_source:          row.get(8)?,
-                project:                 row.get(9)?,
-                tool:                    row.get(10)?,
-                params:                  row.get(11)?,
-                result_ok:               row.get::<_, i32>(12)? != 0,
-                duration_ms:             row.get(13)?,
-                estimated_origin_tokens: row.get(14)?,
-                actual_tokens:           row.get(15)?,
+                client_source:           row.get(4)?,
+                agent:                   row.get(5)?,
+                session_id:              row.get(6)?,
+                session_source:          row.get(7)?,
+                project:                 row.get(8)?,
+                tool:                    row.get(9)?,
+                params:                  row.get(10)?,
+                result_ok:               row.get::<_, i32>(11)? != 0,
+                duration_ms:             row.get(12)?,
+                estimated_origin_tokens: row.get(13)?,
+                actual_tokens:           row.get(14)?,
             })
         })
         .map_err(|e| format!("query: {e}"))?;
@@ -323,13 +318,13 @@ pub fn query_events(q: &EventQuery) -> Result<Vec<EventRow>, String> {
     Ok(out)
 }
 
-pub fn query_stats(agent: Option<&str>, session_id: Option<&str>) -> Result<String, String> {
+pub fn query_stats(client: Option<&str>, session_id: Option<&str>) -> Result<String, String> {
     let conn = open_db()?;
 
     let mut conditions = Vec::new();
     let mut vals: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-    if let Some(a) = agent {
-        conditions.push(format!("agent = ?{}", vals.len() + 1));
+    if let Some(a) = client {
+        conditions.push(format!("client = ?{}", vals.len() + 1));
         vals.push(Box::new(a.to_string()));
     }
     if let Some(s) = session_id {

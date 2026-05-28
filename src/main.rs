@@ -52,10 +52,10 @@ enum Commands {
         /// Project directory to watch (default: current directory).
         #[arg(default_value = ".")]
         path: String,
-        /// Name of the calling agent (e.g. "claude", "opencode", "codex").
+        /// MCP client name (e.g. "claude", "opencode", "codex").
         #[arg(long)]
-        agent: Option<String>,
-        /// Session identifier for this agent instance. Auto-generated if omitted.
+        client: Option<String>,
+        /// Session identifier for this connection. Auto-generated if omitted.
         #[arg(long)]
         session_id: Option<String>,
     },
@@ -65,9 +65,9 @@ enum Commands {
         /// Project directory to unwatch (default: current directory).
         #[arg(default_value = ".")]
         path: String,
-        /// Agent name — must match the value passed to ensure-watch.
+        /// Client name — must match the value passed to ensure-watch.
         #[arg(long)]
-        agent: Option<String>,
+        client: Option<String>,
         /// Session ID — must match the value passed to ensure-watch.
         #[arg(long)]
         session_id: Option<String>,
@@ -107,11 +107,11 @@ async fn main() -> Result<()> {
         Commands::Watch { path } => {
             core_graph::watch_project(&path).map_err(anyhow::Error::msg)
         }
-        Commands::EnsureWatch { path, agent, session_id } => {
-            mcp::send_ctrl_request("watch", &path, agent.as_deref(), session_id.as_deref()).await
+        Commands::EnsureWatch { path, client, session_id } => {
+            mcp::send_ctrl_request("watch", &path, client.as_deref(), session_id.as_deref()).await
         }
-        Commands::Unwatch { path, agent, session_id } => {
-            mcp::send_ctrl_request("unwatch", &path, agent.as_deref(), session_id.as_deref()).await
+        Commands::Unwatch { path, client, session_id } => {
+            mcp::send_ctrl_request("unwatch", &path, client.as_deref(), session_id.as_deref()).await
         }
         Commands::Setup { binary } => {
             let bin = resolve_binary(binary);

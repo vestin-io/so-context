@@ -23,9 +23,9 @@ pub fn route() -> ToolRoute<BuiltinServer> {
 }
 
 fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rmcp::ErrorData> {
-    let agent         = ctx.service.agent();
-    let agent_version = ctx.service.agent_version();
-    let session_id    = ctx.service.session_id();
+    let client         = ctx.service.client();
+    let client_version = ctx.service.client_version();
+    let session_id     = ctx.service.session_id();
 
     let args = ctx
         .arguments
@@ -51,9 +51,10 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
     let call_result = core_read::read(path, mode);
     let duration_ms = timer.elapsed_ms();
 
-    let mut ev = EventRecord::new(&agent, &session_id, "so_read");
-    ev.agent_version  = agent_version;
-    ev.agent_source   = "client_info".to_string();
+    let mut ev = EventRecord::new(&session_id, "so_read");
+    ev.client         = client;
+    ev.client_version = client_version;
+    ev.client_source  = "client_info".to_string();
     ev.session_source = "generated".to_string();
     ev.project     = Some(path.to_string());
     ev.params      = Some(serde_json::json!({ "path": path, "mode": mode }).to_string());

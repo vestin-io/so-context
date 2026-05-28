@@ -127,12 +127,12 @@ fn dispatch_ctrl(msg: &serde_json::Value, wm: &WatchManager) {
         eprintln!("so-context daemon: ctrl missing path in {method} message");
         return;
     }
-    let agent      = params.and_then(|p| p.get("agent")).and_then(|v| v.as_str());
+    let client     = params.and_then(|p| p.get("client")).and_then(|v| v.as_str());
     let session_id = params.and_then(|p| p.get("session_id")).and_then(|v| v.as_str());
 
     match method {
-        "watch"   => { wm.ensure_watching(path, agent, session_id); }
-        "unwatch" => { wm.unwatch(path, agent, session_id); }
+        "watch"   => { wm.ensure_watching(path, client, session_id); }
+        "unwatch" => { wm.unwatch(path, client, session_id); }
         other     => { eprintln!("so-context daemon: ctrl unknown method: {other}"); }
     }
 }

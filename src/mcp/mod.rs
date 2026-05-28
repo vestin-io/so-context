@@ -57,7 +57,7 @@ const ROOTS_LIST_TIMEOUT_MS: u64 = 5_000;
 pub async fn send_ctrl_request(
     method: &str,
     path: &str,
-    agent: Option<&str>,
+    client: Option<&str>,
     session_id: Option<&str>,
 ) -> Result<()> {
     use tokio::io::AsyncWriteExt;
@@ -82,7 +82,7 @@ pub async fn send_ctrl_request(
         "method": method,
         "params": {
             "path":       abs_path,
-            "agent":      agent,
+            "client":     client,
             "session_id": session_id,
         }
     });
@@ -162,10 +162,10 @@ pub struct BuiltinServer {
     tool_router: ToolRouter<Self>,
     wm: Arc<WatchManager>,
     client_supports_roots: std::sync::atomic::AtomicBool,
-    /// Agent name from `client_info.name` (e.g. `"opencode"`).
-    agent: Arc<std::sync::Mutex<String>>,
-    /// Agent version from `client_info.version` (e.g. `"1.15.12"`).
-    agent_version: Arc<std::sync::Mutex<Option<String>>>,
+    /// MCP client app name from `client_info.name` (e.g. `"opencode"`).
+    client: Arc<std::sync::Mutex<Option<String>>>,
+    /// MCP client app version from `client_info.version` (e.g. `"1.15.12"`).
+    client_version: Arc<std::sync::Mutex<Option<String>>>,
     /// Per-connection session ID — UUID v4 generated at connection time.
     /// The MCP protocol has no session ID; this uniquely identifies the connection.
     session_id: Arc<std::sync::Mutex<String>>,
@@ -182,14 +182,14 @@ impl BuiltinServer {
             tool_router,
             wm,
             client_supports_roots: std::sync::atomic::AtomicBool::new(false),
-            agent: Arc::new(std::sync::Mutex::new("unknown".to_string())),
-            agent_version: Arc::new(std::sync::Mutex::new(None)),
+            client: Arc::new(std::sync::Mutex::new(None)),
+            client_version: Arc::new(std::sync::Mutex::new(None)),
             session_id: Arc::new(std::sync::Mutex::new(Uuid::new_v4().to_string())),
         }
     }
 
-    pub fn agent(&self) -> String { self.agent.lock().unwrap().clone() }
-    pub fn agent_version(&self) -> Option<String> { self.agent_version.lock().unwrap().clone() }
+    pub fn client(&self) -> Option<String> { self.client.lock().unwrap().clone() }
+    pub fn client_version(&self) -> Option<String> { self.client_version.lock().unwrap().clone() }
     pub fn session_id(&self) -> String { self.session_id.lock().unwrap().clone() }
 }
 
@@ -210,11 +210,11 @@ impl ServerHandler for BuiltinServer {
         self.client_supports_roots
             .store(supports_roots, std::sync::atomic::Ordering::Relaxed);
 
-        // Extract agent name and version from client_info.
+        // Extract client name and version from client_info.
         {
             let info = &request.client_info;
-            *self.agent.lock().unwrap() = info.name.clone();
-            *self.agent_version.lock().unwrap() = Some(info.version.clone());
+            *self.client.lock().unwrap() = Some(info.name.clone());
+            *self.client_version.lock().unwrap() = Some(info.version.clone());
             // session_id stays as UUID v4 — no session ID in MCP protocol
         }
 
@@ -225,7 +225,7 @@ impl ServerHandler for BuiltinServer {
                 if let Some(uri) = params.get(key).and_then(|v| v.as_str()) {
                     self.wm.ensure_watching(
                         &file_uri_to_path(uri),
-                        Some(&self.agent()),
+                        self.client().as_deref(),
                         Some(&self.session_id()),
                     );
                 }
@@ -235,7 +235,7 @@ impl ServerHandler for BuiltinServer {
                     if let Some(uri) = folder.get("uri").and_then(|v| v.as_str()) {
                         self.wm.ensure_watching(
                             &file_uri_to_path(uri),
-                            Some(&self.agent()),
+                            self.client().as_deref(),
                             Some(&self.session_id()),
                         );
                     }
@@ -265,7 +265,7 @@ impl ServerHandler for BuiltinServer {
                 if let Ok(cwd) = std::env::current_dir() {
                     self.wm.ensure_watching(
                         cwd.to_string_lossy().as_ref(),
-                        Some(&self.agent()),
+                        self.client().as_deref(),
                         Some(&self.session_id()),
                     );
                 }
@@ -285,7 +285,7 @@ impl ServerHandler for BuiltinServer {
                         if let Ok(cwd) = std::env::current_dir() {
                             self.wm.ensure_watching(
                                 cwd.to_string_lossy().as_ref(),
-                                Some(&self.agent()),
+                                self.client().as_deref(),
                                 Some(&self.session_id()),
                             );
                         }
@@ -293,7 +293,7 @@ impl ServerHandler for BuiltinServer {
                         for root in &roots_result.roots {
                             self.wm.ensure_watching(
                                 &file_uri_to_path(&root.uri),
-                                Some(&self.agent()),
+                                self.client().as_deref(),
                                 Some(&self.session_id()),
                             );
                         }
@@ -304,7 +304,7 @@ impl ServerHandler for BuiltinServer {
                     if let Ok(cwd) = std::env::current_dir() {
                         self.wm.ensure_watching(
                             cwd.to_string_lossy().as_ref(),
-                            Some(&self.agent()),
+                            self.client().as_deref(),
                             Some(&self.session_id()),
                         );
                     }
@@ -314,7 +314,7 @@ impl ServerHandler for BuiltinServer {
                     if let Ok(cwd) = std::env::current_dir() {
                         self.wm.ensure_watching(
                             cwd.to_string_lossy().as_ref(),
-                            Some(&self.agent()),
+                            self.client().as_deref(),
                             Some(&self.session_id()),
                         );
                     }
@@ -336,7 +336,7 @@ impl ServerHandler for BuiltinServer {
             if let Ok(cwd) = std::env::current_dir() {
                 self.wm.ensure_watching(
                     cwd.to_string_lossy().as_ref(),
-                    Some(&self.agent()),
+                    self.client().as_deref(),
                     Some(&self.session_id()),
                 );
             }
