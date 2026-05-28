@@ -31,3 +31,4 @@ tree-sitter-language-pack = "1.8.0"
 walkdir = "2.5"
 notify = "8.2"
 url = "2.5.8"
+uuid = { version = "1.23.1", features = ["v4"] }
