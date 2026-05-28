@@ -9,17 +9,19 @@
 //     properties.info       — full Session.Info object
 //     properties.info.directory — the session's working directory
 
-export const SoContextPlugin = async ({ directory: projectDir, $ }) => {
+import type { Plugin } from "@opencode-ai/plugin";
+
+export const SoContextPlugin: Plugin = async ({ directory: projectDir, $ }) => {
   const binary = "{BINARY}";
 
   return {
     event: async ({ event }) => {
       if (event.type === "session.created" || event.type === "session.deleted") {
-        const sessionId = event.properties?.sessionID ?? "opencode";
+        const sessionId = (event.properties as any)?.sessionID ?? "opencode";
         // Prefer the session's own directory over the plugin context directory.
-        const dir = event.properties?.info?.directory ?? projectDir ?? ".";
+        const dir = (event.properties as any)?.info?.directory ?? projectDir ?? ".";
         const cmd = event.type === "session.created" ? "ensure-watch" : "unwatch";
-        await $`${binary} ${cmd} ${dir} --agent-id ${sessionId}`.nothrow().quiet();
+        await $!`${binary} ${cmd} ${dir} --agent-id ${sessionId}`.nothrow().quiet();
       }
     },
   };

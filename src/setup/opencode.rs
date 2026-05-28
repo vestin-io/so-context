@@ -26,7 +26,7 @@ pub fn config_path() -> PathBuf {
 }
 
 pub fn plugin_path() -> PathBuf {
-    config_dir().join("plugins").join("so-context.mjs")
+    config_dir().join("plugins").join("so-context.ts")
 }
 
 pub fn install(binary: &str) -> Result<()> {
@@ -85,7 +85,7 @@ fn install_plugin(binary: &str) -> Result<()> {
         .with_context(|| format!("create dir {}", path.parent().unwrap().display()))?;
 
     let bin = binary.replace('\\', "\\\\").replace('"', "\\\"");
-    let source = include_str!("so-context.mjs").replace("{BINARY}", &bin);
+    let source = include_str!("so-context.ts").replace("{BINARY}", &bin);
     fs::write(&path, source).with_context(|| format!("write {}", path.display()))?;
     println!("OpenCode: wrote plugin to {}", path.display());
     Ok(())
