@@ -74,21 +74,23 @@ impl Daemon {
             let wm_mcp = Arc::clone(&wm);
             tokio::spawn(async move {
                 let server = BuiltinServer::new(Arc::clone(&wm_mcp));
-                let client     = server.client();
+                // Capture session_id now (set at construction, never changes).
+                // client is captured after serve() so we get the post-handshake value.
                 let session_id = server.session_id();
                 match server.serve(stream).await {
                     Ok(svc) => {
+                        let client = svc.peer_info().map(|i| i.client_info.name.clone());
                         if let Err(e) = svc.waiting().await {
                             eprintln!("so-context daemon: MCP session error: {e}");
                         }
+                        wm_mcp.unwatch_by_session(client.as_deref(), &session_id);
                     }
                     Err(e) => {
                         eprintln!("so-context daemon: MCP serve error: {e}");
+                        // serve failed before handshake — unwatch with unknown client
+                        wm_mcp.unwatch_by_session(None, &session_id);
                     }
                 }
-                // Connection closed — decrement ref count for any path this session
-                // was watching. This handles hard exits where unwatch is never called.
-                wm_mcp.unwatch_by_session(client.as_deref(), &session_id);
             });
         }
     }
