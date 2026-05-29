@@ -4,9 +4,11 @@
 //!
 //! Writes:
 //!   - `mcpServers.so-context`          — MCP stdio bridge
-//!   - `hooks.SessionStart[].hooks[]`   — runs `so-context watch` on session start
-//!   - `hooks.SessionEnd[].hooks[]`     — runs `so-context unwatch` on session end
 //!   - `hooks.PreToolUse[].hooks[]`     — injects `_so_session_id` into so-context tool calls
+//!
+//! Watch lifecycle is handled automatically by the daemon via the MCP connection:
+//! projects are registered on `initialize` and unwatched on connection close.
+//! No SessionStart/SessionEnd hooks are needed.
 
 use anyhow::{Context, Result};
 use serde_json::{Map, Value, json};
@@ -47,10 +49,6 @@ pub fn install(binary: &str) -> Result<()> {
             json!({ "command": binary, "args": ["mcp"] }),
         );
 
-    // --- Lifecycle hooks ---
-    install_hook(obj, "SessionStart", binary, "watch");
-    install_hook(obj, "SessionEnd", binary, "unwatch");
-
     // --- PreToolUse hook: inject _so_session_id ---
     install_pre_tool_use_hook(obj, binary);
 
@@ -77,12 +75,7 @@ pub fn uninstall(binary: &str) -> Result<()> {
         mcp.remove(SERVER_NAME);
     }
 
-    // Remove lifecycle hook groups containing our binary from each event.
-    for event in &["SessionStart", "SessionEnd"] {
-        remove_hook_group(obj, event, binary);
-    }
-
-    // Remove the PreToolUse hook group referencing our binary.
+    // Remove the PreToolUse hook group.
     remove_pre_tool_use_hook(obj, binary);
 
     let text = serde_json::to_string_pretty(&root)?;
@@ -175,98 +168,4 @@ fn remove_pre_tool_use_hook(root: &mut Map<String, Value>, binary: &str) {
             .unwrap_or(false);
         !(is_so_context_matcher && has_our_binary)
     });
-}
-
-// ---------------------------------------------------------------------------
-// Lifecycle hooks (SessionStart / SessionEnd)
-// ---------------------------------------------------------------------------
-
-fn install_hook(root: &mut Map<String, Value>, event: &str, binary: &str, subcommand: &str) {
-    let command = format!(r#""{binary}" {subcommand} "$CLAUDE_PROJECT_DIR""#);
-
-    let new_hook = json!({ "type": "command", "command": command });
-
-    let hooks_obj = root
-        .entry("hooks")
-        .or_insert(json!({}))
-        .as_object_mut()
-        .unwrap();
-
-    let event_arr = hooks_obj
-        .entry(event)
-        .or_insert(json!([]))
-        .as_array_mut()
-        .unwrap();
-
-    let group = find_or_create_so_context_group(event_arr, binary);
-
-    let inner = group
-        .as_object_mut()
-        .unwrap()
-        .entry("hooks")
-        .or_insert(json!([]))
-        .as_array_mut()
-        .unwrap();
-
-    let existing = inner.iter_mut().find(|h| {
-        h.get("command")
-            .and_then(|c| c.as_str())
-            .map(|c| c.contains(subcommand))
-            .unwrap_or(false)
-    });
-
-    match existing {
-        Some(entry) => *entry = new_hook,
-        None => inner.push(new_hook),
-    }
-}
-
-fn remove_hook_group(root: &mut Map<String, Value>, event: &str, binary: &str) {
-    let arr = match root
-        .get_mut("hooks")
-        .and_then(|h| h.as_object_mut())
-        .and_then(|h| h.get_mut(event))
-        .and_then(|v| v.as_array_mut())
-    {
-        Some(a) => a,
-        None => return,
-    };
-
-    arr.retain(|group| {
-        !group
-            .get("hooks")
-            .and_then(|h| h.as_array())
-            .map(|hooks| {
-                hooks.iter().any(|h| {
-                    h.get("command")
-                        .and_then(|c| c.as_str())
-                        .map(|c| c.contains(binary))
-                        .unwrap_or(false)
-                })
-            })
-            .unwrap_or(false)
-    });
-}
-
-fn find_or_create_so_context_group<'a>(
-    event_arr: &'a mut Vec<Value>,
-    binary: &str,
-) -> &'a mut Value {
-    let pos = event_arr.iter().position(|g| {
-        g.get("hooks")
-            .and_then(|h| h.as_array())
-            .map(|hooks| {
-                hooks.iter().any(|h| {
-                    h.get("command").and_then(|c| c.as_str()) == Some(binary)
-                })
-            })
-            .unwrap_or(false)
-    });
-
-    if let Some(idx) = pos {
-        return &mut event_arr[idx];
-    }
-
-    event_arr.push(json!({ "matcher": "*", "hooks": [] }));
-    event_arr.last_mut().unwrap()
 }

@@ -4,9 +4,11 @@
 //!
 //! Writes:
 //!   - `[mcp_servers.so-context]`      — MCP stdio bridge
-//!   - `[[hooks.SessionStart]]`        — watch on session start
-//!   - `[[hooks.Stop]]`                — unwatch on session end
 //!   - `[[hooks.PreToolUse]]`          — injects `_so_session_id` into so-context tool calls
+//!
+//! Watch lifecycle is handled automatically by the daemon via the MCP connection:
+//! projects are registered on `initialize` and unwatched on connection close.
+//! No SessionStart/Stop hooks are needed.
 
 use anyhow::{Context, Result};
 use std::fs;
@@ -53,10 +55,6 @@ pub fn install(binary: &str) -> Result<()> {
         mcp_servers[SERVER_NAME] = Item::Table(server_table);
     }
 
-    // --- Lifecycle hooks ---
-    install_lifecycle_hook(&mut doc, "SessionStart", binary, "watch", "$PWD");
-    install_lifecycle_hook(&mut doc, "Stop", binary, "unwatch", "$PWD");
-
     // --- PreToolUse hook: inject _so_session_id ---
     install_pre_tool_use_hook(&mut doc, binary);
 
@@ -80,11 +78,6 @@ pub fn uninstall() -> Result<()> {
     // Remove MCP server entry.
     if let Some(mcp) = doc.get_mut("mcp_servers").and_then(|v| v.as_table_mut()) {
         mcp.remove(SERVER_NAME);
-    }
-
-    // Remove lifecycle hook groups.
-    for event in &["SessionStart", "Stop"] {
-        remove_hook_group(&mut doc, event);
     }
 
     // Remove the PreToolUse hook group.
@@ -125,10 +118,8 @@ fn install_pre_tool_use_hook(doc: &mut DocumentMut, binary: &str) {
     });
 
     if let Some(idx) = group_idx {
-        // Replace the handler in-place.
         let group = event_aot.iter_mut().nth(idx).unwrap();
         if let Some(inner) = group["hooks"].as_array_of_tables_mut() {
-            // Remove old so-context handler if present.
             let to_remove: Vec<usize> = inner
                 .iter()
                 .enumerate()
@@ -143,33 +134,29 @@ fn install_pre_tool_use_hook(doc: &mut DocumentMut, binary: &str) {
             for i in to_remove.into_iter().rev() {
                 inner.remove(i);
             }
-            let mut handler = Table::new();
-            handler["type"] = value("command");
-            handler["command"] = value(binary);
-            let mut args = Array::new();
-            args.push("hook");
-            handler["args"] = value(args);
-            handler["statusMessage"] = value("Tagging so-context call with session ID");
-            inner.push(handler);
+            inner.push(make_hook_handler(binary));
         }
     } else {
         let mut group = Table::new();
         group["matcher"] = value("mcp__so-context__.*");
 
-        let mut handler = Table::new();
-        handler["type"] = value("command");
-        handler["command"] = value(binary);
-        let mut args = Array::new();
-        args.push("hook");
-        handler["args"] = value(args);
-        handler["statusMessage"] = value("Tagging so-context call with session ID");
-
         let mut inner_aot = toml_edit::ArrayOfTables::new();
-        inner_aot.push(handler);
+        inner_aot.push(make_hook_handler(binary));
         group["hooks"] = Item::ArrayOfTables(inner_aot);
 
         event_aot.push(group);
     }
+}
+
+fn make_hook_handler(binary: &str) -> Table {
+    let mut handler = Table::new();
+    handler["type"] = value("command");
+    handler["command"] = value(binary);
+    let mut args = Array::new();
+    args.push("hook");
+    handler["args"] = value(args);
+    handler["statusMessage"] = value("Tagging so-context call with session ID");
+    handler
 }
 
 fn remove_pre_tool_use_hook(doc: &mut DocumentMut) {
@@ -201,120 +188,5 @@ fn remove_pre_tool_use_hook(doc: &mut DocumentMut) {
 
     for idx in to_remove.into_iter().rev() {
         aot.remove(idx);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Lifecycle hooks (SessionStart / Stop)
-// ---------------------------------------------------------------------------
-
-fn remove_hook_group(doc: &mut DocumentMut, event: &str) {
-    let hooks_table = match doc.get_mut("hooks").and_then(|v| v.as_table_mut()) {
-        Some(t) => t,
-        None => return,
-    };
-
-    let aot = match hooks_table.get_mut(event).and_then(|v| v.as_array_of_tables_mut()) {
-        Some(a) => a,
-        None => return,
-    };
-
-    let to_remove: Vec<usize> = aot
-        .iter()
-        .enumerate()
-        .filter(|(_, group)| {
-            group
-                .get("hooks")
-                .and_then(|h| h.as_array_of_tables())
-                .map(|inner| {
-                    inner.iter().any(|h| {
-                        h.get("command")
-                            .and_then(|c| c.as_str())
-                            .map(|c| c.contains(SERVER_NAME))
-                            .unwrap_or(false)
-                    })
-                })
-                .unwrap_or(false)
-        })
-        .map(|(i, _)| i)
-        .collect();
-
-    for idx in to_remove.into_iter().rev() {
-        aot.remove(idx);
-    }
-}
-
-fn install_lifecycle_hook(
-    doc: &mut DocumentMut,
-    event: &str,
-    binary: &str,
-    subcommand: &str,
-    path_arg: &str,
-) {
-    let command_str = format!(r#""{binary}" {subcommand} {path_arg}"#);
-
-    if doc.get("hooks").is_none() {
-        doc["hooks"] = Item::Table(Table::new());
-    }
-    let hooks_table = doc["hooks"].as_table_mut().unwrap();
-
-    if hooks_table.get(event).is_none() {
-        hooks_table[event] = Item::ArrayOfTables(toml_edit::ArrayOfTables::new());
-    }
-
-    let event_aot = match hooks_table[event].as_array_of_tables_mut() {
-        Some(a) => a,
-        None => return,
-    };
-
-    // Find an existing group whose inner hooks array contains our binary.
-    let group_idx = event_aot.iter().position(|group| {
-        group
-            .get("hooks")
-            .and_then(|h| h.as_array_of_tables())
-            .map(|inner| {
-                inner.iter().any(|h| {
-                    h.get("command")
-                        .and_then(|c| c.as_str())
-                        .map(|c| c.starts_with(binary))
-                        .unwrap_or(false)
-                })
-            })
-            .unwrap_or(false)
-    });
-
-    if let Some(idx) = group_idx {
-        let group = event_aot.iter_mut().nth(idx).unwrap();
-        if let Some(inner) = group["hooks"].as_array_of_tables_mut() {
-            let entry_idx = inner.iter().position(|h| {
-                h.get("command")
-                    .and_then(|c| c.as_str())
-                    .map(|c| c.contains(subcommand))
-                    .unwrap_or(false)
-            });
-            if let Some(ei) = entry_idx {
-                if let Some(h) = inner.iter_mut().nth(ei) {
-                    h["command"] = value(command_str);
-                }
-            } else {
-                let mut handler = Table::new();
-                handler["type"] = value("command");
-                handler["command"] = value(command_str);
-                inner.push(handler);
-            }
-        }
-    } else {
-        let mut group = Table::new();
-        group["matcher"] = value("*");
-
-        let mut handler = Table::new();
-        handler["type"] = value("command");
-        handler["command"] = value(command_str);
-
-        let mut inner_aot = toml_edit::ArrayOfTables::new();
-        inner_aot.push(handler);
-        group["hooks"] = Item::ArrayOfTables(inner_aot);
-
-        event_aot.push(group);
     }
 }
