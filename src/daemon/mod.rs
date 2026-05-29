@@ -74,8 +74,9 @@ impl Daemon {
             let wm_mcp = Arc::clone(&wm);
             tokio::spawn(async move {
                 let server = BuiltinServer::new(Arc::clone(&wm_mcp));
-                let transport = stream;
-                match server.serve(transport).await {
+                let client     = server.client();
+                let session_id = server.session_id();
+                match server.serve(stream).await {
                     Ok(svc) => {
                         if let Err(e) = svc.waiting().await {
                             eprintln!("so-context daemon: MCP session error: {e}");
@@ -85,6 +86,9 @@ impl Daemon {
                         eprintln!("so-context daemon: MCP serve error: {e}");
                     }
                 }
+                // Connection closed — decrement ref count for any path this session
+                // was watching. This handles hard exits where unwatch is never called.
+                wm_mcp.unwatch_by_session(client.as_deref(), &session_id);
             });
         }
     }

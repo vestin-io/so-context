@@ -203,6 +203,34 @@ impl WatchManager {
         true
     }
 
+    /// Called on MCP connection close to decrement the ref count for any path
+    /// this consumer was watching, without needing to know the specific path.
+    /// Uses the same `client:session_id` key as `unwatch` — no extra bookkeeping.
+    pub fn unwatch_by_session(&self, client: Option<&str>, session_id: &str) {
+        let key = Consumer::new(client, Some(session_id)).key();
+        let mut inner = self.inner.lock().unwrap();
+        let mut empty_roots = Vec::new();
+
+        for (root, handle) in inner.projects.iter_mut() {
+            if handle.consumers.remove(&key).is_some() {
+                if handle.ref_count() == 0 {
+                    empty_roots.push(root.clone());
+                } else {
+                    eprintln!(
+                        "[watch] ref-1 for {} (connection closed: {key}, remaining: {})",
+                        root.display(),
+                        handle.ref_count()
+                    );
+                }
+            }
+        }
+
+        for root in empty_roots {
+            inner.projects.remove(&root);
+            eprintln!("[watch] stopped (connection closed: {key}): {}", root.display());
+        }
+    }
+
     /// Returns a snapshot of all currently registered projects and their state.
     pub fn status(&self) -> Vec<ProjectStatus> {
         let inner = self.inner.lock().unwrap();
