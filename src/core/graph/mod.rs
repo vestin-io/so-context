@@ -50,8 +50,13 @@ pub fn sync_project(project_path: &str) -> Result<String, String> {
     GraphDb::open(project_root)?.sync()
 }
 
-/// Searches indexed graph content for a query and returns formatted text results.
-pub fn search_project(project_path: &str, query: &str, limit: usize) -> Result<String, String> {
+/// Searches indexed graph content for a query.
+/// Returns formatted results and total on-disk char count of matched files.
+pub fn search_project_with_stats(
+    project_path: &str,
+    query: &str,
+    limit: usize,
+) -> Result<(String, usize), String> {
     let project_root = validate_project_root(project_path)?;
     if !GraphDb::exists(&project_root) {
         let db_path = db::graph_db_path(&project_root);
@@ -60,5 +65,5 @@ pub fn search_project(project_path: &str, query: &str, limit: usize) -> Result<S
             db_path.display()
         ));
     }
-    GraphDb::open(project_root)?.search(query, limit)
+    GraphDb::open(project_root)?.search_with_stats(query, limit)
 }

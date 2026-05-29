@@ -2,17 +2,19 @@
 //!
 //! Responsibilities:
 //! - Resolves any path to its canonical project root (nearest `.git/` ancestor)
-//! - Deduplicates: multiple sessions pointing at the same repo share one thread
+//! - Deduplicates: multiple agent sessions pointing at the same repo share one
+//!   watch thread; a ref-count tracks how many consumers are active
 //! - Spawns one OS thread per unique project (rusqlite `Connection` is not `Send`)
-//! - Provides `ensure_watching` for auto-discovery and `watch`/`unwatch` for
-//!   explicit control
+//! - Provides `ensure_watching` / `unwatch` with optional agent-ID tracking so
+//!   callers can see which agents are consuming each project
+//! - The watch thread is only truly stopped when the last consumer unwatches
 //!
-//! URI helpers (`file_uri_to_path`) are also kept here so MCP hooks have a
+//! URI helpers (`file_uri_to_path`) are also kept here so MCP tools have a
 //! single import point.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::mpsc::RecvTimeoutError;
+use std::path::PathBuf;
+use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -23,14 +25,45 @@ use crate::core_graph::GraphDb;
 use crate::core_graph::watch::is_meaningful_change;
 
 // ---------------------------------------------------------------------------
-// Public status types
+// Public types
 // ---------------------------------------------------------------------------
+
+/// Identifies one agent session consuming a project watch.
+#[derive(Debug, Clone)]
+pub struct Consumer {
+    /// Agent name — e.g. `"claude"`, `"opencode"`, `"codex"`.
+    /// Defaults to `"unknown"` if not provided.
+    pub agent: String,
+    /// Session identifier within the agent. Auto-generated UUID if not provided.
+    pub session_id: String,
+}
+
+impl Consumer {
+    /// Build a `Consumer`, generating a UUID session_id when none is given.
+    pub fn new(agent: Option<&str>, session_id: Option<&str>) -> Self {
+        Self {
+            agent: agent.unwrap_or("unknown").to_string(),
+            session_id: session_id
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+        }
+    }
+
+    /// The unique key used in the consumer map: `"<agent>:<session_id>"`.
+    pub fn key(&self) -> String {
+        format!("{}:{}", self.agent, self.session_id)
+    }
+}
 
 /// Snapshot of a single watched project's runtime state.
 #[derive(Debug, Clone)]
 pub struct ProjectStatus {
     pub path: PathBuf,
     pub state: WatchState,
+    /// Number of active consumers holding a watch reference.
+    pub ref_count: usize,
+    /// Active consumers currently watching this project.
+    pub consumers: Vec<Consumer>,
 }
 
 #[derive(Debug, Clone)]
@@ -44,12 +77,29 @@ pub enum WatchState {
 }
 
 // ---------------------------------------------------------------------------
+// Internal stop signal
+// ---------------------------------------------------------------------------
+
+/// Sent over the stop channel to request the watch thread to exit cleanly.
+struct StopSignal;
+
+// ---------------------------------------------------------------------------
 // Internal per-project handle
 // ---------------------------------------------------------------------------
 
 struct WatchHandle {
     state: Arc<Mutex<WatchState>>,
+    /// Active consumers, keyed by `Consumer::key()` (`"<agent>:<session_id>"`).
+    consumers: HashMap<String, Consumer>,
+    /// Dropping this sender causes the watch thread to stop.
+    _stop_tx: Sender<StopSignal>,
     _thread: JoinHandle<()>,
+}
+
+impl WatchHandle {
+    fn ref_count(&self) -> usize {
+        self.consumers.len()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -76,22 +126,17 @@ impl WatchManager {
     }
 
     // -----------------------------------------------------------------------
-    // Auto-discovery API
+    // Public API
     // -----------------------------------------------------------------------
 
-    /// Returns `true` if the canonical project root for `path` is already watched.
-    pub fn is_registered(&self, path: &Path) -> bool {
-        match resolve_project_root(path.to_string_lossy().as_ref()) {
-            Some(root) => self.inner.lock().unwrap().projects.contains_key(&root),
-            None => false,
-        }
-    }
-
     /// Resolves `path` to its canonical project root and starts watching it if
-    /// not already registered. No-op if already known. Non-fatal on error.
+    /// not already registered. If already registered, increments the ref-count.
     ///
-    /// This is the primary entry point for auto-discovery hooks.
-    pub fn ensure_watching(&self, path: &str) {
+    /// - `agent` — name of the calling agent (`"claude"`, `"opencode"`, …).
+    ///   Defaults to `"unknown"` if `None`.
+    /// - `session_id` — unique ID for this agent session. Auto-generated UUID
+    ///   if `None`, ensuring multiple anonymous callers are tracked separately.
+    pub fn ensure_watching(&self, path: &str, agent: Option<&str>, session_id: Option<&str>) {
         let root = match resolve_project_root(path) {
             Some(r) => r,
             None => {
@@ -100,15 +145,62 @@ impl WatchManager {
             }
         };
 
-        if self.is_registered(root.as_path()) {
+        let consumer = Consumer::new(agent, session_id);
+        let key = consumer.key();
+
+        let mut inner = self.inner.lock().unwrap();
+
+        if let Some(handle) = inner.projects.get_mut(&root) {
+            handle.consumers.insert(key.clone(), consumer);
+            eprintln!(
+                "[watch] ref+1 for {} (consumer: {key}, total: {})",
+                root.display(),
+                handle.ref_count()
+            );
             return;
         }
 
-        if let Err(e) = self.start_watch_thread(root.clone()) {
-            eprintln!("[watch] failed to watch {}: {e}", root.display());
-        } else {
-            eprintln!("[watch] watching: {}", root.display());
+        drop(inner);
+        match self.start_watch_thread(root.clone(), consumer) {
+            Ok(()) => eprintln!("[watch] watching: {}", root.display()),
+            Err(e) => eprintln!("[watch] failed to watch {}: {e}", root.display()),
         }
+    }
+
+    /// Decrements the ref-count for the project at `path`.
+    ///
+    /// The consumer is matched by `"<agent>:<session_id>"`. If the ref-count
+    /// reaches zero the watch thread is stopped.
+    ///
+    /// Returns `true` if the project was registered, `false` if unknown.
+    pub fn unwatch(&self, path: &str, agent: Option<&str>, session_id: Option<&str>) -> bool {
+        let root = match resolve_project_root(path) {
+            Some(r) => r,
+            None => return false,
+        };
+
+        let key = Consumer::new(agent, session_id).key();
+
+        let mut inner = self.inner.lock().unwrap();
+        let handle = match inner.projects.get_mut(&root) {
+            Some(h) => h,
+            None => return false,
+        };
+
+        handle.consumers.remove(&key);
+
+        if handle.ref_count() == 0 {
+            inner.projects.remove(&root);
+            eprintln!("[watch] stopped (no consumers): {}", root.display());
+        } else {
+            eprintln!(
+                "[watch] ref-1 for {} (removed: {key}, remaining: {})",
+                root.display(),
+                handle.ref_count()
+            );
+        }
+
+        true
     }
 
     /// Returns a snapshot of all currently registered projects and their state.
@@ -120,30 +212,34 @@ impl WatchManager {
             .map(|(path, handle)| ProjectStatus {
                 path: path.clone(),
                 state: handle.state.lock().unwrap().clone(),
+                ref_count: handle.ref_count(),
+                consumers: handle.consumers.values().cloned().collect(),
             })
             .collect()
     }
 
-    // -----------------------------------------------------------------------
-    // Internal
-    // -----------------------------------------------------------------------
-
-    fn start_watch_thread(&self, root: PathBuf) -> Result<(), String> {
+    fn start_watch_thread(&self, root: PathBuf, consumer: Consumer) -> Result<(), String> {
         let state = Arc::new(Mutex::new(WatchState::Indexing));
+        let (stop_tx, stop_rx) = mpsc::channel::<StopSignal>();
 
         let thread = thread::Builder::new()
             .name(format!("watch:{}", root.display()))
             .spawn({
                 let state = Arc::clone(&state);
                 let root = root.clone();
-                move || run_watch_thread(root, state)
+                move || run_watch_thread(root, state, stop_rx)
             })
             .map_err(|e| format!("failed to spawn watch thread: {e}"))?;
+
+        let mut consumers = HashMap::new();
+        consumers.insert(consumer.key(), consumer);
 
         self.inner.lock().unwrap().projects.insert(
             root,
             WatchHandle {
                 state,
+                consumers,
+                _stop_tx: stop_tx,
                 _thread: thread,
             },
         );
@@ -159,13 +255,21 @@ impl WatchManager {
 const REINDEX_DEBOUNCE_MS: u64 = 700;
 const WATCH_POLL_SECS: u64 = 1;
 
-fn run_watch_thread(project_root: PathBuf, state: Arc<Mutex<WatchState>>) {
-    if let Err(e) = watch_loop(&project_root, &state) {
+fn run_watch_thread(
+    project_root: PathBuf,
+    state: Arc<Mutex<WatchState>>,
+    stop_rx: mpsc::Receiver<StopSignal>,
+) {
+    if let Err(e) = watch_loop(&project_root, &state, &stop_rx) {
         *state.lock().unwrap() = WatchState::Failed(e);
     }
 }
 
-fn watch_loop(project_root: &PathBuf, state: &Arc<Mutex<WatchState>>) -> Result<(), String> {
+fn watch_loop(
+    project_root: &PathBuf,
+    state: &Arc<Mutex<WatchState>>,
+    stop_rx: &mpsc::Receiver<StopSignal>,
+) -> Result<(), String> {
     let mut db = GraphDb::open(project_root.clone())?;
 
     let summary = db.index()?;
@@ -185,6 +289,15 @@ fn watch_loop(project_root: &PathBuf, state: &Arc<Mutex<WatchState>>) -> Result<
     let mut last_sync = Instant::now() - Duration::from_secs(10);
 
     loop {
+        // Check for stop signal (non-blocking).
+        match stop_rx.try_recv() {
+            Ok(_) | Err(mpsc::TryRecvError::Disconnected) => {
+                eprintln!("[watch] stopping: {}", project_root.display());
+                return Ok(());
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
+        }
+
         match rx.recv_timeout(Duration::from_secs(WATCH_POLL_SECS)) {
             Ok(Ok(event)) => {
                 if !is_meaningful_change(&event)
