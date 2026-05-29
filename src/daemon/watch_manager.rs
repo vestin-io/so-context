@@ -151,6 +151,9 @@ impl WatchManager {
         let mut inner = self.inner.lock().unwrap();
 
         if let Some(handle) = inner.projects.get_mut(&root) {
+            if handle.consumers.contains_key(&key) {
+                return; // already registered, no-op
+            }
             handle.consumers.insert(key.clone(), consumer);
             eprintln!(
                 "[watch] ref+1 for {} (consumer: {key}, total: {})",

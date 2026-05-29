@@ -333,14 +333,6 @@ impl ServerHandler for BuiltinServer {
            + MaybeSendFuture
            + '_ {
         async move {
-            if let Ok(cwd) = std::env::current_dir() {
-                self.wm.ensure_watching(
-                    cwd.to_string_lossy().as_ref(),
-                    self.client().as_deref(),
-                    Some(&self.session_id()),
-                );
-            }
-
             self.tool_router
                 .call(ToolCallContext::new(self, request, context))
                 .await
