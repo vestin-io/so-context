@@ -21,6 +21,12 @@ pub fn route(wm: Arc<WatchManager>) -> ToolRoute<BuiltinServer> {
             Arc::new({
                 let mut m = serde_json::Map::new();
                 m.insert("type".to_string(), serde_json::Value::String("object".to_string()));
+                m.insert("properties".to_string(), serde_json::json!({
+                    "_so_session_id": {
+                        "type": "string",
+                        "description": "Agent session ID injected by the so-context PreToolUse hook. Do not set manually."
+                    }
+                }));
                 m
             }),
         ),
@@ -29,7 +35,19 @@ pub fn route(wm: Arc<WatchManager>) -> ToolRoute<BuiltinServer> {
             Box::pin(async move {
                 let client         = ctx.service.client();
                 let client_version = ctx.service.client_version();
-                let session_id     = ctx.service.session_id();
+                let connection_id  = ctx.service.connection_id();
+
+                // Agent session ID injected by the PreToolUse hook on the agent side.
+                // Falls back to the connection_id when not provided.
+                let (session_id, session_source) = match ctx.arguments
+                    .as_ref()
+                    .and_then(|a| a.get("_so_session_id"))
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|s| !s.is_empty())
+                {
+                    Some(sid) => (sid.to_string(), "hook"),
+                    None      => (connection_id,   "connection"),
+                };
 
                 let timer = Timer::start();
                 let result = handler(&wm);
@@ -39,7 +57,7 @@ pub fn route(wm: Arc<WatchManager>) -> ToolRoute<BuiltinServer> {
                 ev.client         = client;
                 ev.client_version = client_version;
                 ev.client_source  = "client_info".to_string();
-                ev.session_source = "generated".to_string();
+                ev.session_source = session_source.to_string();
                 ev.duration_ms             = Some(duration_ms);
                 ev.estimated_origin_tokens = Some(0);
 

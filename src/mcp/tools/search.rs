@@ -25,11 +25,22 @@ pub fn route() -> ToolRoute<BuiltinServer> {
 fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rmcp::ErrorData> {
     let client         = ctx.service.client();
     let client_version = ctx.service.client_version();
-    let session_id     = ctx.service.session_id();
+    let connection_id  = ctx.service.connection_id();
 
     let args = ctx
         .arguments
         .ok_or_else(|| rmcp::ErrorData::invalid_params("missing arguments", None))?;
+
+    // Agent session ID injected by the PreToolUse hook on the agent side.
+    // Falls back to the connection_id when not provided (e.g. agents without hook support).
+    let (session_id, session_source) = match args
+        .get("_so_session_id")
+        .and_then(serde_json::Value::as_str)
+        .filter(|s| !s.is_empty())
+    {
+        Some(sid) => (sid.to_string(), "hook"),
+        None      => (connection_id,   "connection"),
+    };
 
     let query = args
         .get("query")
@@ -54,7 +65,7 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
     ev.client         = client;
     ev.client_version = client_version;
     ev.client_source  = "client_info".to_string();
-    ev.session_source = "generated".to_string();
+    ev.session_source = session_source.to_string();
     ev.project     = Some(path.to_string());
     ev.params      = Some(serde_json::json!({ "query": query, "path": path, "limit": limit }).to_string());
     ev.duration_ms = Some(duration_ms);
@@ -82,7 +93,11 @@ fn schema() -> Arc<JsonObject> {
             "properties": {
                 "query": { "type": "string" },
                 "path": { "type": "string", "default": "." },
-                "limit": { "type": "integer", "minimum": 1, "maximum": 200, "default": 20 }
+                "limit": { "type": "integer", "minimum": 1, "maximum": 200, "default": 20 },
+                "_so_session_id": {
+                    "type": "string",
+                    "description": "Agent session ID injected by the so-context PreToolUse hook. Do not set manually."
+                }
             },
             "required": ["query"]
         })

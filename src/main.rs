@@ -6,7 +6,10 @@ mod core_graph;
 pub mod core_events;
 #[path = "core/tokens.rs"]
 pub mod core_tokens;
+#[path = "core/file_visit_cache.rs"]
+pub mod file_visit_cache;
 mod daemon;
+mod hook;
 mod mcp;
 
 use libc;
@@ -34,28 +37,35 @@ enum Commands {
     /// Connects to the running daemon and forwards MCP messages over stdio.
     /// This is the command to register in Claude / OpenCode / Codex configs.
     Mcp,
+    /// PreToolUse hook handler for agent CLIs (Claude Code, Codex).
+    ///
+    /// Reads the hook JSON from stdin, injects _so_session_id into the
+    /// tool arguments for so-context MCP tool calls, and writes the
+    /// rewritten input to stdout. Exit 0 with no output for non-so-context
+    /// tools (agent continues normally).
+    ///
+    /// Register as a PreToolUse hook with matcher "mcp__so-context__.*".
+    Hook,
     /// Index a project folder into the local code graph SQLite database.
+    /// With --watch, keeps running and re-indexes on file changes (foreground).
     Index {
         /// Project folder path (default: current directory).
         #[arg(default_value = ".")]
         path: String,
-    },
-    /// Index a project folder and keep watching for file changes (single project, foreground).
-    Watch {
-        /// Project folder path (default: current directory).
-        #[arg(default_value = ".")]
-        path: String,
+        /// Keep running and re-index on file changes (foreground).
+        #[arg(long)]
+        watch: bool,
     },
     /// Tell the running daemon to start watching a project directory.
     /// Intended for use in agent session-start hooks.
-    EnsureWatch {
+    Watch {
         /// Project directory to watch (default: current directory).
         #[arg(default_value = ".")]
         path: String,
         /// MCP client name (e.g. "claude", "opencode", "codex").
         #[arg(long)]
         client: Option<String>,
-        /// Session identifier for this connection. Auto-generated if omitted.
+        /// Session identifier for this consumer. Auto-generated if omitted.
         #[arg(long)]
         session_id: Option<String>,
     },
@@ -65,10 +75,10 @@ enum Commands {
         /// Project directory to unwatch (default: current directory).
         #[arg(default_value = ".")]
         path: String,
-        /// Client name — must match the value passed to ensure-watch.
+        /// Client name — must match the value passed to watch.
         #[arg(long)]
         client: Option<String>,
-        /// Session ID — must match the value passed to ensure-watch.
+        /// Session ID — must match the value passed to watch.
         #[arg(long)]
         session_id: Option<String>,
     },
@@ -98,16 +108,18 @@ async fn main() -> Result<()> {
             unsafe { libc::signal(libc::SIGHUP, libc::SIG_IGN); }
             Daemon::new().run().await
         }
-        Commands::Mcp => mcp::run_mcp_bridge().await,
-        Commands::Index { path } => {
-            let output = core_graph::index_project(&path).map_err(anyhow::Error::msg)?;
-            println!("{output}");
-            Ok(())
+        Commands::Mcp  => mcp::run_mcp_bridge().await,
+        Commands::Hook => hook::run_pre_tool_use_hook(),
+        Commands::Index { path, watch } => {
+            if watch {
+                core_graph::watch_project(&path).map_err(anyhow::Error::msg)
+            } else {
+                let output = core_graph::index_project(&path).map_err(anyhow::Error::msg)?;
+                println!("{output}");
+                Ok(())
+            }
         }
-        Commands::Watch { path } => {
-            core_graph::watch_project(&path).map_err(anyhow::Error::msg)
-        }
-        Commands::EnsureWatch { path, client, session_id } => {
+        Commands::Watch { path, client, session_id } => {
             mcp::send_ctrl_request("watch", &path, client.as_deref(), session_id.as_deref()).await
         }
         Commands::Unwatch { path, client, session_id } => {

@@ -53,7 +53,7 @@ const ROOTS_LIST_TIMEOUT_MS: u64 = 5_000;
 
 /// Sends a JSON-RPC notification to the daemon's ctrl socket.
 ///
-/// Used by `so-context ensure-watch` and `so-context unwatch` CLI subcommands.
+/// Used by `so-context watch` and `so-context unwatch` CLI subcommands.
 pub async fn send_ctrl_request(
     method: &str,
     path: &str,
@@ -166,9 +166,9 @@ pub struct BuiltinServer {
     client: Arc<std::sync::Mutex<Option<String>>>,
     /// MCP client app version from `client_info.version` (e.g. `"1.15.12"`).
     client_version: Arc<std::sync::Mutex<Option<String>>>,
-    /// Per-connection session ID — UUID v4 generated at connection time.
-    /// The MCP protocol has no session ID; this uniquely identifies the connection.
-    session_id: Arc<std::sync::Mutex<String>>,
+    /// Per-connection UUID — generated at connection time to uniquely identify
+    /// the Unix socket connection. Not the same as an agent session ID.
+    connection_id: Arc<std::sync::Mutex<String>>,
 }
 
 impl BuiltinServer {
@@ -184,13 +184,13 @@ impl BuiltinServer {
             client_supports_roots: std::sync::atomic::AtomicBool::new(false),
             client: Arc::new(std::sync::Mutex::new(None)),
             client_version: Arc::new(std::sync::Mutex::new(None)),
-            session_id: Arc::new(std::sync::Mutex::new(Uuid::new_v4().to_string())),
+            connection_id: Arc::new(std::sync::Mutex::new(Uuid::new_v4().to_string())),
         }
     }
 
     pub fn client(&self) -> Option<String> { self.client.lock().unwrap().clone() }
     pub fn client_version(&self) -> Option<String> { self.client_version.lock().unwrap().clone() }
-    pub fn session_id(&self) -> String { self.session_id.lock().unwrap().clone() }
+    pub fn connection_id(&self) -> String { self.connection_id.lock().unwrap().clone() }
 }
 
 impl ServerHandler for BuiltinServer {
@@ -226,7 +226,7 @@ impl ServerHandler for BuiltinServer {
                     self.wm.ensure_watching(
                         &file_uri_to_path(uri),
                         self.client().as_deref(),
-                        Some(&self.session_id()),
+                        Some(&self.connection_id()),
                     );
                 }
             }
@@ -236,7 +236,7 @@ impl ServerHandler for BuiltinServer {
                         self.wm.ensure_watching(
                             &file_uri_to_path(uri),
                             self.client().as_deref(),
-                            Some(&self.session_id()),
+                            Some(&self.connection_id()),
                         );
                     }
                 }
@@ -266,7 +266,7 @@ impl ServerHandler for BuiltinServer {
                     self.wm.ensure_watching(
                         cwd.to_string_lossy().as_ref(),
                         self.client().as_deref(),
-                        Some(&self.session_id()),
+                        Some(&self.connection_id()),
                     );
                 }
                 return;
@@ -286,7 +286,7 @@ impl ServerHandler for BuiltinServer {
                             self.wm.ensure_watching(
                                 cwd.to_string_lossy().as_ref(),
                                 self.client().as_deref(),
-                                Some(&self.session_id()),
+                                Some(&self.connection_id()),
                             );
                         }
                     } else {
@@ -294,7 +294,7 @@ impl ServerHandler for BuiltinServer {
                             self.wm.ensure_watching(
                                 &file_uri_to_path(&root.uri),
                                 self.client().as_deref(),
-                                Some(&self.session_id()),
+                                Some(&self.connection_id()),
                             );
                         }
                     }
@@ -305,7 +305,7 @@ impl ServerHandler for BuiltinServer {
                         self.wm.ensure_watching(
                             cwd.to_string_lossy().as_ref(),
                             self.client().as_deref(),
-                            Some(&self.session_id()),
+                            Some(&self.connection_id()),
                         );
                     }
                 }
@@ -315,7 +315,7 @@ impl ServerHandler for BuiltinServer {
                         self.wm.ensure_watching(
                             cwd.to_string_lossy().as_ref(),
                             self.client().as_deref(),
-                            Some(&self.session_id()),
+                            Some(&self.connection_id()),
                         );
                     }
                 }
