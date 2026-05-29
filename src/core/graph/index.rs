@@ -27,7 +27,10 @@ pub(super) fn index_files(
     let mut file_count = 0_i64;
     let mut symbol_count = 0_i64;
 
-    for entry in WalkDir::new(project_root).into_iter().filter_map(Result::ok) {
+    for entry in WalkDir::new(project_root)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
         let path = entry.path();
         if !entry.file_type().is_file() || should_skip(path) {
             continue;
@@ -44,8 +47,7 @@ pub(super) fn index_files(
             .set_language(&language)
             .map_err(|e| format!("failed to set parser language: {e}"))?;
 
-        let content =
-            fs::read_to_string(path).map_err(|e| format!("failed to read file: {e}"))?;
+        let content = fs::read_to_string(path).map_err(|e| format!("failed to read file: {e}"))?;
         let Some(tree) = parser.parse(&content, None) else {
             continue;
         };

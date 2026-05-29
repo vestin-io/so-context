@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
-use rmcp::model::{CallToolResult, Content, JsonObject, Tool};
 use rmcp::handler::server::router::tool::ToolRoute;
 use rmcp::handler::server::tool::ToolCallContext;
+use rmcp::model::{CallToolResult, Content, JsonObject, Tool};
 
 use super::BuiltinServer;
 use crate::core_graph;

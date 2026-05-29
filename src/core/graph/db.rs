@@ -13,8 +13,8 @@ use rusqlite::{Connection, Transaction, params};
 use super::GRAPH_DB_DIR;
 use super::GRAPH_DB_NAME;
 use super::index::index_files;
-use super::sync::{load_tracked_files, sync_files};
 use super::symbols::resolve_reference_edges;
+use super::sync::{load_tracked_files, sync_files};
 
 // ---------------------------------------------------------------------------
 // GraphDb — long-lived connection owner
@@ -36,10 +36,13 @@ impl GraphDb {
     pub fn open(project_root: PathBuf) -> Result<Self, String> {
         let db_path = graph_db_path(&project_root);
         ensure_parent_dir(&db_path)?;
-        let conn =
-            Connection::open(&db_path).map_err(|e| format!("failed to open db: {e}"))?;
+        let conn = Connection::open(&db_path).map_err(|e| format!("failed to open db: {e}"))?;
         init_schema(&conn)?;
-        Ok(Self { conn, project_root, db_path })
+        Ok(Self {
+            conn,
+            project_root,
+            db_path,
+        })
     }
 
     /// Returns the path to the database file.
@@ -145,8 +148,7 @@ impl GraphDb {
 
         let mut out = Vec::new();
         for row in rows {
-            let (path, kind, name, line) =
-                row.map_err(|e| format!("failed to read row: {e}"))?;
+            let (path, kind, name, line) = row.map_err(|e| format!("failed to read row: {e}"))?;
             out.push(format!("{path}:{line} [{kind}] {name}"));
         }
 

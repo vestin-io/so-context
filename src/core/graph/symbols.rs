@@ -105,10 +105,7 @@ pub(super) fn collect_symbols(
 // ---------------------------------------------------------------------------
 
 /// Resolves unresolved call/import refs into concrete graph edges by symbol name.
-pub(super) fn resolve_reference_edges(
-    tx: &Transaction<'_>,
-    project_id: i64,
-) -> Result<(), String> {
+pub(super) fn resolve_reference_edges(tx: &Transaction<'_>, project_id: i64) -> Result<(), String> {
     // Clear existing resolved edges before re-resolving to avoid duplicates.
     tx.execute(
         "DELETE FROM edges WHERE project_id=?1 AND kind IN ('calls','imports')",
@@ -161,10 +158,9 @@ fn is_symbol_kind(kind: &str) -> bool {
 fn relation_kind(kind: &str) -> Option<&'static str> {
     match kind {
         "call_expression" | "call" => Some("call"),
-        "import_statement"
-        | "import_from_statement"
-        | "import_declaration"
-        | "use_declaration" => Some("import"),
+        "import_statement" | "import_from_statement" | "import_declaration" | "use_declaration" => {
+            Some("import")
+        }
         _ => None,
     }
 }

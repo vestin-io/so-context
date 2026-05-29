@@ -26,8 +26,8 @@ use rmcp::{
     RoleServer, ServerHandler, ServiceExt,
     handler::server::{router::tool::ToolRouter, tool::ToolCallContext},
     model::{
-        CallToolResult, ClientCapabilities, InitializeRequestParams, InitializeResult,
-        ListToolsResult, ServerCapabilities, ServerInfo, ErrorData,
+        CallToolResult, ClientCapabilities, ErrorData, InitializeRequestParams, InitializeResult,
+        ListToolsResult, ServerCapabilities, ServerInfo,
     },
     service::{MaybeSendFuture, NotificationContext, RequestContext},
     transport::stdio,
@@ -79,9 +79,8 @@ impl ServerHandler for BuiltinServer {
         &self,
         request: InitializeRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> impl std::future::Future<Output = Result<InitializeResult, ErrorData>>
-           + MaybeSendFuture
-           + '_ {
+    ) -> impl std::future::Future<Output = Result<InitializeResult, ErrorData>> + MaybeSendFuture + '_
+    {
         // Record whether the client supports roots/list.
         let supports_roots = matches!(
             &request.capabilities,
@@ -137,8 +136,7 @@ impl ServerHandler for BuiltinServer {
             {
                 // Client doesn't support roots — fall back to cwd.
                 if let Ok(cwd) = std::env::current_dir() {
-                    self.wm
-                        .ensure_watching(cwd.to_string_lossy().as_ref());
+                    self.wm.ensure_watching(cwd.to_string_lossy().as_ref());
                 }
                 return;
             }
@@ -155,28 +153,24 @@ impl ServerHandler for BuiltinServer {
                     if roots_result.roots.is_empty() {
                         eprintln!("[mcp] client returned no roots; falling back to cwd");
                         if let Ok(cwd) = std::env::current_dir() {
-                            self.wm
-                                .ensure_watching(cwd.to_string_lossy().as_ref());
+                            self.wm.ensure_watching(cwd.to_string_lossy().as_ref());
                         }
                     } else {
                         for root in &roots_result.roots {
-                            self.wm
-                                .ensure_watching(&file_uri_to_path(&root.uri));
+                            self.wm.ensure_watching(&file_uri_to_path(&root.uri));
                         }
                     }
                 }
                 Ok(Err(e)) => {
                     eprintln!("[mcp] roots/list failed: {e}; falling back to cwd");
                     if let Ok(cwd) = std::env::current_dir() {
-                        self.wm
-                            .ensure_watching(cwd.to_string_lossy().as_ref());
+                        self.wm.ensure_watching(cwd.to_string_lossy().as_ref());
                     }
                 }
                 Err(_timeout) => {
                     eprintln!("[mcp] roots/list timed out; falling back to cwd");
                     if let Ok(cwd) = std::env::current_dir() {
-                        self.wm
-                            .ensure_watching(cwd.to_string_lossy().as_ref());
+                        self.wm.ensure_watching(cwd.to_string_lossy().as_ref());
                     }
                 }
             }
@@ -191,9 +185,8 @@ impl ServerHandler for BuiltinServer {
         &self,
         request: rmcp::model::CallToolRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> impl std::future::Future<Output = Result<CallToolResult, rmcp::ErrorData>>
-           + MaybeSendFuture
-           + '_ {
+    ) -> impl std::future::Future<Output = Result<CallToolResult, rmcp::ErrorData>> + MaybeSendFuture + '_
+    {
         async move {
             // Last resort: if no project has been registered yet, try cwd now.
             // This covers clients that never send roots and whose on_initialized
@@ -229,9 +222,8 @@ Tools:\n\
         &self,
         _request: Option<rmcp::model::PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
-    ) -> impl std::future::Future<Output = Result<ListToolsResult, rmcp::ErrorData>>
-           + MaybeSendFuture
-           + '_ {
+    ) -> impl std::future::Future<Output = Result<ListToolsResult, rmcp::ErrorData>> + MaybeSendFuture + '_
+    {
         async move {
             Ok(ListToolsResult {
                 tools: self.tool_router.list_all(),

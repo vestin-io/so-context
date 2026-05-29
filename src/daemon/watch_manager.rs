@@ -12,10 +12,10 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::RecvTimeoutError;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
-use std::sync::mpsc::RecvTimeoutError;
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher, recommended_watcher};
 
@@ -140,11 +140,13 @@ impl WatchManager {
             })
             .map_err(|e| format!("failed to spawn watch thread: {e}"))?;
 
-        self.inner
-            .lock()
-            .unwrap()
-            .projects
-            .insert(root, WatchHandle { state, _thread: thread });
+        self.inner.lock().unwrap().projects.insert(
+            root,
+            WatchHandle {
+                state,
+                _thread: thread,
+            },
+        );
 
         Ok(())
     }
@@ -157,19 +159,13 @@ impl WatchManager {
 const REINDEX_DEBOUNCE_MS: u64 = 700;
 const WATCH_POLL_SECS: u64 = 1;
 
-fn run_watch_thread(
-    project_root: PathBuf,
-    state: Arc<Mutex<WatchState>>,
-) {
+fn run_watch_thread(project_root: PathBuf, state: Arc<Mutex<WatchState>>) {
     if let Err(e) = watch_loop(&project_root, &state) {
         *state.lock().unwrap() = WatchState::Failed(e);
     }
 }
 
-fn watch_loop(
-    project_root: &PathBuf,
-    state: &Arc<Mutex<WatchState>>,
-) -> Result<(), String> {
+fn watch_loop(project_root: &PathBuf, state: &Arc<Mutex<WatchState>>) -> Result<(), String> {
     let mut db = GraphDb::open(project_root.clone())?;
 
     let summary = db.index()?;

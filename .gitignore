@@ -1,4 +1,5 @@
 /target
+/.so-context
 Cargo.lock
 *.swp
 *.swo

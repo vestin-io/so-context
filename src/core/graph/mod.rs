@@ -10,8 +10,8 @@
 
 mod db;
 mod index;
-mod sync;
 mod symbols;
+mod sync;
 mod util;
 pub mod watch;
 

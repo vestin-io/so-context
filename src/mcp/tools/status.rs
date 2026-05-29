@@ -2,12 +2,12 @@
 
 use std::sync::Arc;
 
-use rmcp::model::{CallToolResult, Content, Tool};
 use rmcp::handler::server::router::tool::ToolRoute;
+use rmcp::model::{CallToolResult, Content, Tool};
 
 use super::BuiltinServer;
-use crate::daemon::watch_manager::WatchState;
 use crate::daemon::WatchManager;
+use crate::daemon::watch_manager::WatchState;
 
 pub fn route(wm: Arc<WatchManager>) -> ToolRoute<BuiltinServer> {
     ToolRoute::new_dyn(
@@ -35,11 +35,13 @@ fn handler(wm: &WatchManager) -> Result<CallToolResult, rmcp::ErrorData> {
         .map(|s| {
             let state = match &s.state {
                 WatchState::Indexing => "indexing".to_string(),
-                WatchState::Running  => "running".to_string(),
+                WatchState::Running => "running".to_string(),
                 WatchState::Failed(e) => format!("failed: {e}"),
             };
             format!("{} — {state}", s.path.display())
         })
         .collect();
-    Ok(CallToolResult::success(vec![Content::text(lines.join("\n"))]))
+    Ok(CallToolResult::success(vec![Content::text(
+        lines.join("\n"),
+    )]))
 }

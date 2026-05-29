@@ -55,7 +55,15 @@ pub(super) fn load_tracked_files(
     for row in rows {
         let (id, path, size, mtime, hash) =
             row.map_err(|e| format!("failed to read tracked file row: {e}"))?;
-        map.insert(path, TrackedFile { id, size, mtime, hash });
+        map.insert(
+            path,
+            TrackedFile {
+                id,
+                size,
+                mtime,
+                hash,
+            },
+        );
     }
     Ok(map)
 }
@@ -89,7 +97,10 @@ pub(super) fn sync_files(
     let mut seen_paths: HashMap<String, ()> = HashMap::new();
     let mut parser = Parser::new();
 
-    for entry in WalkDir::new(project_root).into_iter().filter_map(Result::ok) {
+    for entry in WalkDir::new(project_root)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
         let path = entry.path();
         if !entry.file_type().is_file() || should_skip(path) {
             continue;
@@ -146,17 +157,34 @@ pub(super) fn sync_files(
             } else {
                 // Genuinely modified: purge old data and reparse.
                 purge_file_data(tx, rec.id)?;
-                reindex_file(tx, &mut parser, path, project_id, rec.id, &lang_name, &content, size, mtime, &hash)?;
+                reindex_file(
+                    tx,
+                    &mut parser,
+                    path,
+                    project_id,
+                    rec.id,
+                    &lang_name,
+                    &content,
+                    size,
+                    mtime,
+                    &hash,
+                )?;
                 counts.modified += 1;
             }
         } else {
             // New file.
             let (file_id, file_node_id) = insert_file_record_full(
-                tx, project_root, path, project_id, &lang_name, size, mtime, &hash,
+                tx,
+                project_root,
+                path,
+                project_id,
+                &lang_name,
+                size,
+                mtime,
+                &hash,
             )?;
-            let language = get_language(&lang_name).map_err(|e| {
-                format!("failed to load tree-sitter language '{lang_name}': {e}")
-            })?;
+            let language = get_language(&lang_name)
+                .map_err(|e| format!("failed to load tree-sitter language '{lang_name}': {e}"))?;
             parser
                 .set_language(&language)
                 .map_err(|e| format!("failed to set parser language: {e}"))?;
