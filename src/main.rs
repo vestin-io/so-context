@@ -46,6 +46,14 @@ enum Commands {
     ///
     /// Register as a PreToolUse hook with matcher "mcp__so-context__.*".
     Hook,
+    /// PostCompact hook handler for Claude Code.
+    ///
+    /// Reads the PostCompact hook JSON from stdin and tells the running daemon
+    /// to reset file-visit cache entries for the compacted session, so the
+    /// agent receives full file content again after compaction.
+    ///
+    /// Register as a PostCompact hook (no matcher needed).
+    Compact,
     /// Index a project folder into the local code graph SQLite database.
     /// With --watch, keeps running and re-indexes on file changes (foreground).
     Index {
@@ -108,8 +116,9 @@ async fn main() -> Result<()> {
             unsafe { libc::signal(libc::SIGHUP, libc::SIG_IGN); }
             Daemon::new().run().await
         }
-        Commands::Mcp  => mcp::run_mcp_bridge().await,
-        Commands::Hook => hook::run_pre_tool_use_hook(),
+        Commands::Mcp     => mcp::run_mcp_bridge().await,
+        Commands::Hook    => hook::run_pre_tool_use_hook(),
+        Commands::Compact => hook::run_post_compact_hook(),
         Commands::Index { path, watch } => {
             if watch {
                 core_graph::watch_project(&path).map_err(anyhow::Error::msg)

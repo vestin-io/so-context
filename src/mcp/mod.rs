@@ -52,6 +52,41 @@ const ROOTS_LIST_TIMEOUT_MS: u64 = 5_000;
 // Bridge: thin stdio ↔ Unix-socket pipe  (used by `so-context mcp`)
 // ---------------------------------------------------------------------------
 
+/// Sends a `compact_reset` notification to the daemon's ctrl socket.
+///
+/// Called by the PostCompact hook handler after context compaction so the
+/// daemon drops all file-visit cache entries for that session.
+pub async fn send_compact_reset(connection_id: &str, session_id: &str) -> Result<()> {
+    use tokio::io::AsyncWriteExt;
+    use tokio::net::UnixStream;
+
+    let sock = ctrl_socket_path();
+    if !sock.exists() {
+        // Daemon not running — nothing to reset, that's fine.
+        return Ok(());
+    }
+
+    let msg = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "compact_reset",
+        "params": {
+            "connection_id": connection_id,
+            "session_id":    session_id,
+        }
+    });
+
+    let mut line = serde_json::to_string(&msg)?;
+    line.push('\n');
+
+    let mut stream = UnixStream::connect(&sock)
+        .await
+        .map_err(|e| anyhow::anyhow!("connect to ctrl socket: {e}"))?;
+    stream.write_all(line.as_bytes()).await
+        .map_err(|e| anyhow::anyhow!("write to ctrl socket: {e}"))?;
+
+    Ok(())
+}
+
 /// Sends a JSON-RPC notification to the daemon's ctrl socket.
 ///
 /// Used by `so-context watch` and `so-context unwatch` CLI subcommands.

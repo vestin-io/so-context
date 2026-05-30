@@ -19,7 +19,6 @@ pub use watch_manager::WatchManager;
 use crate::mcp::BuiltinServer;
 use crate::socket::{ctrl_socket_path, socket_path};
 use crate::file_visit_cache::FileVisitCache;
-
 /// The daemon runtime.
 pub struct Daemon {
     pub watch_manager: Arc<WatchManager>,
@@ -68,8 +67,9 @@ impl Daemon {
 
         // Spawn ctrl listener.
         let wm_ctrl = Arc::clone(&wm);
+        let fvc_ctrl = fvc.clone();
         tokio::spawn(async move {
-            run_ctrl_listener(ctrl_listener, wm_ctrl).await;
+            run_ctrl_listener(ctrl_listener, wm_ctrl, fvc_ctrl).await;
         });
 
         // --- MCP accept loop ---
@@ -103,12 +103,13 @@ impl Daemon {
 
 // ctrl socket — newline-delimited JSON-RPC 2.0 (notifications only)
 
-async fn run_ctrl_listener(listener: UnixListener, wm: Arc<WatchManager>) {
+async fn run_ctrl_listener(listener: UnixListener, wm: Arc<WatchManager>, fvc: FileVisitCache) {
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {
                 let wm = Arc::clone(&wm);
-                tokio::spawn(async move { handle_ctrl_connection(stream, wm).await });
+                let fvc = fvc.clone();
+                tokio::spawn(async move { handle_ctrl_connection(stream, wm, fvc).await });
             }
             Err(e) => {
                 eprintln!("so-context daemon: ctrl accept error: {e}");
@@ -117,33 +118,55 @@ async fn run_ctrl_listener(listener: UnixListener, wm: Arc<WatchManager>) {
     }
 }
 
-async fn handle_ctrl_connection(stream: UnixStream, wm: Arc<WatchManager>) {
+async fn handle_ctrl_connection(stream: UnixStream, wm: Arc<WatchManager>, fvc: FileVisitCache) {
     let mut lines = BufReader::new(stream).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         let line = line.trim().to_string();
         if line.is_empty() { continue; }
         if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&line) {
-            dispatch_ctrl(&msg, &wm);
+            dispatch_ctrl(&msg, &wm, &fvc);
         } else {
             eprintln!("so-context daemon: ctrl invalid JSON: {line}");
         }
     }
 }
 
-fn dispatch_ctrl(msg: &serde_json::Value, wm: &WatchManager) {
+fn dispatch_ctrl(msg: &serde_json::Value, wm: &WatchManager, fvc: &FileVisitCache) {
     let method = msg.get("method").and_then(|v| v.as_str()).unwrap_or("");
     let params = msg.get("params");
     let path = params.and_then(|p| p.get("path")).and_then(|v| v.as_str()).unwrap_or("");
-    if path.is_empty() {
-        eprintln!("so-context daemon: ctrl missing path in {method} message");
-        return;
-    }
     let client     = params.and_then(|p| p.get("client")).and_then(|v| v.as_str());
     let session_id = params.and_then(|p| p.get("session_id")).and_then(|v| v.as_str());
 
     match method {
-        "watch"   => { wm.ensure_watching(path, client, session_id); }
-        "unwatch" => { wm.unwatch(path, client, session_id); }
-        other     => { eprintln!("so-context daemon: ctrl unknown method: {other}"); }
+        "watch" | "unwatch" => {
+            if path.is_empty() {
+                eprintln!("so-context daemon: ctrl missing path in {method} message");
+                return;
+            }
+            if method == "watch" {
+                wm.ensure_watching(path, client, session_id);
+            } else {
+                wm.unwatch(path, client, session_id);
+            }
+        }
+        "compact_reset" => {
+            // Reset all file-visit cache entries for this session so the agent
+            // receives full content again after context compaction.
+            let connection_id = params
+                .and_then(|p| p.get("connection_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if connection_id.is_empty() || session_id.unwrap_or("").is_empty() {
+                eprintln!("so-context daemon: ctrl compact_reset missing connection_id or session_id");
+                return;
+            }
+            let deleted = fvc.delete_context_window(connection_id, session_id.unwrap());
+            eprintln!(
+                "so-context daemon: compact_reset connection={connection_id} session={} deleted={}",
+                session_id.unwrap(), deleted
+            );
+        }
+        other => { eprintln!("so-context daemon: ctrl unknown method: {other}"); }
     }
 }

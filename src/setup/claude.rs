@@ -5,6 +5,7 @@
 //! Writes:
 //!   - `mcpServers.so-context`          — MCP stdio bridge
 //!   - `hooks.PreToolUse[].hooks[]`     — injects `_so_session_id` into so-context tool calls
+//!   - `hooks.PostCompact[].hooks[]`    — resets file-visit cache after context compaction
 //!
 //! Watch lifecycle is handled automatically by the daemon via the MCP connection:
 //! projects are registered on `initialize` and unwatched on connection close.
@@ -52,6 +53,9 @@ pub fn install(binary: &str) -> Result<()> {
     // --- PreToolUse hook: inject _so_session_id ---
     install_pre_tool_use_hook(obj, binary);
 
+    // --- PostCompact hook: reset file-visit cache ---
+    install_post_compact_hook(obj, binary);
+
     let text = serde_json::to_string_pretty(&root)?;
     fs::write(&path, text).with_context(|| format!("write {}", path.display()))?;
     println!("Claude: wrote MCP + hooks to {}", path.display());
@@ -77,6 +81,9 @@ pub fn uninstall(binary: &str) -> Result<()> {
 
     // Remove the PreToolUse hook group.
     remove_pre_tool_use_hook(obj, binary);
+
+    // Remove the PostCompact hook group.
+    remove_post_compact_hook(obj, binary);
 
     let text = serde_json::to_string_pretty(&root)?;
     fs::write(&path, text).with_context(|| format!("write {}", path.display()))?;
@@ -167,5 +174,93 @@ fn remove_pre_tool_use_hook(root: &mut Map<String, Value>, binary: &str) {
             })
             .unwrap_or(false);
         !(is_so_context_matcher && has_our_binary)
+    });
+}
+
+// ---------------------------------------------------------------------------
+// PostCompact hook
+// ---------------------------------------------------------------------------
+
+fn install_post_compact_hook(root: &mut Map<String, Value>, binary: &str) {
+    let new_hook = json!({
+        "type": "command",
+        "command": binary,
+        "args": ["compact"],
+        "statusMessage": "Resetting so-context file cache after compaction"
+    });
+
+    let hooks_obj = root
+        .entry("hooks")
+        .or_insert(json!({}))
+        .as_object_mut()
+        .unwrap();
+
+    let event_arr = hooks_obj
+        .entry("PostCompact")
+        .or_insert(json!([]))
+        .as_array_mut()
+        .unwrap();
+
+    // There's only one group for PostCompact (no matcher filter needed).
+    // Find existing group that contains our binary and update it; otherwise append.
+    let pos = event_arr.iter().position(|g| {
+        g.get("hooks")
+            .and_then(|h| h.as_array())
+            .map(|hooks| {
+                hooks.iter().any(|h| {
+                    h.get("command")
+                        .and_then(|c| c.as_str())
+                        .map(|c| c == binary)
+                        .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false)
+    });
+
+    if let Some(idx) = pos {
+        // Replace to pick up any args change.
+        if let Some(inner) = event_arr[idx]
+            .as_object_mut()
+            .and_then(|g| g.get_mut("hooks"))
+            .and_then(|h| h.as_array_mut())
+        {
+            inner.retain(|h| {
+                h.get("command")
+                    .and_then(|c| c.as_str())
+                    .map(|c| c != binary)
+                    .unwrap_or(true)
+            });
+            inner.push(new_hook);
+        }
+    } else {
+        event_arr.push(json!({ "hooks": [new_hook] }));
+    }
+}
+
+fn remove_post_compact_hook(root: &mut Map<String, Value>, binary: &str) {
+    let arr = match root
+        .get_mut("hooks")
+        .and_then(|h| h.as_object_mut())
+        .and_then(|h| h.get_mut("PostCompact"))
+        .and_then(|v| v.as_array_mut())
+    {
+        Some(a) => a,
+        None => return,
+    };
+
+    arr.retain(|group| {
+        let has_our_binary = group
+            .get("hooks")
+            .and_then(|h| h.as_array())
+            .map(|hooks| {
+                hooks.iter().any(|h| {
+                    h.get("command")
+                        .and_then(|c| c.as_str())
+                        .map(|c| c == binary)
+                        .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false);
+        !has_our_binary
     });
 }
