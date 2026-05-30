@@ -76,6 +76,22 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
                     "{short} [unchanged, {line_count}L, use cached context]\n\
                      File unchanged since last read. Reuse existing context instead of re-reading."
                 );
+
+                let mut ev = EventRecord::new(&session_id, "so_read");
+                ev.client         = client.clone();
+                ev.client_version = client_version.clone();
+                ev.client_source  = "client_info".to_string();
+                ev.session_source = session_source.to_string();
+                ev.project        = Some(path.to_string());
+                ev.params         = Some(serde_json::json!({ "path": path, "mode": mode }).to_string());
+                ev.duration_ms    = Some(0);
+                ev.estimated_origin_tokens = Some(count_tokens(&raw_content));
+                ev.estimated_origin_size   = Some(raw_content.len() as i64);
+                ev.actual_tokens           = Some(count_tokens(&msg));
+                ev.actual_size             = Some(msg.len() as i64);
+                ev.result_ok = true;
+                enqueue(ev);
+
                 return Ok(CallToolResult::success(vec![Content::text(msg)]));
             }
             // File was read before but has changed — fall through to full read.
