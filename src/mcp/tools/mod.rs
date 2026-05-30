@@ -4,6 +4,7 @@
 //! [`ToolRoute`] ready to be registered on the server.
 
 pub mod read;
+pub mod references;
 pub mod search;
 pub mod status;
 

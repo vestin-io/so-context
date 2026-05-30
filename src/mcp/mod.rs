@@ -214,6 +214,7 @@ impl BuiltinServer {
     pub fn new(wm: Arc<WatchManager>, file_visit_cache: FileVisitCache) -> Self {
         let mut tool_router = ToolRouter::<Self>::new();
         tool_router.add_route(tools::read::route());
+        tool_router.add_route(tools::references::route());
         tool_router.add_route(tools::search::route());
         tool_router.add_route(tools::status::route(Arc::clone(&wm)));
 
@@ -389,9 +390,10 @@ impl ServerHandler for BuiltinServer {
 Projects are auto-discovered from workspace roots on connect — no setup needed.\n\
 \n\
 Tools:\n\
-  so_read      — read a file (mode: full / outline / graph)\n\
-  so_search    — FTS search over an indexed project graph\n\
-  so_status    — list all watched projects and their current state",
+  so_read        — read a file (mode: full / outline / graph)\n\
+  so_search      — FTS search over an indexed project graph\n\
+  so_references  — find all usages of a symbol (callers/callees/imports/all)\n\
+  so_status      — list all watched projects and their current state",
             )
     }
 

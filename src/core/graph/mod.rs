@@ -19,7 +19,7 @@ mod symbols;
 mod util;
 pub mod watch;
 
-pub use db::{GraphDb, FileOutline, validate_project_root};
+pub use db::{GraphDb, FileOutline, ReferenceEntry, validate_project_root};
 pub use watch::watch_project;
 
 // ---------------------------------------------------------------------------
@@ -73,4 +73,25 @@ pub fn search_project_with_stats(project_path: &str, query: &str, limit: usize) 
         ));
     }
     GraphDb::open(project_root)?.search_with_stats(query, limit)
+}
+
+/// Returns all references to (or from) a named symbol.
+///
+/// `kind` — `"all"` | `"callers"` | `"callees"` | `"imports"` (default: `"all"`)
+/// `include_declaration` — whether to include the definition site (default: false)
+pub fn references_project(
+    project_path: &str,
+    symbol: &str,
+    kind: &str,
+    include_declaration: bool,
+) -> Result<Vec<ReferenceEntry>, String> {
+    let project_root = validate_project_root(project_path)?;
+    if !GraphDb::exists(&project_root) {
+        let db_path = db::graph_db_path(&project_root);
+        return Err(format!(
+            "graph db not found at {} (run index first)",
+            db_path.display()
+        ));
+    }
+    GraphDb::open(project_root)?.query_references(symbol, kind, include_declaration)
 }

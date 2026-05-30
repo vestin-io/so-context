@@ -187,6 +187,166 @@ impl GraphDb {
     }
 
     // -----------------------------------------------------------------------
+    // References
+    // -----------------------------------------------------------------------
+
+    /// Returns all references to (or from) a named symbol, filtered by `kind`.
+    ///
+    /// `kind` values:
+    ///   - `"all"`     — every edge involving the symbol (default)
+    ///   - `"callers"` — symbols that call this symbol
+    ///   - `"callees"` — symbols this symbol calls
+    ///   - `"imports"` — import edges involving this symbol
+    pub fn query_references(
+        &self,
+        symbol: &str,
+        kind: &str,
+        include_declaration: bool,
+    ) -> Result<Vec<ReferenceEntry>, String> {
+        // Resolve the target symbol node(s) by name.
+        let mut symbol_stmt = self
+            .conn
+            .prepare(
+                "SELECT n.id, f.path, n.kind, n.start_line
+                 FROM nodes n
+                 JOIN files f ON f.id = n.file_id
+                 WHERE n.name = ?1 AND n.kind != 'file'",
+            )
+            .map_err(|e| format!("failed to prepare symbol lookup: {e}"))?;
+
+        let target_nodes: Vec<(i64, String, String, i64)> = symbol_stmt
+            .query_map(params![symbol], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })
+            .map_err(|e| format!("failed to query symbol nodes: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        if target_nodes.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut results: Vec<ReferenceEntry> = Vec::new();
+
+        // Optionally include the declaration site(s).
+        if include_declaration {
+            for (_, path, sym_kind, line) in &target_nodes {
+                results.push(ReferenceEntry {
+                    file:     path.clone(),
+                    line:     *line,
+                    ref_kind: "declaration".to_string(),
+                    symbol:   symbol.to_string(),
+                    sym_kind: sym_kind.clone(),
+                    snippet:  None,
+                });
+            }
+        }
+
+        for (node_id, _, _, _) in &target_nodes {
+            match kind {
+                "callers" => {
+                    // Who calls this symbol?
+                    let mut stmt = self.conn.prepare(
+                        "SELECT f.path, caller.name, caller.kind, e.line
+                         FROM edges e
+                         JOIN nodes caller ON caller.id = e.from_node_id
+                         JOIN files  f     ON f.id = caller.file_id
+                         WHERE e.to_node_id = ?1 AND e.kind = 'calls'",
+                    ).map_err(|e| format!("failed to prepare callers query: {e}"))?;
+                    let rows = stmt.query_map(params![node_id], |row| {
+                        Ok((row.get::<_,String>(0)?, row.get::<_,String>(1)?,
+                            row.get::<_,String>(2)?, row.get::<_,i64>(3)?))
+                    }).map_err(|e| format!("failed to query callers: {e}"))?;
+                    for row in rows.filter_map(|r| r.ok()) {
+                        results.push(ReferenceEntry {
+                            file: row.0, line: row.3,
+                            ref_kind: "caller".to_string(),
+                            symbol: row.1, sym_kind: row.2, snippet: None,
+                        });
+                    }
+                }
+                "callees" => {
+                    // What does this symbol call?
+                    let mut stmt = self.conn.prepare(
+                        "SELECT f.path, callee.name, callee.kind, e.line
+                         FROM edges e
+                         JOIN nodes callee ON callee.id = e.to_node_id
+                         JOIN files  f     ON f.id = callee.file_id
+                         WHERE e.from_node_id = ?1 AND e.kind = 'calls'",
+                    ).map_err(|e| format!("failed to prepare callees query: {e}"))?;
+                    let rows = stmt.query_map(params![node_id], |row| {
+                        Ok((row.get::<_,String>(0)?, row.get::<_,String>(1)?,
+                            row.get::<_,String>(2)?, row.get::<_,i64>(3)?))
+                    }).map_err(|e| format!("failed to query callees: {e}"))?;
+                    for row in rows.filter_map(|r| r.ok()) {
+                        results.push(ReferenceEntry {
+                            file: row.0, line: row.3,
+                            ref_kind: "callee".to_string(),
+                            symbol: row.1, sym_kind: row.2, snippet: None,
+                        });
+                    }
+                }
+                "imports" => {
+                    // Import edges where symbol is the target.
+                    let mut stmt = self.conn.prepare(
+                        "SELECT f.path, importer.name, importer.kind, e.line
+                         FROM edges e
+                         JOIN nodes importer ON importer.id = e.from_node_id
+                         JOIN files  f       ON f.id = importer.file_id
+                         WHERE e.to_node_id = ?1 AND e.kind = 'imports'",
+                    ).map_err(|e| format!("failed to prepare imports query: {e}"))?;
+                    let rows = stmt.query_map(params![node_id], |row| {
+                        Ok((row.get::<_,String>(0)?, row.get::<_,String>(1)?,
+                            row.get::<_,String>(2)?, row.get::<_,i64>(3)?))
+                    }).map_err(|e| format!("failed to query imports: {e}"))?;
+                    for row in rows.filter_map(|r| r.ok()) {
+                        results.push(ReferenceEntry {
+                            file: row.0, line: row.3,
+                            ref_kind: "import".to_string(),
+                            symbol: row.1, sym_kind: row.2, snippet: None,
+                        });
+                    }
+                }
+                _ => {
+                    // "all" — callers + callees + imports
+                    let mut stmt = self.conn.prepare(
+                        "SELECT f.path, other.name, other.kind, e.line, e.kind,
+                                CASE WHEN e.to_node_id = ?1 THEN 'inbound' ELSE 'outbound' END
+                         FROM edges e
+                         JOIN nodes other ON other.id = CASE
+                             WHEN e.to_node_id = ?1 THEN e.from_node_id
+                             ELSE e.to_node_id END
+                         JOIN files f ON f.id = other.file_id
+                         WHERE (e.from_node_id = ?1 OR e.to_node_id = ?1)
+                           AND e.kind IN ('calls', 'imports')",
+                    ).map_err(|e| format!("failed to prepare all-refs query: {e}"))?;
+                    let rows = stmt.query_map(params![node_id], |row| {
+                        Ok((row.get::<_,String>(0)?, row.get::<_,String>(1)?,
+                            row.get::<_,String>(2)?, row.get::<_,i64>(3)?,
+                            row.get::<_,String>(4)?, row.get::<_,String>(5)?))
+                    }).map_err(|e| format!("failed to query all refs: {e}"))?;
+                    for row in rows.filter_map(|r| r.ok()) {
+                        let ref_kind = format!("{}:{}", row.4, row.5); // e.g. "calls:inbound"
+                        results.push(ReferenceEntry {
+                            file: row.0, line: row.3,
+                            ref_kind,
+                            symbol: row.1, sym_kind: row.2, snippet: None,
+                        });
+                    }
+                }
+            }
+        }
+
+        // Deduplicate by (file, line, ref_kind, symbol).
+        results.sort_by(|a, b| a.file.cmp(&b.file).then(a.line.cmp(&b.line)));
+        results.dedup_by(|a, b| {
+            a.file == b.file && a.line == b.line && a.ref_kind == b.ref_kind && a.symbol == b.symbol
+        });
+
+        Ok(results)
+    }
+
+    // -----------------------------------------------------------------------
     // Outline
     // -----------------------------------------------------------------------
 
@@ -306,6 +466,25 @@ pub struct SymbolEntry {
     pub is_async:   bool,
     pub is_static:  bool,
 }
+/// A single reference entry returned by [`GraphDb::query_references`].
+#[derive(Debug)]
+pub struct ReferenceEntry {
+    /// Project-relative file path where the reference appears.
+    pub file:     String,
+    /// Line number of the reference.
+    pub line:     i64,
+    /// Kind of reference: `caller`, `callee`, `import`, `declaration`,
+    /// or `calls:inbound` / `calls:outbound` in `all` mode.
+    pub ref_kind: String,
+    /// Name of the referencing (or referenced) symbol.
+    pub symbol:   String,
+    /// Tree-sitter kind of the referencing symbol.
+    pub sym_kind: String,
+    /// Optional surrounding code snippet (not populated by default; reserved for future use).
+    #[allow(dead_code)]
+    pub snippet:  Option<String>,
+}
+
 ///
 /// Pipeline:
 /// - replace `::` with space
