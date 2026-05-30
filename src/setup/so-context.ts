@@ -4,21 +4,19 @@
 // reaches the daemon, so the daemon can attribute events to the correct
 // context window (sub-agent).
 //
-// Watch lifecycle is handled automatically by the daemon via the MCP
-// connection: projects are registered on initialize and unwatched on
-// connection close. No session lifecycle hooks are needed.
+// Also resets the file-visit cache after context compaction so the agent
+// receives full file content again instead of "use cached context" stubs.
 //
-// Hook: tool.execute.before
-//   input.tool     — tool name, e.g. "so-context_so_read"
-//   input.sessionID — the calling context window's session ID
-//   output.args    — the tool arguments object (mutated in place)
+// Hooks used:
+//   tool.execute.before  — injects _so_session_id into so-context tool args
+//   session.compacted    — calls `so-context hook post-compact` to reset cache
 //
 // OpenCode registers MCP tools as "<server-name>_<tool-name>", so tools from
 // the "so-context" MCP server are prefixed with "so-context_".
 
 import type { Plugin } from "@opencode-ai/plugin";
 
-export const SoContextPlugin: Plugin = async () => {
+export const SoContextPlugin: Plugin = async ({ $ }) => {
   return {
     "tool.execute.before": async (input, output) => {
       // Only intercept so-context MCP tools.
@@ -29,6 +27,21 @@ export const SoContextPlugin: Plugin = async () => {
 
       // Inject the context window session ID into the tool arguments.
       output.args._so_session_id = sessionId;
+    },
+
+    "session.compacted": async (input) => {
+      // After compaction the agent's context window is reset. Tell the daemon
+      // to clear file-visit cache entries for this session so it delivers full
+      // file content again on the next so_read call.
+      const sessionId: string = (input as any).session?.id ?? (input as any).sessionID ?? "";
+      if (!sessionId) return;
+
+      const payload = JSON.stringify({ session_id: sessionId, connection_id: sessionId });
+      try {
+        await $`echo ${payload} | so-context hook post-compact`.quiet();
+      } catch {
+        // Non-fatal: daemon may not be running or binary not on PATH.
+      }
     },
   };
 };

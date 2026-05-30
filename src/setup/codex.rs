@@ -5,6 +5,7 @@
 //! Writes:
 //!   - `[mcp_servers.so-context]`      — MCP stdio bridge
 //!   - `[[hooks.PreToolUse]]`          — injects `_so_session_id` into so-context tool calls
+//!   - `[[hooks.PostCompact]]`         — resets file-visit cache after context compaction
 //!
 //! Watch lifecycle is handled automatically by the daemon via the MCP connection:
 //! projects are registered on `initialize` and unwatched on connection close.
@@ -58,6 +59,9 @@ pub fn install(binary: &str) -> Result<()> {
     // --- PreToolUse hook: inject _so_session_id ---
     install_pre_tool_use_hook(&mut doc, binary);
 
+    // --- PostCompact hook: reset file-visit cache ---
+    install_post_compact_hook(&mut doc, binary);
+
     fs::write(&path, doc.to_string())
         .with_context(|| format!("write {}", path.display()))?;
     println!("Codex: wrote MCP + hooks to {}", path.display());
@@ -82,6 +86,9 @@ pub fn uninstall() -> Result<()> {
 
     // Remove the PreToolUse hook group.
     remove_pre_tool_use_hook(&mut doc);
+
+    // Remove the PostCompact hook group.
+    remove_post_compact_hook(&mut doc);
 
     fs::write(&path, doc.to_string())
         .with_context(|| format!("write {}", path.display()))?;
@@ -128,32 +135,37 @@ fn install_pre_tool_use_hook(doc: &mut DocumentMut, binary: &str) {
                         .and_then(|c| c.as_str())
                         .map(|c| c == binary)
                         .unwrap_or(false)
+                        && h.get("args")
+                            .and_then(|a| a.as_array())
+                            .map(|a| a.iter().any(|v| v.as_str() == Some("pre-tool")))
+                            .unwrap_or(false)
                 })
                 .map(|(i, _)| i)
                 .collect();
             for i in to_remove.into_iter().rev() {
                 inner.remove(i);
             }
-            inner.push(make_hook_handler(binary));
+            inner.push(make_pre_tool_handler(binary));
         }
     } else {
         let mut group = Table::new();
         group["matcher"] = value("mcp__so-context__.*");
 
         let mut inner_aot = toml_edit::ArrayOfTables::new();
-        inner_aot.push(make_hook_handler(binary));
+        inner_aot.push(make_pre_tool_handler(binary));
         group["hooks"] = Item::ArrayOfTables(inner_aot);
 
         event_aot.push(group);
     }
 }
 
-fn make_hook_handler(binary: &str) -> Table {
+fn make_pre_tool_handler(binary: &str) -> Table {
     let mut handler = Table::new();
     handler["type"] = value("command");
     handler["command"] = value(binary);
     let mut args = Array::new();
     args.push("hook");
+    args.push("pre-tool");
     handler["args"] = value(args);
     handler["statusMessage"] = value("Tagging so-context call with session ID");
     handler
@@ -181,6 +193,130 @@ fn remove_pre_tool_use_hook(doc: &mut DocumentMut) {
                 .get("matcher")
                 .and_then(|m| m.as_str())
                 .map(|m| m == "mcp__so-context__.*")
+                .unwrap_or(false)
+        })
+        .map(|(i, _)| i)
+        .collect();
+
+    for idx in to_remove.into_iter().rev() {
+        aot.remove(idx);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PostCompact hook
+// ---------------------------------------------------------------------------
+
+fn install_post_compact_hook(doc: &mut DocumentMut, binary: &str) {
+    if doc.get("hooks").is_none() {
+        doc["hooks"] = Item::Table(Table::new());
+    }
+    let hooks_table = doc["hooks"].as_table_mut().unwrap();
+
+    if hooks_table.get("PostCompact").is_none() {
+        hooks_table["PostCompact"] = Item::ArrayOfTables(toml_edit::ArrayOfTables::new());
+    }
+
+    let event_aot = match hooks_table["PostCompact"].as_array_of_tables_mut() {
+        Some(a) => a,
+        None => return,
+    };
+
+    // Find existing group containing our binary+post-compact handler.
+    let group_idx = event_aot.iter().position(|group| {
+        group
+            .get("hooks")
+            .and_then(|h| h.as_array_of_tables())
+            .map(|inner| {
+                inner.iter().any(|h| {
+                    h.get("command")
+                        .and_then(|c| c.as_str())
+                        .map(|c| c == binary)
+                        .unwrap_or(false)
+                        && h.get("args")
+                            .and_then(|a| a.as_array())
+                            .map(|a| a.iter().any(|v| v.as_str() == Some("post-compact")))
+                            .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false)
+    });
+
+    if let Some(idx) = group_idx {
+        let group = event_aot.iter_mut().nth(idx).unwrap();
+        if let Some(inner) = group["hooks"].as_array_of_tables_mut() {
+            let to_remove: Vec<usize> = inner
+                .iter()
+                .enumerate()
+                .filter(|(_, h)| {
+                    h.get("command")
+                        .and_then(|c| c.as_str())
+                        .map(|c| c == binary)
+                        .unwrap_or(false)
+                        && h.get("args")
+                            .and_then(|a| a.as_array())
+                            .map(|a| a.iter().any(|v| v.as_str() == Some("post-compact")))
+                            .unwrap_or(false)
+                })
+                .map(|(i, _)| i)
+                .collect();
+            for i in to_remove.into_iter().rev() {
+                inner.remove(i);
+            }
+            inner.push(make_post_compact_handler(binary));
+        }
+    } else {
+        let mut group = Table::new();
+        // PostCompact has no matcher — it fires unconditionally.
+        let mut inner_aot = toml_edit::ArrayOfTables::new();
+        inner_aot.push(make_post_compact_handler(binary));
+        group["hooks"] = Item::ArrayOfTables(inner_aot);
+        event_aot.push(group);
+    }
+}
+
+fn make_post_compact_handler(binary: &str) -> Table {
+    let mut handler = Table::new();
+    handler["type"] = value("command");
+    handler["command"] = value(binary);
+    let mut args = Array::new();
+    args.push("hook");
+    args.push("post-compact");
+    handler["args"] = value(args);
+    handler["statusMessage"] = value("Resetting so-context file cache after compaction");
+    handler
+}
+
+fn remove_post_compact_hook(doc: &mut DocumentMut) {
+    let hooks_table = match doc.get_mut("hooks").and_then(|v| v.as_table_mut()) {
+        Some(t) => t,
+        None => return,
+    };
+
+    let aot = match hooks_table
+        .get_mut("PostCompact")
+        .and_then(|v| v.as_array_of_tables_mut())
+    {
+        Some(a) => a,
+        None => return,
+    };
+
+    // Remove any group containing a handler with "post-compact" in its args.
+    let to_remove: Vec<usize> = aot
+        .iter()
+        .enumerate()
+        .filter(|(_, group)| {
+            group
+                .get("hooks")
+                .and_then(|h| h.as_array_of_tables())
+                .map(|inner| {
+                    inner.iter().any(|h| {
+                        h.get("args")
+                            .and_then(|a| a.as_array())
+                            .map(|a| a.iter().any(|v| v.as_str() == Some("post-compact")))
+                            .unwrap_or(false)
+                    })
+                })
                 .unwrap_or(false)
         })
         .map(|(i, _)| i)
