@@ -62,8 +62,8 @@ pub fn outline_file(project_path: &str, file_path: &str) -> Result<Option<FileOu
     }
     GraphDb::open(project_root)?.query_file_outline(file_path)
 }
-/// Returns formatted results and total token count of matched files.
-pub fn search_project_with_stats(project_path: &str, query: &str, limit: usize) -> Result<(String, i64), String> {
+/// Returns formatted results, total token count, and total byte size of matched files.
+pub fn search_project_with_stats(project_path: &str, query: &str, limit: usize) -> Result<(String, i64, i64), String> {
     let project_root = validate_project_root(project_path)?;
     if !GraphDb::exists(&project_root) {
         let db_path = db::graph_db_path(&project_root);

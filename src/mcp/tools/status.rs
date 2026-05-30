@@ -63,11 +63,15 @@ pub fn route(wm: Arc<WatchManager>) -> ToolRoute<BuiltinServer> {
 
                 match &result {
                     Ok(r) => {
-                        let tokens: i64 = r.content.iter()
+                        let text: String = r.content.iter()
                             .filter_map(|c| c.as_text())
-                            .map(|t| count_tokens(&t.text))
-                            .sum();
-                        ev.actual_tokens = Some(tokens);
+                            .map(|t| t.text.as_str())
+                            .collect::<Vec<_>>()
+                            .join("");
+                        let tokens = count_tokens(&text);
+                        ev.actual_tokens           = Some(tokens);
+                        ev.actual_size             = Some(text.len() as i64);
+                        ev.estimated_origin_size   = Some(0);
                         ev.result_ok = true;
                     }
                     Err(_) => { ev.result_ok = false; }

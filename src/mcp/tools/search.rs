@@ -71,9 +71,11 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
     ev.duration_ms = Some(duration_ms);
 
     match call_result {
-        Ok((output, matched_files_tokens)) => {
+        Ok((output, matched_files_tokens, matched_files_size)) => {
             ev.actual_tokens           = Some(count_tokens(&output));
             ev.estimated_origin_tokens = Some(matched_files_tokens);
+            ev.actual_size             = Some(output.len() as i64);
+            ev.estimated_origin_size   = Some(matched_files_size);
             ev.result_ok               = true;
             enqueue(ev);
             Ok(CallToolResult::success(vec![Content::text(output)]))

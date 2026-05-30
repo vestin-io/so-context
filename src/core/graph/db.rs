@@ -118,10 +118,10 @@ impl GraphDb {
 
     /// FTS search over indexed symbols. Returns formatted results and total
     /// token count of matched files (used for token saving estimates).
-    pub fn search_with_stats(&self, query: &str, limit: usize) -> Result<(String, i64), String> {
+    pub fn search_with_stats(&self, query: &str, limit: usize) -> Result<(String, i64, i64), String> {
         let fts_query = build_fts_query(query);
         if fts_query.is_empty() {
-            return Ok(("No results.".to_string(), 0));
+            return Ok(("No results.".to_string(), 0, 0));
         }
 
         let mut stmt = self
@@ -158,12 +158,13 @@ impl GraphDb {
             matched_paths.insert(path);
         }
 
-        let matched_files_tokens = if matched_paths.is_empty() {
-            0
+        let (matched_files_tokens, matched_files_size) = if matched_paths.is_empty() {
+            (0i64, 0i64)
         } else {
             let placeholders = std::iter::repeat_n("?", matched_paths.len()).collect::<Vec<_>>().join(",");
             let sql = format!(
-                "SELECT COALESCE(SUM(COALESCE(token_count, 0)), 0)
+                "SELECT COALESCE(SUM(COALESCE(token_count, 0)), 0),
+                        COALESCE(SUM(COALESCE(size_bytes, 0)), 0)
                  FROM files
                  WHERE path IN ({placeholders})"
             );
@@ -172,14 +173,16 @@ impl GraphDb {
                 .map(|p| p as &dyn rusqlite::ToSql)
                 .collect();
             self.conn
-                .query_row(&sql, params.as_slice(), |row| row.get::<_, i64>(0))
-                .map_err(|e| format!("failed to sum matched file tokens: {e}"))?
+                .query_row(&sql, params.as_slice(), |row| {
+                    Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+                })
+                .map_err(|e| format!("failed to sum matched file stats: {e}"))?
         };
 
         if out.is_empty() {
-            Ok(("No results.".to_string(), 0))
+            Ok(("No results.".to_string(), 0, 0))
         } else {
-            Ok((out.join("\n"), matched_files_tokens))
+            Ok((out.join("\n"), matched_files_tokens, matched_files_size))
         }
     }
 

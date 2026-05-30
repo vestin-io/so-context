@@ -92,8 +92,10 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
         ev.project        = Some(path.to_string());
         ev.params         = Some(serde_json::json!({ "path": path, "mode": mode }).to_string());
         ev.duration_ms    = Some(0);
-        ev.actual_tokens  = Some(token_count);
+        ev.actual_tokens           = Some(token_count);
         ev.estimated_origin_tokens = Some(token_count);
+        ev.actual_size             = Some(raw_content.len() as i64);
+        ev.estimated_origin_size   = Some(raw_content.len() as i64);
         ev.result_ok = true;
         enqueue(ev);
 
@@ -118,8 +120,10 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
         ev.project        = Some(path.to_string());
         ev.params         = Some(serde_json::json!({ "path": path, "mode": mode }).to_string());
         ev.duration_ms    = Some(0);
-        ev.actual_tokens  = Some(token_count);
+        ev.actual_tokens           = Some(token_count);
         ev.estimated_origin_tokens = Some(count_tokens(&raw_content));
+        ev.actual_size             = Some(output.len() as i64);
+        ev.estimated_origin_size   = Some(raw_content.len() as i64);
         ev.result_ok = true;
         enqueue(ev);
 
