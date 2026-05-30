@@ -20,7 +20,9 @@ CREATE TABLE IF NOT EXISTS events (
   result_ok                INTEGER NOT NULL DEFAULT 1, -- 1 = success, 0 = error
   duration_ms              INTEGER,                  -- wall-clock time of tool call
   estimated_origin_tokens  INTEGER,                  -- tokens agent would have used without so-context
-  actual_tokens            INTEGER                   -- tokens actually consumed by tool result
+  actual_tokens            INTEGER,                  -- tokens actually consumed by tool result
+  estimated_origin_size    INTEGER,                  -- bytes of origin content (before so-context compression)
+  actual_size              INTEGER                   -- bytes of actual tool result
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_agent     ON events(agent, session_id);

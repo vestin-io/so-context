@@ -52,6 +52,14 @@ fn open_db() -> Result<Connection, String> {
     let conn = Connection::open(&path).map_err(|e| format!("open events db: {e}"))?;
     conn.execute_batch(include_str!("events_schema.sql"))
         .map_err(|e| format!("init events schema: {e}"))?;
+    // Migrations: add columns introduced after initial schema.
+    // ALTER TABLE fails with "duplicate column" if already present — safe to ignore.
+    for sql in [
+        "ALTER TABLE events ADD COLUMN estimated_origin_size INTEGER",
+        "ALTER TABLE events ADD COLUMN actual_size INTEGER",
+    ] {
+        let _ = conn.execute_batch(sql);
+    }
     Ok(conn)
 }
 
@@ -70,6 +78,8 @@ pub struct EventRecord {
     pub duration_ms:             Option<i64>,
     pub estimated_origin_tokens: Option<i64>,
     pub actual_tokens:           Option<i64>,
+    pub estimated_origin_size:   Option<i64>,
+    pub actual_size:             Option<i64>,
 }
 
 impl EventRecord {
@@ -167,8 +177,9 @@ fn flush_batch(conn: &Connection, batch: &mut Vec<EventRecord>) {
                 agent,
                 session_id, session_source, project, tool, params,
                 result_ok, duration_ms,
-                estimated_origin_tokens, actual_tokens
-             ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+                estimated_origin_tokens, actual_tokens,
+                estimated_origin_size, actual_size
+             ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
             params![
                 ev.client,
                 ev.client_version,
@@ -183,6 +194,8 @@ fn flush_batch(conn: &Connection, batch: &mut Vec<EventRecord>) {
                 ev.duration_ms,
                 ev.estimated_origin_tokens,
                 ev.actual_tokens,
+                ev.estimated_origin_size,
+                ev.actual_size,
             ],
         ) {
             eprintln!("so-context events: insert failed: {e}");
@@ -219,6 +232,8 @@ pub struct EventRow {
     pub duration_ms:             Option<i64>,
     pub estimated_origin_tokens: Option<i64>,
     pub actual_tokens:           Option<i64>,
+    pub estimated_origin_size:   Option<i64>,
+    pub actual_size:             Option<i64>,
 }
 
 impl EventRow {
@@ -279,7 +294,9 @@ pub fn query_events(q: &EventQuery) -> Result<Vec<EventRow>, String> {
     let sql = format!(
         "SELECT id, ts, client, client_version, client_source,
                 agent, session_id, session_source, project, tool, params,
-                result_ok, duration_ms, estimated_origin_tokens, actual_tokens
+                result_ok, duration_ms,
+                estimated_origin_tokens, actual_tokens,
+                estimated_origin_size, actual_size
          FROM events
          {where_clause}
          ORDER BY ts DESC
@@ -307,6 +324,8 @@ pub fn query_events(q: &EventQuery) -> Result<Vec<EventRow>, String> {
                 duration_ms:             row.get(12)?,
                 estimated_origin_tokens: row.get(13)?,
                 actual_tokens:           row.get(14)?,
+                estimated_origin_size:   row.get(15)?,
+                actual_size:             row.get(16)?,
             })
         })
         .map_err(|e| format!("query: {e}"))?;
@@ -340,11 +359,13 @@ pub fn query_stats(client: Option<&str>, session_id: Option<&str>) -> Result<Str
     let sql = format!(
         "SELECT tool,
                 COUNT(*) as calls,
-                SUM(COALESCE(estimated_origin_tokens, 0) - COALESCE(actual_tokens, 0)) as saved,
-                SUM(COALESCE(actual_tokens, 0)) as used
+                SUM(COALESCE(estimated_origin_tokens, 0) - COALESCE(actual_tokens, 0)) as tokens_saved,
+                SUM(COALESCE(actual_tokens, 0)) as tokens_used,
+                SUM(COALESCE(estimated_origin_size, 0) - COALESCE(actual_size, 0)) as bytes_saved,
+                SUM(COALESCE(actual_size, 0)) as bytes_used
          FROM events {where_clause}
          GROUP BY tool
-         ORDER BY saved DESC"
+         ORDER BY tokens_saved DESC"
     );
 
     let refs: Vec<&dyn rusqlite::ToSql> = vals.iter().map(|v| v.as_ref()).collect();
@@ -357,23 +378,35 @@ pub fn query_stats(client: Option<&str>, session_id: Option<&str>) -> Result<Str
                 row.get::<_, i64>(1)?,
                 row.get::<_, i64>(2)?,
                 row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, i64>(5)?,
             ))
         })
         .map_err(|e| format!("query stats: {e}"))?;
 
-    let mut lines = vec!["tool            calls   tokens_saved   tokens_used".to_string()];
-    let mut total_saved = 0i64;
-    let mut total_used = 0i64;
-    let mut total_calls = 0i64;
+    let mut lines = vec!["tool            calls   tokens_saved   tokens_used   bytes_saved   bytes_used".to_string()];
+    let mut total_tokens_saved = 0i64;
+    let mut total_tokens_used  = 0i64;
+    let mut total_bytes_saved  = 0i64;
+    let mut total_bytes_used   = 0i64;
+    let mut total_calls        = 0i64;
 
     for row in rows {
-        let (tool, calls, saved, used) = row.map_err(|e| format!("row: {e}"))?;
-        lines.push(format!("{tool:<16} {calls:>5}   {saved:>12}   {used:>11}"));
-        total_calls += calls;
-        total_saved += saved;
-        total_used += used;
+        let (tool, calls, tokens_saved, tokens_used, bytes_saved, bytes_used) =
+            row.map_err(|e| format!("row: {e}"))?;
+        lines.push(format!(
+            "{tool:<16} {calls:>5}   {tokens_saved:>12}   {tokens_used:>11}   {bytes_saved:>11}   {bytes_used:>10}"
+        ));
+        total_calls        += calls;
+        total_tokens_saved += tokens_saved;
+        total_tokens_used  += tokens_used;
+        total_bytes_saved  += bytes_saved;
+        total_bytes_used   += bytes_used;
     }
 
-    lines.push(format!("{:<16} {:>5}   {:>12}   {:>11}", "TOTAL", total_calls, total_saved, total_used));
+    lines.push(format!(
+        "{:<16} {:>5}   {:>12}   {:>11}   {:>11}   {:>10}",
+        "TOTAL", total_calls, total_tokens_saved, total_tokens_used, total_bytes_saved, total_bytes_used
+    ));
     Ok(lines.join("\n"))
 }
