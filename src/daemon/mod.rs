@@ -18,21 +18,25 @@ pub use watch_manager::WatchManager;
 
 use crate::mcp::BuiltinServer;
 use crate::socket::{ctrl_socket_path, socket_path};
+use crate::file_visit_cache::FileVisitCache;
 
 /// The daemon runtime.
 pub struct Daemon {
     pub watch_manager: Arc<WatchManager>,
+    pub file_visit_cache: FileVisitCache,
 }
 
 impl Daemon {
     pub fn new() -> Self {
         Self {
             watch_manager: Arc::new(WatchManager::new()),
+            file_visit_cache: FileVisitCache::new(),
         }
     }
 
     pub async fn run(self) -> Result<()> {
         let wm = Arc::clone(&self.watch_manager);
+        let fvc = self.file_visit_cache;
 
         // --- MCP socket (raw JSON-RPC) ---
         let mcp_path = socket_path();
@@ -72,8 +76,9 @@ impl Daemon {
         loop {
             let (stream, _addr) = mcp_listener.accept().await?;
             let wm_mcp = Arc::clone(&wm);
+            let fvc_mcp = fvc.clone();
             tokio::spawn(async move {
-                let server = BuiltinServer::new(Arc::clone(&wm_mcp));
+                let server = BuiltinServer::new(Arc::clone(&wm_mcp), fvc_mcp);
                 // Capture connection_id now (set at construction, never changes).
                 // client is captured after serve() so we get the post-handshake value.
                 let connection_id = server.connection_id();

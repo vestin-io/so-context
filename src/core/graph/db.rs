@@ -8,7 +8,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use rusqlite::{Connection, Transaction, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use super::index::index_files;
 use super::sync::{load_tracked_files, sync_files};
@@ -182,9 +182,127 @@ impl GraphDb {
             Ok((out.join("\n"), matched_files_tokens))
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Outline
+    // -----------------------------------------------------------------------
+
+    /// Returns a structured outline for a single file given its project-relative
+    /// or absolute path. Queries the graph DB for:
+    ///   - imports (unresolved_refs with ref_kind = 'import')
+    ///   - symbol nodes (functions, structs, classes, …) with visibility + line
+    ///
+    /// Returns `None` when the file is not indexed or the DB doesn't exist yet.
+    pub fn query_file_outline(&self, file_path: &str) -> Result<Option<FileOutline>, String> {
+        // Normalise to a project-relative path for the DB lookup.
+        let rel_path = {
+            let root = self.project_root.to_string_lossy();
+            let abs = if std::path::Path::new(file_path).is_absolute() {
+                file_path.to_string()
+            } else {
+                // Already relative — use as-is.
+                file_path.to_string()
+            };
+            if abs.starts_with(root.as_ref()) {
+                abs[root.len()..].trim_start_matches('/').to_string()
+            } else {
+                abs
+            }
+        };
+
+        // Look up the file record.
+        let file_row: Option<(i64, i64, String)> = self
+            .conn
+            .query_row(
+                "SELECT f.id, f.project_id, f.language
+                 FROM files f
+                 JOIN projects p ON p.id = f.project_id
+                 WHERE f.path = ?1
+                 LIMIT 1",
+                params![rel_path],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+            .map_err(|e| format!("failed to look up file: {e}"))?;
+
+        let (file_id, project_id, language) = match file_row {
+            Some(r) => r,
+            None => return Ok(None),
+        };
+
+        // Query imports.
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT ref_text, line FROM unresolved_refs
+                 WHERE file_id = ?1 AND project_id = ?2 AND ref_kind = 'import'
+                 ORDER BY line ASC",
+            )
+            .map_err(|e| format!("failed to prepare import query: {e}"))?;
+
+        let imports: Vec<String> = stmt
+            .query_map(params![file_id, project_id], |row| {
+                row.get::<_, String>(0)
+            })
+            .map_err(|e| format!("failed to query imports: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        // Query symbol nodes (skip the file-level node itself).
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT kind, name, COALESCE(signature, ''), COALESCE(visibility, ''),
+                        start_line, COALESCE(is_async, 0), COALESCE(is_static, 0)
+                 FROM nodes
+                 WHERE file_id = ?1 AND project_id = ?2 AND kind != 'file'
+                 ORDER BY start_line ASC",
+            )
+            .map_err(|e| format!("failed to prepare nodes query: {e}"))?;
+
+        let symbols: Vec<SymbolEntry> = stmt
+            .query_map(params![file_id, project_id], |row| {
+                Ok(SymbolEntry {
+                    kind:       row.get(0)?,
+                    name:       row.get(1)?,
+                    signature:  row.get(2)?,
+                    visibility: row.get(3)?,
+                    line:       row.get(4)?,
+                    is_async:   row.get::<_, i64>(5)? != 0,
+                    is_static:  row.get::<_, i64>(6)? != 0,
+                })
+            })
+            .map_err(|e| format!("failed to query symbols: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(Some(FileOutline { language, imports, symbols }))
+    }
 }
 
-/// Normalizes user text into a robust FTS5 query with prefix matching.
+// ---------------------------------------------------------------------------
+// Outline data types
+// ---------------------------------------------------------------------------
+
+/// Structured outline of a single file as stored in the graph DB.
+#[derive(Debug)]
+pub struct FileOutline {
+    pub language: String,
+    pub imports:  Vec<String>,
+    pub symbols:  Vec<SymbolEntry>,
+}
+
+/// A single symbol (function, struct, class, …) extracted from a file.
+#[derive(Debug)]
+pub struct SymbolEntry {
+    pub kind:       String,
+    pub name:       String,
+    pub signature:  String,
+    pub visibility: String,
+    pub line:       i64,
+    pub is_async:   bool,
+    pub is_static:  bool,
+}
 ///
 /// Pipeline:
 /// - replace `::` with space

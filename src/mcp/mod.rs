@@ -44,6 +44,7 @@ use uuid::Uuid;
 use crate::daemon::WatchManager;
 use crate::daemon::watch_manager::file_uri_to_path;
 use crate::socket::{ctrl_socket_path, socket_path};
+use crate::file_visit_cache::FileVisitCache;
 
 const ROOTS_LIST_TIMEOUT_MS: u64 = 5_000;
 
@@ -161,6 +162,9 @@ pub async fn run_mcp_bridge() -> Result<()> {
 pub struct BuiltinServer {
     tool_router: ToolRouter<Self>,
     wm: Arc<WatchManager>,
+    /// Shared file-visit cache (one instance for the entire daemon lifetime,
+    /// shared across all MCP connections via cheap `Clone`).
+    pub file_visit_cache: FileVisitCache,
     client_supports_roots: std::sync::atomic::AtomicBool,
     /// MCP client app name from `client_info.name` (e.g. `"opencode"`).
     client: Arc<std::sync::Mutex<Option<String>>>,
@@ -172,7 +176,7 @@ pub struct BuiltinServer {
 }
 
 impl BuiltinServer {
-    pub fn new(wm: Arc<WatchManager>) -> Self {
+    pub fn new(wm: Arc<WatchManager>, file_visit_cache: FileVisitCache) -> Self {
         let mut tool_router = ToolRouter::<Self>::new();
         tool_router.add_route(tools::read::route());
         tool_router.add_route(tools::search::route());
@@ -181,6 +185,7 @@ impl BuiltinServer {
         Self {
             tool_router,
             wm,
+            file_visit_cache,
             client_supports_roots: std::sync::atomic::AtomicBool::new(false),
             client: Arc::new(std::sync::Mutex::new(None)),
             client_version: Arc::new(std::sync::Mutex::new(None)),

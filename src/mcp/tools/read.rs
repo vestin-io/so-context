@@ -7,15 +7,15 @@ use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::model::{CallToolResult, Content, JsonObject, Tool};
 
 use super::BuiltinServer;
-use crate::core_events::{EventRecord, Timer, enqueue};
-use crate::core_read;
+use crate::core_events::{EventRecord, enqueue};
 use crate::core_tokens::count_tokens;
+use crate::file_visit_cache::hash_content;
 
 pub fn route() -> ToolRoute<BuiltinServer> {
     ToolRoute::new_dyn(
         Tool::new(
             "so_read",
-            "Read file/project by path. mode=full (default), outline, or graph.",
+            "Read file by path. mode=full (default) returns full content; mode=outline returns a compact symbol outline from the graph DB.",
             schema(),
         ),
         |ctx| Box::pin(async move { handler(ctx) }),
@@ -26,6 +26,7 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
     let client         = ctx.service.client();
     let client_version = ctx.service.client_version();
     let connection_id  = ctx.service.connection_id();
+    let fvc            = &ctx.service.file_visit_cache;
 
     let args = ctx
         .arguments
@@ -39,7 +40,7 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
         .filter(|s| !s.is_empty())
     {
         Some(sid) => (sid.to_string(), "hook"),
-        None      => (connection_id,   "connection"),
+        None      => (connection_id.clone(), "connection"),
     };
 
     let path = args
@@ -52,43 +53,83 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
         .and_then(serde_json::Value::as_str)
         .unwrap_or("full");
 
-    let full_file_tokens: Option<i64> = if mode == "outline" || mode == "graph" {
-        std::fs::read_to_string(path).ok().map(|c| count_tokens(&c))
-    } else {
-        None
-    };
+    // -----------------------------------------------------------------------
+    // File-visit cache check — full mode only, mirrors lean-ctx behaviour.
+    // -----------------------------------------------------------------------
+    if mode == "full" {
+        // Read file content upfront so we can hash it regardless of the cache
+        // decision — we need the hash to detect modifications.
+        let raw_content = std::fs::read_to_string(path)
+            .map_err(|e| rmcp::ErrorData::internal_error(format!("failed to read file: {e}"), None))?;
 
-    let timer = Timer::start();
-    let call_result = core_read::read(path, mode);
-    let duration_ms = timer.elapsed_ms();
+        let current_hash = hash_content(&raw_content);
 
-    let mut ev = EventRecord::new(&session_id, "so_read");
-    ev.client         = client;
-    ev.client_version = client_version;
-    ev.client_source  = "client_info".to_string();
-    ev.session_source = session_source.to_string();
-    ev.project     = Some(path.to_string());
-    ev.params      = Some(serde_json::json!({ "path": path, "mode": mode }).to_string());
-    ev.duration_ms = Some(duration_ms);
-
-    match call_result {
-        Ok(output) => {
-            let actual = count_tokens(&output);
-            ev.actual_tokens = Some(actual);
-            ev.estimated_origin_tokens = Some(match mode {
-                "outline" | "graph" => full_file_tokens.unwrap_or(actual),
-                _ => actual,
-            });
-            ev.result_ok = true;
-            enqueue(ev);
-            Ok(CallToolResult::success(vec![Content::text(output)]))
+        if let Some(entry) = fvc.get_file(&connection_id, &session_id, path) {
+            if entry.content_hash == current_hash {
+                // File already in context and unchanged — return a compact stub.
+                let line_count = raw_content.lines().count();
+                let short = std::path::Path::new(path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(path);
+                let msg = format!(
+                    "{short} [unchanged, {line_count}L, use cached context]\n\
+                     File unchanged since last read. Reuse existing context instead of re-reading."
+                );
+                return Ok(CallToolResult::success(vec![Content::text(msg)]));
+            }
+            // File was read before but has changed — fall through to full read.
         }
-        Err(e) => {
-            ev.result_ok = false;
-            enqueue(ev);
-            Err(rmcp::ErrorData::internal_error(e, None))
-        }
+
+        let token_count = count_tokens(&raw_content);
+        fvc.add_file(&connection_id, &session_id, path, token_count, current_hash);
+
+        let mut ev = EventRecord::new(&session_id, "so_read");
+        ev.client         = client;
+        ev.client_version = client_version;
+        ev.client_source  = "client_info".to_string();
+        ev.session_source = session_source.to_string();
+        ev.project        = Some(path.to_string());
+        ev.params         = Some(serde_json::json!({ "path": path, "mode": mode }).to_string());
+        ev.duration_ms    = Some(0);
+        ev.actual_tokens  = Some(token_count);
+        ev.estimated_origin_tokens = Some(token_count);
+        ev.result_ok = true;
+        enqueue(ev);
+
+        return Ok(CallToolResult::success(vec![Content::text(raw_content)]));
     }
+
+    // -----------------------------------------------------------------------
+    // Outline mode — query graph DB, fall back to regex scan.
+    // -----------------------------------------------------------------------
+    if mode == "outline" {
+        let raw_content = std::fs::read_to_string(path)
+            .map_err(|e| rmcp::ErrorData::internal_error(format!("failed to read file: {e}"), None))?;
+
+        let output = crate::core_read::build_outline_for_path(path, &raw_content);
+        let token_count = count_tokens(&output);
+
+        let mut ev = EventRecord::new(&session_id, "so_read");
+        ev.client         = client;
+        ev.client_version = client_version;
+        ev.client_source  = "client_info".to_string();
+        ev.session_source = session_source.to_string();
+        ev.project        = Some(path.to_string());
+        ev.params         = Some(serde_json::json!({ "path": path, "mode": mode }).to_string());
+        ev.duration_ms    = Some(0);
+        ev.actual_tokens  = Some(token_count);
+        ev.estimated_origin_tokens = Some(count_tokens(&raw_content));
+        ev.result_ok = true;
+        enqueue(ev);
+
+        return Ok(CallToolResult::success(vec![Content::text(output)]));
+    }
+
+    Err(rmcp::ErrorData::invalid_params(
+        format!("unsupported mode: {mode}; expected full or outline"),
+        None,
+    ))
 }
 
 fn schema() -> Arc<JsonObject> {
@@ -97,7 +138,7 @@ fn schema() -> Arc<JsonObject> {
             "type": "object",
             "properties": {
                 "path": { "type": "string" },
-                "mode": { "type": "string", "enum": ["full", "outline", "graph"] },
+                "mode": { "type": "string", "enum": ["full", "outline"] },
                 "_so_session_id": {
                     "type": "string",
                     "description": "Agent session ID injected by the so-context PreToolUse hook. Do not set manually."

@@ -34,6 +34,24 @@ pub struct FileEntry {
     pub token_count: i64,
     /// Wall-clock time of the most recent visit.
     pub last_visit: Instant,
+    /// SHA-256 hex digest of the file content at the time of the last read.
+    /// Used to detect whether the file has been modified since it was cached.
+    pub content_hash: String,
+}
+
+// ---------------------------------------------------------------------------
+// Hash helper
+// ---------------------------------------------------------------------------
+
+/// Compute a lightweight content hash (SHA-256 hex) for change detection.
+pub fn hash_content(content: &str) -> String {
+    // FNV-1a 64-bit hash — fast, no extra deps, sufficient for change detection.
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in content.as_bytes() {
+        h ^= *byte as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{h:016x}")
 }
 
 /// In-memory store for file-visit state, keyed by `(connection_id, cw_id)`.
@@ -70,14 +88,15 @@ impl FileVisitCache {
 
     /// Insert or update a file entry for the given connection + context window.
     ///
-    /// If the file was already present its `token_count` and `last_visit` are
-    /// refreshed.
+    /// If the file was already present its `token_count`, `content_hash`, and
+    /// `last_visit` are refreshed.
     pub fn add_file(
         &self,
         connection_id: &str,
         cw_id: &str,
         file_path: &str,
         token_count: i64,
+        content_hash: String,
     ) {
         let mut guard = self.inner.lock().unwrap();
         guard
@@ -92,6 +111,7 @@ impl FileVisitCache {
                     file_path: file_path.to_string(),
                     token_count,
                     last_visit: Instant::now(),
+                    content_hash,
                 },
             );
     }
@@ -233,7 +253,7 @@ mod tests {
     #[test]
     fn add_and_query_file() {
         let cache = make_cache();
-        cache.add_file("conn-1", "cw-1", "/src/main.rs", 120);
+        cache.add_file("conn-1", "cw-1", "/src/main.rs", 120, "hash1".to_string());
         assert!(cache.is_visited("conn-1", "cw-1", "/src/main.rs"));
         assert!(!cache.is_visited("conn-1", "cw-1", "/src/lib.rs"));
     }
@@ -241,21 +261,22 @@ mod tests {
     #[test]
     fn add_updates_token_count_and_last_visit() {
         let cache = make_cache();
-        cache.add_file("conn-1", "cw-1", "/src/main.rs", 100);
+        cache.add_file("conn-1", "cw-1", "/src/main.rs", 100, "hash-a".to_string());
         let first = cache.get_file("conn-1", "cw-1", "/src/main.rs").unwrap();
 
         // Re-add with a different token count.
-        cache.add_file("conn-1", "cw-1", "/src/main.rs", 200);
+        cache.add_file("conn-1", "cw-1", "/src/main.rs", 200, "hash-b".to_string());
         let second = cache.get_file("conn-1", "cw-1", "/src/main.rs").unwrap();
 
         assert_eq!(second.token_count, 200);
+        assert_eq!(second.content_hash, "hash-b");
         assert!(second.last_visit >= first.last_visit);
     }
 
     #[test]
     fn expire_file() {
         let cache = make_cache();
-        cache.add_file("conn-1", "cw-1", "/src/main.rs", 120);
+        cache.add_file("conn-1", "cw-1", "/src/main.rs", 120, "h".to_string());
         assert!(cache.expire_file("conn-1", "cw-1", "/src/main.rs"));
         assert!(!cache.is_visited("conn-1", "cw-1", "/src/main.rs"));
         // Expiring again returns false.
@@ -265,9 +286,9 @@ mod tests {
     #[test]
     fn delete_context_window() {
         let cache = make_cache();
-        cache.add_file("conn-1", "cw-1", "/src/a.rs", 10);
-        cache.add_file("conn-1", "cw-1", "/src/b.rs", 20);
-        cache.add_file("conn-1", "cw-2", "/src/c.rs", 30);
+        cache.add_file("conn-1", "cw-1", "/src/a.rs", 10, "h1".to_string());
+        cache.add_file("conn-1", "cw-1", "/src/b.rs", 20, "h2".to_string());
+        cache.add_file("conn-1", "cw-2", "/src/c.rs", 30, "h3".to_string());
 
         assert!(cache.delete_context_window("conn-1", "cw-1"));
         assert!(!cache.is_visited("conn-1", "cw-1", "/src/a.rs"));
@@ -279,9 +300,9 @@ mod tests {
     #[test]
     fn delete_connection() {
         let cache = make_cache();
-        cache.add_file("conn-1", "cw-1", "/src/a.rs", 10);
-        cache.add_file("conn-1", "cw-2", "/src/b.rs", 20);
-        cache.add_file("conn-2", "cw-1", "/src/c.rs", 30);
+        cache.add_file("conn-1", "cw-1", "/src/a.rs", 10, "h1".to_string());
+        cache.add_file("conn-1", "cw-2", "/src/b.rs", 20, "h2".to_string());
+        cache.add_file("conn-2", "cw-1", "/src/c.rs", 30, "h3".to_string());
 
         assert!(cache.delete_connection("conn-1"));
         assert!(!cache.is_visited("conn-1", "cw-1", "/src/a.rs"));
@@ -293,8 +314,8 @@ mod tests {
     #[test]
     fn list_files() {
         let cache = make_cache();
-        cache.add_file("conn-1", "cw-1", "/a.rs", 1);
-        cache.add_file("conn-1", "cw-1", "/b.rs", 2);
+        cache.add_file("conn-1", "cw-1", "/a.rs", 1, "h1".to_string());
+        cache.add_file("conn-1", "cw-1", "/b.rs", 2, "h2".to_string());
 
         let mut files: Vec<String> = cache
             .list_files("conn-1", "cw-1")
@@ -308,8 +329,8 @@ mod tests {
     #[test]
     fn list_context_windows() {
         let cache = make_cache();
-        cache.add_file("conn-1", "cw-a", "/a.rs", 1);
-        cache.add_file("conn-1", "cw-b", "/b.rs", 2);
+        cache.add_file("conn-1", "cw-a", "/a.rs", 1, "h1".to_string());
+        cache.add_file("conn-1", "cw-b", "/b.rs", 2, "h2".to_string());
 
         let mut windows = cache.list_context_windows("conn-1");
         windows.sort();
@@ -321,8 +342,8 @@ mod tests {
         let cache = make_cache();
         assert!(cache.is_empty());
 
-        cache.add_file("conn-1", "cw-1", "/a.rs", 1);
-        cache.add_file("conn-1", "cw-2", "/b.rs", 2);
+        cache.add_file("conn-1", "cw-1", "/a.rs", 1, "h1".to_string());
+        cache.add_file("conn-1", "cw-2", "/b.rs", 2, "h2".to_string());
         assert_eq!(cache.len(), 2); // 2 (conn, cw) pairs
 
         cache.delete_connection("conn-1");

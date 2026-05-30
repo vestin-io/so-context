@@ -19,7 +19,7 @@ mod symbols;
 mod util;
 pub mod watch;
 
-pub use db::{GraphDb, validate_project_root};
+pub use db::{GraphDb, FileOutline, validate_project_root};
 pub use watch::watch_project;
 
 // ---------------------------------------------------------------------------
@@ -52,7 +52,16 @@ pub fn sync_project(project_path: &str) -> Result<String, String> {
     GraphDb::open(project_root)?.sync()
 }
 
-/// Searches indexed graph content for a query.
+/// Returns a structured file outline from the graph DB for the given file path.
+/// The project root is inferred by walking up from the file path to find the DB.
+/// Returns `None` when the file is not indexed.
+pub fn outline_file(project_path: &str, file_path: &str) -> Result<Option<FileOutline>, String> {
+    let project_root = validate_project_root(project_path)?;
+    if !GraphDb::exists(&project_root) {
+        return Ok(None);
+    }
+    GraphDb::open(project_root)?.query_file_outline(file_path)
+}
 /// Returns formatted results and total token count of matched files.
 pub fn search_project_with_stats(project_path: &str, query: &str, limit: usize) -> Result<(String, i64), String> {
     let project_root = validate_project_root(project_path)?;
