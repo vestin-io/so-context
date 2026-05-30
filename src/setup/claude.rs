@@ -99,7 +99,7 @@ fn install_pre_tool_use_hook(root: &mut Map<String, Value>, binary: &str) {
     let new_hook = json!({
         "type": "command",
         "command": binary,
-        "args": ["hook"],
+        "args": ["hook", "pre-tool"],
         "statusMessage": "Tagging so-context call with session ID"
     });
 
@@ -131,7 +131,7 @@ fn install_pre_tool_use_hook(root: &mut Map<String, Value>, binary: &str) {
             inner.retain(|h| {
                 h.get("args")
                     .and_then(|a| a.as_array())
-                    .map(|a| a.iter().all(|v| v.as_str() != Some("hook")))
+                    .map(|a| a.iter().all(|v| v.as_str() != Some("pre-tool")))
                     .unwrap_or(true)
             });
             inner.push(new_hook);
@@ -161,7 +161,7 @@ fn remove_pre_tool_use_hook(root: &mut Map<String, Value>, binary: &str) {
             .and_then(|m| m.as_str())
             .map(|m| m == "mcp__so-context__.*")
             .unwrap_or(false);
-        let has_our_binary = group
+        let has_our_hook = group
             .get("hooks")
             .and_then(|h| h.as_array())
             .map(|hooks| {
@@ -170,10 +170,14 @@ fn remove_pre_tool_use_hook(root: &mut Map<String, Value>, binary: &str) {
                         .and_then(|c| c.as_str())
                         .map(|c| c == binary)
                         .unwrap_or(false)
+                        && h.get("args")
+                            .and_then(|a| a.as_array())
+                            .map(|a| a.iter().any(|v| v.as_str() == Some("pre-tool")))
+                            .unwrap_or(false)
                 })
             })
             .unwrap_or(false);
-        !(is_so_context_matcher && has_our_binary)
+        !(is_so_context_matcher && has_our_hook)
     });
 }
 
@@ -185,7 +189,7 @@ fn install_post_compact_hook(root: &mut Map<String, Value>, binary: &str) {
     let new_hook = json!({
         "type": "command",
         "command": binary,
-        "args": ["compact"],
+        "args": ["hook", "post-compact"],
         "statusMessage": "Resetting so-context file cache after compaction"
     });
 
@@ -212,6 +216,10 @@ fn install_post_compact_hook(root: &mut Map<String, Value>, binary: &str) {
                         .and_then(|c| c.as_str())
                         .map(|c| c == binary)
                         .unwrap_or(false)
+                        && h.get("args")
+                            .and_then(|a| a.as_array())
+                            .map(|a| a.iter().any(|v| v.as_str() == Some("post-compact")))
+                            .unwrap_or(false)
                 })
             })
             .unwrap_or(false)
@@ -225,10 +233,14 @@ fn install_post_compact_hook(root: &mut Map<String, Value>, binary: &str) {
             .and_then(|h| h.as_array_mut())
         {
             inner.retain(|h| {
-                h.get("command")
+                !(h.get("command")
                     .and_then(|c| c.as_str())
-                    .map(|c| c != binary)
-                    .unwrap_or(true)
+                    .map(|c| c == binary)
+                    .unwrap_or(false)
+                    && h.get("args")
+                        .and_then(|a| a.as_array())
+                        .map(|a| a.iter().any(|v| v.as_str() == Some("post-compact")))
+                        .unwrap_or(false))
             });
             inner.push(new_hook);
         }
@@ -249,7 +261,7 @@ fn remove_post_compact_hook(root: &mut Map<String, Value>, binary: &str) {
     };
 
     arr.retain(|group| {
-        let has_our_binary = group
+        let has_our_hook = group
             .get("hooks")
             .and_then(|h| h.as_array())
             .map(|hooks| {
@@ -258,9 +270,13 @@ fn remove_post_compact_hook(root: &mut Map<String, Value>, binary: &str) {
                         .and_then(|c| c.as_str())
                         .map(|c| c == binary)
                         .unwrap_or(false)
+                        && h.get("args")
+                            .and_then(|a| a.as_array())
+                            .map(|a| a.iter().any(|v| v.as_str() == Some("post-compact")))
+                            .unwrap_or(false)
                 })
             })
             .unwrap_or(false);
-        !has_our_binary
+        !has_our_hook
     });
 }

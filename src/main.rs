@@ -29,14 +29,7 @@ struct Cli {
 }
 
 #[derive(Subcommand, Debug)]
-enum Commands {
-    /// Run the background daemon: binds a Unix socket and serves the MCP HTTP server.
-    /// Start this once; it stays alive across multiple agent sessions.
-    Daemon,
-    /// Start the MCP stdio bridge for an agent session.
-    /// Connects to the running daemon and forwards MCP messages over stdio.
-    /// This is the command to register in Claude / OpenCode / Codex configs.
-    Mcp,
+enum HookCommands {
     /// PreToolUse hook handler for agent CLIs (Claude Code, Codex).
     ///
     /// Reads the hook JSON from stdin, injects _so_session_id into the
@@ -45,7 +38,7 @@ enum Commands {
     /// tools (agent continues normally).
     ///
     /// Register as a PreToolUse hook with matcher "mcp__so-context__.*".
-    Hook,
+    PreTool,
     /// PostCompact hook handler for Claude Code.
     ///
     /// Reads the PostCompact hook JSON from stdin and tells the running daemon
@@ -53,7 +46,25 @@ enum Commands {
     /// agent receives full file content again after compaction.
     ///
     /// Register as a PostCompact hook (no matcher needed).
-    Compact,
+    PostCompact,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Run the background daemon: binds a Unix socket and serves the MCP HTTP server.
+    /// Start this once; it stays alive across multiple agent sessions.
+    Daemon,
+    /// Start the MCP stdio bridge for an agent session.
+    /// Connects to the running daemon and forwards MCP messages over stdio.
+    /// This is the command to register in Claude / OpenCode / Codex configs.
+    Mcp,
+    /// Hook handlers for agent CLIs (Claude Code, Codex).
+    ///
+    /// Use `hook pre-tool` or `hook post-compact` depending on the event.
+    Hook {
+        #[command(subcommand)]
+        event: HookCommands,
+    },
     /// Index a project folder into the local code graph SQLite database.
     /// With --watch, keeps running and re-indexes on file changes (foreground).
     Index {
@@ -116,9 +127,11 @@ async fn main() -> Result<()> {
             unsafe { libc::signal(libc::SIGHUP, libc::SIG_IGN); }
             Daemon::new().run().await
         }
-        Commands::Mcp     => mcp::run_mcp_bridge().await,
-        Commands::Hook    => hook::run_pre_tool_use_hook(),
-        Commands::Compact => hook::run_post_compact_hook(),
+        Commands::Mcp => mcp::run_mcp_bridge().await,
+        Commands::Hook { event } => match event {
+            HookCommands::PreTool     => hook::run_pre_tool_use_hook(),
+            HookCommands::PostCompact => hook::run_post_compact_hook(),
+        },
         Commands::Index { path, watch } => {
             if watch {
                 core_graph::watch_project(&path).map_err(anyhow::Error::msg)
