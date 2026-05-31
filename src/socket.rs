@@ -30,6 +30,3 @@ pub fn socket_path() -> PathBuf {
 pub fn ctrl_socket_path() -> PathBuf {
     runtime_dir().join("so-context-ctrl.sock")
 }
-
-/// The HTTP endpoint the daemon serves MCP over (relative to socket root).
-pub const MCP_ENDPOINT: &str = "http://localhost/mcp";

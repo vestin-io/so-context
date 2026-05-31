@@ -4,8 +4,15 @@ pub mod core_events;
 mod core_graph;
 #[path = "core/read.rs"]
 mod core_read;
+#[path = "core/tokens.rs"]
+pub mod core_tokens;
+#[path = "core/file_visit_cache.rs"]
+pub mod file_visit_cache;
 mod daemon;
+mod hook;
 mod mcp;
+
+use libc;
 mod setup;
 mod shell;
 mod socket;
@@ -29,6 +36,27 @@ struct Cli {
 }
 
 #[derive(Subcommand, Debug)]
+enum HookCommands {
+    /// PreToolUse hook handler for agent CLIs (Claude Code, Codex).
+    ///
+    /// Reads the hook JSON from stdin, injects _so_session_id into the
+    /// tool arguments for so-context MCP tool calls, and writes the
+    /// rewritten input to stdout. Exit 0 with no output for non-so-context
+    /// tools (agent continues normally).
+    ///
+    /// Register as a PreToolUse hook with matcher "mcp__so-context__.*".
+    PreTool,
+    /// PostCompact hook handler for Claude Code.
+    ///
+    /// Reads the PostCompact hook JSON from stdin and tells the running daemon
+    /// to reset file-visit cache entries for the compacted session, so the
+    /// agent receives full file content again after compaction.
+    ///
+    /// Register as a PostCompact hook (no matcher needed).
+    PostCompact,
+}
+
+#[derive(Subcommand, Debug)]
 enum Commands {
     /// Run the background daemon: binds a Unix socket and serves the MCP HTTP server.
     /// Start this once; it stays alive across multiple agent sessions.
@@ -37,17 +65,22 @@ enum Commands {
     /// Connects to the running daemon and forwards MCP messages over stdio.
     /// This is the command to register in Claude / OpenCode / Codex configs.
     Mcp,
+    /// Hook handlers for agent CLIs (Claude Code, Codex).
+    ///
+    /// Use `hook pre-tool` or `hook post-compact` depending on the event.
+    Hook {
+        #[command(subcommand)]
+        event: HookCommands,
+    },
     /// Index a project folder into the local code graph SQLite database.
+    /// With --watch, keeps running and re-indexes on file changes (foreground).
     Index {
         /// Project folder path (default: current directory).
         #[arg(default_value = ".")]
         path: String,
-    },
-    /// Index a project folder and keep watching for file changes (single project, foreground).
-    Watch {
-        /// Project folder path (default: current directory).
-        #[arg(default_value = ".")]
-        path: String,
+        /// Keep running and re-index on file changes (foreground).
+        #[arg(long)]
+        watch: bool,
     },
     /// Execute a shell command and print a deterministic compressed summary.
     Shell {
@@ -60,14 +93,14 @@ enum Commands {
     },
     /// Tell the running daemon to start watching a project directory.
     /// Intended for use in agent session-start hooks.
-    EnsureWatch {
+    Watch {
         /// Project directory to watch (default: current directory).
         #[arg(default_value = ".")]
         path: String,
-        /// Name of the calling agent (e.g. "claude", "opencode", "codex").
+        /// MCP client name (e.g. "claude", "opencode", "codex").
         #[arg(long)]
-        agent: Option<String>,
-        /// Session identifier for this agent instance. Auto-generated if omitted.
+        client: Option<String>,
+        /// Session identifier for this consumer. Auto-generated if omitted.
         #[arg(long)]
         session_id: Option<String>,
     },
@@ -77,10 +110,10 @@ enum Commands {
         /// Project directory to unwatch (default: current directory).
         #[arg(default_value = ".")]
         path: String,
-        /// Agent name — must match the value passed to ensure-watch.
+        /// Client name — must match the value passed to watch.
         #[arg(long)]
-        agent: Option<String>,
-        /// Session ID — must match the value passed to ensure-watch.
+        client: Option<String>,
+        /// Session ID — must match the value passed to watch.
         #[arg(long)]
         session_id: Option<String>,
     },
@@ -104,14 +137,26 @@ enum Commands {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Daemon => Daemon::new().run().await,
-        Commands::Mcp => mcp::run_mcp_bridge().await,
-        Commands::Index { path } => {
-            let output = core_graph::index_project(&path).map_err(anyhow::Error::msg)?;
-            println!("{output}");
-            Ok(())
+        Commands::Daemon => {
+            // Ignore SIGHUP so the daemon survives terminal disconnects.
+            #[cfg(unix)]
+            unsafe { libc::signal(libc::SIGHUP, libc::SIG_IGN); }
+            Daemon::new().run().await
         }
-        Commands::Watch { path } => core_graph::watch_project(&path).map_err(anyhow::Error::msg),
+        Commands::Mcp => mcp::run_mcp_bridge().await,
+        Commands::Hook { event } => match event {
+            HookCommands::PreTool     => hook::run_pre_tool_use_hook(),
+            HookCommands::PostCompact => hook::run_post_compact_hook(),
+        },
+        Commands::Index { path, watch } => {
+            if watch {
+                core_graph::watch_project(&path).map_err(anyhow::Error::msg)
+            } else {
+                let output = core_graph::index_project(&path).map_err(anyhow::Error::msg)?;
+                println!("{output}");
+                Ok(())
+            }
+        }
         Commands::Shell { full, argv } => {
             let runner = ShellRunner::new(ShellRunOptions::new(full));
             let output = runner.run(&argv)?;
@@ -121,17 +166,11 @@ async fn main() -> Result<()> {
             }
             Ok(())
         }
-        Commands::EnsureWatch {
-            path,
-            agent,
-            session_id,
-        } => mcp::send_ctrl_request("watch", &path, agent.as_deref(), session_id.as_deref()).await,
-        Commands::Unwatch {
-            path,
-            agent,
-            session_id,
-        } => {
-            mcp::send_ctrl_request("unwatch", &path, agent.as_deref(), session_id.as_deref()).await
+        Commands::Watch { path, client, session_id } => {
+            mcp::send_ctrl_request("watch", &path, client.as_deref(), session_id.as_deref()).await
+        }
+        Commands::Unwatch { path, client, session_id } => {
+            mcp::send_ctrl_request("unwatch", &path, client.as_deref(), session_id.as_deref()).await
         }
         Commands::Setup { binary } => {
             let bin = resolve_binary(binary);

@@ -11,6 +11,7 @@ use walkdir::WalkDir;
 
 use super::symbols::collect_symbols;
 use super::util::{content_hash, should_skip};
+use crate::core_tokens::count_tokens;
 
 // ---------------------------------------------------------------------------
 // Full index walk
@@ -54,6 +55,7 @@ pub(super) fn index_files(
 
         let (size, mtime) = file_stat(path);
         let hash = content_hash(&content);
+        let token_count = count_tokens(&content);
 
         let (file_id, file_node_id) = insert_file_record_full(
             tx,
@@ -64,6 +66,7 @@ pub(super) fn index_files(
             size,
             mtime,
             &hash,
+            token_count,
         )?;
         file_count += 1;
 
@@ -91,6 +94,7 @@ pub(super) fn insert_file_record_full(
     size: i64,
     mtime: i64,
     hash: &str,
+    token_count: i64,
 ) -> Result<(i64, i64), String> {
     let rel_path = path
         .strip_prefix(project_root)
@@ -99,9 +103,9 @@ pub(super) fn insert_file_record_full(
         .to_string();
 
     tx.execute(
-        "INSERT INTO files(project_id, path, language, content_hash, size_bytes, mtime_unix)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![project_id, rel_path, lang_name, hash, size, mtime],
+        "INSERT INTO files(project_id, path, language, content_hash, size_bytes, mtime_unix, token_count)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![project_id, rel_path, lang_name, hash, size, mtime, token_count],
     )
     .map_err(|e| format!("failed to insert file row: {e}"))?;
     let file_id = tx.last_insert_rowid();
@@ -148,12 +152,13 @@ pub(super) fn reindex_file(
     size: i64,
     mtime: i64,
     hash: &str,
+    token_count: i64,
 ) -> Result<(), String> {
     tx.execute(
         "UPDATE files SET language=?1, content_hash=?2, size_bytes=?3,
-                          mtime_unix=?4, indexed_at=CURRENT_TIMESTAMP
-         WHERE id=?5",
-        params![lang_name, hash, size, mtime, file_id],
+                          mtime_unix=?4, token_count=?5, indexed_at=CURRENT_TIMESTAMP
+         WHERE id=?6",
+        params![lang_name, hash, size, mtime, token_count, file_id],
     )
     .map_err(|e| format!("failed to update file record: {e}"))?;
 

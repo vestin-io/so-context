@@ -31,27 +31,27 @@ use crate::core_graph::watch::is_meaningful_change;
 /// Identifies one agent session consuming a project watch.
 #[derive(Debug, Clone)]
 pub struct Consumer {
-    /// Agent name — e.g. `"claude"`, `"opencode"`, `"codex"`.
+    /// MCP client name — e.g. `"claude"`, `"opencode"`, `"codex"`.
     /// Defaults to `"unknown"` if not provided.
-    pub agent: String,
-    /// Session identifier within the agent. Auto-generated UUID if not provided.
+    pub client: String,
+    /// Session identifier for this connection. Auto-generated UUID if not provided.
     pub session_id: String,
 }
 
 impl Consumer {
     /// Build a `Consumer`, generating a UUID session_id when none is given.
-    pub fn new(agent: Option<&str>, session_id: Option<&str>) -> Self {
+    pub fn new(client: Option<&str>, session_id: Option<&str>) -> Self {
         Self {
-            agent: agent.unwrap_or("unknown").to_string(),
+            client: client.unwrap_or("unknown").to_string(),
             session_id: session_id
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
         }
     }
 
-    /// The unique key used in the consumer map: `"<agent>:<session_id>"`.
+    /// The unique key used in the consumer map: `"<client>:<session_id>"`.
     pub fn key(&self) -> String {
-        format!("{}:{}", self.agent, self.session_id)
+        format!("{}:{}", self.client, self.session_id)
     }
 }
 
@@ -132,11 +132,11 @@ impl WatchManager {
     /// Resolves `path` to its canonical project root and starts watching it if
     /// not already registered. If already registered, increments the ref-count.
     ///
-    /// - `agent` — name of the calling agent (`"claude"`, `"opencode"`, …).
+    /// - `client` — MCP client app name (`"claude"`, `"opencode"`, …).
     ///   Defaults to `"unknown"` if `None`.
-    /// - `session_id` — unique ID for this agent session. Auto-generated UUID
+    /// - `session_id` — unique ID for this connection. Auto-generated UUID
     ///   if `None`, ensuring multiple anonymous callers are tracked separately.
-    pub fn ensure_watching(&self, path: &str, agent: Option<&str>, session_id: Option<&str>) {
+    pub fn ensure_watching(&self, path: &str, client: Option<&str>, session_id: Option<&str>) {
         let root = match resolve_project_root(path) {
             Some(r) => r,
             None => {
@@ -145,12 +145,15 @@ impl WatchManager {
             }
         };
 
-        let consumer = Consumer::new(agent, session_id);
+        let consumer = Consumer::new(client, session_id);
         let key = consumer.key();
 
         let mut inner = self.inner.lock().unwrap();
 
         if let Some(handle) = inner.projects.get_mut(&root) {
+            if handle.consumers.contains_key(&key) {
+                return; // already registered, no-op
+            }
             handle.consumers.insert(key.clone(), consumer);
             eprintln!(
                 "[watch] ref+1 for {} (consumer: {key}, total: {})",
@@ -169,17 +172,17 @@ impl WatchManager {
 
     /// Decrements the ref-count for the project at `path`.
     ///
-    /// The consumer is matched by `"<agent>:<session_id>"`. If the ref-count
+    /// The consumer is matched by `"<client>:<session_id>"`. If the ref-count
     /// reaches zero the watch thread is stopped.
     ///
     /// Returns `true` if the project was registered, `false` if unknown.
-    pub fn unwatch(&self, path: &str, agent: Option<&str>, session_id: Option<&str>) -> bool {
+    pub fn unwatch(&self, path: &str, client: Option<&str>, session_id: Option<&str>) -> bool {
         let root = match resolve_project_root(path) {
             Some(r) => r,
             None => return false,
         };
 
-        let key = Consumer::new(agent, session_id).key();
+        let key = Consumer::new(client, session_id).key();
 
         let mut inner = self.inner.lock().unwrap();
         let handle = match inner.projects.get_mut(&root) {
@@ -201,6 +204,34 @@ impl WatchManager {
         }
 
         true
+    }
+
+    /// Called on MCP connection close to decrement the ref count for any path
+    /// this consumer was watching, without needing to know the specific path.
+    /// Uses the same `client:session_id` key as `unwatch` — no extra bookkeeping.
+    pub fn unwatch_by_session(&self, client: Option<&str>, session_id: &str) {
+        let key = Consumer::new(client, Some(session_id)).key();
+        let mut inner = self.inner.lock().unwrap();
+        let mut empty_roots = Vec::new();
+
+        for (root, handle) in inner.projects.iter_mut() {
+            if handle.consumers.remove(&key).is_some() {
+                if handle.ref_count() == 0 {
+                    empty_roots.push(root.clone());
+                } else {
+                    eprintln!(
+                        "[watch] ref-1 for {} (connection closed: {key}, remaining: {})",
+                        root.display(),
+                        handle.ref_count()
+                    );
+                }
+            }
+        }
+
+        for root in empty_roots {
+            inner.projects.remove(&root);
+            eprintln!("[watch] stopped (connection closed: {key}): {}", root.display());
+        }
     }
 
     /// Returns a snapshot of all currently registered projects and their state.
@@ -270,6 +301,7 @@ fn watch_loop(
     state: &Arc<Mutex<WatchState>>,
     stop_rx: &mpsc::Receiver<StopSignal>,
 ) -> Result<(), String> {
+    eprintln!("[watch] initial index start: {}", project_root.display());
     let mut db = GraphDb::open(project_root.clone())?;
 
     let summary = db.index()?;

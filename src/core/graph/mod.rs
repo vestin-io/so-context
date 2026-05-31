@@ -7,23 +7,25 @@
 //! - `symbols` — tree-sitter symbol extraction and reference resolution
 //! - `watch`   — filesystem watcher loop
 //! - `util`    — shared utilities (content hash, skip predicate)
+//!
+//! Graph databases are stored centrally at:
+//!   `~/.local/share/so-context/graphs/<hash>.db`
+//! where `<hash>` is a 64-bit hash of the canonical project root path.
 
 mod db;
 mod index;
-mod symbols;
 mod sync;
+mod symbols;
 mod util;
 pub mod watch;
 
-pub use db::{GraphDb, validate_project_root};
+pub use db::{GraphDb, FileOutline, ReferenceEntry, validate_project_root};
 pub use watch::watch_project;
 
 // ---------------------------------------------------------------------------
 // Constants (shared across sub-modules via `super::`)
 // ---------------------------------------------------------------------------
 
-pub(self) const GRAPH_DB_DIR: &str = ".so-context";
-pub(self) const GRAPH_DB_NAME: &str = "graph.db";
 pub(self) const REINDEX_DEBOUNCE_MS: u64 = 700;
 pub(self) const WATCH_POLL_SECS: u64 = 1;
 
@@ -50,13 +52,18 @@ pub fn sync_project(project_path: &str) -> Result<String, String> {
     GraphDb::open(project_root)?.sync()
 }
 
-/// Searches indexed graph content for a query.
-/// Returns formatted results and total on-disk char count of matched files.
-pub fn search_project_with_stats(
-    project_path: &str,
-    query: &str,
-    limit: usize,
-) -> Result<(String, usize), String> {
+/// Returns a structured file outline from the graph DB for the given file path.
+/// The project root is inferred by walking up from the file path to find the DB.
+/// Returns `None` when the file is not indexed.
+pub fn outline_file(project_path: &str, file_path: &str) -> Result<Option<FileOutline>, String> {
+    let project_root = validate_project_root(project_path)?;
+    if !GraphDb::exists(&project_root) {
+        return Ok(None);
+    }
+    GraphDb::open(project_root)?.query_file_outline(file_path)
+}
+/// Returns formatted results, total token count, and total byte size of matched files.
+pub fn search_project_with_stats(project_path: &str, query: &str, limit: usize) -> Result<(String, i64, i64), String> {
     let project_root = validate_project_root(project_path)?;
     if !GraphDb::exists(&project_root) {
         let db_path = db::graph_db_path(&project_root);
@@ -66,4 +73,25 @@ pub fn search_project_with_stats(
         ));
     }
     GraphDb::open(project_root)?.search_with_stats(query, limit)
+}
+
+/// Returns all references to (or from) a named symbol.
+///
+/// `kind` — `"all"` | `"callers"` | `"callees"` | `"imports"` (default: `"all"`)
+/// `include_declaration` — whether to include the definition site (default: false)
+pub fn references_project(
+    project_path: &str,
+    symbol: &str,
+    kind: &str,
+    include_declaration: bool,
+) -> Result<Vec<ReferenceEntry>, String> {
+    let project_root = validate_project_root(project_path)?;
+    if !GraphDb::exists(&project_root) {
+        let db_path = db::graph_db_path(&project_root);
+        return Err(format!(
+            "graph db not found at {} (run index first)",
+            db_path.display()
+        ));
+    }
+    GraphDb::open(project_root)?.query_references(symbol, kind, include_declaration)
 }

@@ -2,14 +2,15 @@
 //!
 //! # Two roles
 //!
-//! **Daemon side** (`BuiltinServer`): the actual MCP server implementation,
-//! served by the daemon over a Unix socket via streamable HTTP.  The daemon
-//! constructs one `BuiltinServer` per client session.
+//! **Daemon side** (`BuiltinServer`): the real MCP server, served directly over
+//! the raw JSON-RPC Unix socket.  One `BuiltinServer` instance per connected
+//! agent session.
 //!
-//! **Bridge** (`run_mcp_bridge`): a short-lived stdio ↔ socket proxy spawned
-//! by each agent session (`so-context mcp`).  It connects to the running
-//! daemon socket and forwards the MCP stdio transport to it, so the agent
-//! thinks it is talking directly to an MCP server over stdio.
+//! **Bridge** (`run_mcp_bridge`): a thin stdio ↔ Unix-socket pipe spawned by
+//! each agent session (`so-context mcp`).  It has zero MCP logic — it just
+//! forwards bytes in both directions, and injects three metadata fields
+//! (`_so_client`, `_so_client_version`, `_so_session_id`) into any
+//! `tools/call` request before forwarding, so the daemon can attribute events.
 //!
 //! # Auto-discovery hooks (inside BuiltinServer)
 //!
@@ -28,38 +29,71 @@ pub mod tools;
 use std::sync::Arc;
 
 use anyhow::Result;
-use rmcp::{
-    RoleClient, RoleServer, ServerHandler, ServiceExt,
+use rmcp::{    RoleServer, ServerHandler,
     handler::server::{router::tool::ToolRouter, tool::ToolCallContext},
     model::{
         CallToolRequestParams, CallToolResult, ClientCapabilities, ErrorData,
         InitializeRequestParams, InitializeResult, ListToolsResult, PaginatedRequestParams,
         ServerCapabilities, ServerInfo,
     },
-    service::{MaybeSendFuture, NotificationContext, RequestContext, RunningService},
-    transport::{StreamableHttpClientTransport, stdio},
+    service::{MaybeSendFuture, NotificationContext, RequestContext},
 };
 
 use uuid::Uuid;
 
 use crate::daemon::WatchManager;
 use crate::daemon::watch_manager::file_uri_to_path;
-use crate::socket::{MCP_ENDPOINT, ctrl_socket_path, socket_path};
+use crate::socket::{ctrl_socket_path, socket_path};
+use crate::file_visit_cache::FileVisitCache;
 
 const ROOTS_LIST_TIMEOUT_MS: u64 = 5_000;
 
 // ---------------------------------------------------------------------------
-// Bridge: stdio → Unix socket (used by `so-context mcp`)
+// Bridge: thin stdio ↔ Unix-socket pipe  (used by `so-context mcp`)
 // ---------------------------------------------------------------------------
+
+/// Sends a `compact_reset` notification to the daemon's ctrl socket.
+///
+/// Called by the PostCompact hook handler after context compaction so the
+/// daemon drops all file-visit cache entries for that session.
+pub async fn send_compact_reset(connection_id: &str, session_id: &str) -> Result<()> {
+    use tokio::io::AsyncWriteExt;
+    use tokio::net::UnixStream;
+
+    let sock = ctrl_socket_path();
+    if !sock.exists() {
+        // Daemon not running — nothing to reset, that's fine.
+        return Ok(());
+    }
+
+    let msg = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "compact_reset",
+        "params": {
+            "connection_id": connection_id,
+            "session_id":    session_id,
+        }
+    });
+
+    let mut line = serde_json::to_string(&msg)?;
+    line.push('\n');
+
+    let mut stream = UnixStream::connect(&sock)
+        .await
+        .map_err(|e| anyhow::anyhow!("connect to ctrl socket: {e}"))?;
+    stream.write_all(line.as_bytes()).await
+        .map_err(|e| anyhow::anyhow!("write to ctrl socket: {e}"))?;
+
+    Ok(())
+}
 
 /// Sends a JSON-RPC notification to the daemon's ctrl socket.
 ///
-/// Used by `so-context ensure-watch` and `so-context unwatch` CLI subcommands,
-/// invoked by agent session hooks.
+/// Used by `so-context watch` and `so-context unwatch` CLI subcommands.
 pub async fn send_ctrl_request(
     method: &str,
     path: &str,
-    agent: Option<&str>,
+    client: Option<&str>,
     session_id: Option<&str>,
 ) -> Result<()> {
     use tokio::io::AsyncWriteExt;
@@ -84,7 +118,7 @@ pub async fn send_ctrl_request(
         "method": method,
         "params": {
             "path":       abs_path,
-            "agent":      agent,
+            "client":     client,
             "session_id": session_id,
         }
     });
@@ -95,170 +129,121 @@ pub async fn send_ctrl_request(
     let mut stream = UnixStream::connect(&sock)
         .await
         .map_err(|e| anyhow::anyhow!("connect to ctrl socket: {e}"))?;
-    stream
-        .write_all(line.as_bytes())
-        .await
+    stream.write_all(line.as_bytes()).await
         .map_err(|e| anyhow::anyhow!("write to ctrl socket: {e}"))?;
 
     Ok(())
 }
 
-/// Connects to the daemon's Unix socket and bridges it to stdio.
+/// Pure stdio ↔ Unix-socket byte pipe.
 ///
-/// Starts an MCP client connection to the daemon (via Unix socket / streamable
-/// HTTP), then exposes it over stdio so the calling agent session can talk to
-/// the shared daemon as if it were a local MCP server.
-///
-/// If the daemon is not running this returns an error immediately.
+/// Every byte from stdin goes straight to the daemon socket, and every byte
+/// from the daemon goes straight to stdout. No protocol parsing — the daemon
+/// is the real MCP server and handles everything including identity attribution
+/// via the `initialize` handshake (`client_info.name` / `client_info.version`).
 pub async fn run_mcp_bridge() -> Result<()> {
+    use tokio::net::UnixStream;
+
     let sock = socket_path();
-    if !sock.exists() {
-        anyhow::bail!(
-            "so-context daemon is not running (socket not found: {}).\n\
+
+    // Retry connecting for up to 5s to handle the race where the socket file
+    // exists but the daemon is still starting (or a stale socket remains).
+    let stream = {
+        let mut last_err = String::new();
+        let mut connected = None;
+        for _ in 0..20 {
+            match UnixStream::connect(&sock).await {
+                Ok(s) => { connected = Some(s); break; }
+                Err(e) => {
+                    last_err = e.to_string();
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                }
+            }
+        }
+        connected.ok_or_else(|| anyhow::anyhow!(
+            "so-context daemon is not running (could not connect to {}: {}).\n\
              Start it with: so-context daemon",
-            sock.display()
-        );
-    }
-
-    let transport =
-        StreamableHttpClientTransport::from_unix_socket(sock.to_str().unwrap(), MCP_ENDPOINT);
-
-    // Connect to the daemon as an MCP client.
-    let client_to_daemon: RunningService<RoleClient, ()> = ()
-        .serve(transport)
-        .await
-        .map_err(|e| anyhow::anyhow!("connect to daemon: {e}"))?;
-
-    // Wrap the daemon client in a BridgeServer and serve it over stdio.
-    let bridge = BridgeServer {
-        daemon: Arc::new(client_to_daemon),
+            sock.display(), last_err
+        ))?
     };
-    bridge
-        .serve(stdio())
-        .await
-        .map_err(|e| anyhow::anyhow!("mcp bridge serve: {e}"))?
-        .waiting()
-        .await
-        .map_err(|e| anyhow::anyhow!("mcp bridge wait: {e}"))?;
+
+    let (mut sock_read, mut sock_write) = tokio::io::split(stream);
+
+    // Pipe stdin → socket in one task, socket → stdout in another.
+    // Both run concurrently; we wait for either to finish, then exit.
+    let stdin_to_sock = tokio::spawn(async move {
+        let mut stdin = tokio::io::stdin();
+        let _ = tokio::io::copy(&mut stdin, &mut sock_write).await;
+    });
+
+    let sock_to_stdout = tokio::spawn(async move {
+        let mut stdout = tokio::io::stdout();
+        let _ = tokio::io::copy(&mut sock_read, &mut stdout).await;
+    });
+
+    // Exit as soon as either direction closes.
+    tokio::select! {
+        _ = stdin_to_sock  => {}
+        _ = sock_to_stdout => {}
+    }
 
     Ok(())
 }
 
 // ---------------------------------------------------------------------------
-// BridgeServer — forwards stdio agent requests to the daemon client
-// ---------------------------------------------------------------------------
-
-/// MCP server handler that proxies all requests to a connected daemon client.
-struct BridgeServer {
-    daemon: Arc<RunningService<RoleClient, ()>>,
-}
-
-impl ServerHandler for BridgeServer {
-    fn initialize(
-        &self,
-        _request: InitializeRequestParams,
-        _context: RequestContext<RoleServer>,
-    ) -> impl std::future::Future<Output = Result<InitializeResult, ErrorData>> + MaybeSendFuture + '_
-    {
-        async move {
-            // Return the daemon's own server info so the agent sees accurate metadata.
-            Ok(self.get_info())
-        }
-    }
-
-    fn get_info(&self) -> ServerInfo {
-        // Forward the daemon's own server info if available.
-        if let Some(info) = self.daemon.peer().peer_info() {
-            ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-                .with_server_info(info.server_info.clone())
-        } else {
-            ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-        }
-    }
-
-    fn list_tools(
-        &self,
-        request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
-    ) -> impl std::future::Future<Output = Result<ListToolsResult, ErrorData>> + MaybeSendFuture + '_
-    {
-        async move {
-            self.daemon
-                .peer()
-                .list_tools(request)
-                .await
-                .map_err(|e| ErrorData::internal_error(e.to_string(), None))
-        }
-    }
-
-    fn call_tool(
-        &self,
-        request: CallToolRequestParams,
-        _context: RequestContext<RoleServer>,
-    ) -> impl std::future::Future<Output = Result<CallToolResult, ErrorData>> + MaybeSendFuture + '_
-    {
-        async move {
-            self.daemon
-                .peer()
-                .call_tool(request)
-                .await
-                .map_err(|e| ErrorData::internal_error(e.to_string(), None))
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// BuiltinServer — the actual MCP server logic (runs inside the daemon)
+// BuiltinServer — real MCP server logic (runs inside the daemon)
 // ---------------------------------------------------------------------------
 
 pub struct BuiltinServer {
     tool_router: ToolRouter<Self>,
     wm: Arc<WatchManager>,
+    /// Shared file-visit cache (one instance for the entire daemon lifetime,
+    /// shared across all MCP connections via cheap `Clone`).
+    pub file_visit_cache: FileVisitCache,
     client_supports_roots: std::sync::atomic::AtomicBool,
-    /// Agent name extracted from `client_info.name` during the MCP handshake.
-    /// Defaults to `"unknown"` until handshake fires.
-    agent: Arc<std::sync::Mutex<String>>,
-    /// Per-connection session ID — seeded with a UUID v4 so every connection
-    /// is unique even before the handshake. Overwritten with `client_info.version`
-    /// (or left as UUID for anonymous MCP callers).
-    session_id: Arc<std::sync::Mutex<String>>,
+    /// MCP client app name from `client_info.name` (e.g. `"opencode"`).
+    client: Arc<std::sync::Mutex<Option<String>>>,
+    /// MCP client app version from `client_info.version` (e.g. `"1.15.12"`).
+    client_version: Arc<std::sync::Mutex<Option<String>>>,
+    /// Per-connection UUID — generated at connection time to uniquely identify
+    /// the Unix socket connection. Not the same as an agent session ID.
+    connection_id: Arc<std::sync::Mutex<String>>,
 }
 
 impl BuiltinServer {
-    pub fn new(wm: Arc<WatchManager>) -> Self {
+    pub fn new(wm: Arc<WatchManager>, file_visit_cache: FileVisitCache) -> Self {
         let mut tool_router = ToolRouter::<Self>::new();
         tool_router.add_route(tools::read::route());
+        tool_router.add_route(tools::references::route());
         tool_router.add_route(tools::search::route());
         tool_router.add_route(tools::status::route(Arc::clone(&wm)));
 
         Self {
             tool_router,
             wm,
+            file_visit_cache,
             client_supports_roots: std::sync::atomic::AtomicBool::new(false),
-            agent: Arc::new(std::sync::Mutex::new("unknown".to_string())),
-            session_id: Arc::new(std::sync::Mutex::new(Uuid::new_v4().to_string())),
+            client: Arc::new(std::sync::Mutex::new(None)),
+            client_version: Arc::new(std::sync::Mutex::new(None)),
+            connection_id: Arc::new(std::sync::Mutex::new(Uuid::new_v4().to_string())),
         }
     }
 
-    fn agent(&self) -> String {
-        self.agent.lock().unwrap().clone()
-    }
-    fn session_id(&self) -> String {
-        self.session_id.lock().unwrap().clone()
-    }
+    pub fn client(&self) -> Option<String> { self.client.lock().unwrap().clone() }
+    pub fn client_version(&self) -> Option<String> { self.client_version.lock().unwrap().clone() }
+    pub fn connection_id(&self) -> String { self.connection_id.lock().unwrap().clone() }
 }
 
 impl ServerHandler for BuiltinServer {
-    // -----------------------------------------------------------------------
     // Handshake — hook 1: extract roots from initialize params
-    // -----------------------------------------------------------------------
 
     fn initialize(
         &self,
         request: InitializeRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> impl std::future::Future<Output = Result<InitializeResult, ErrorData>> + MaybeSendFuture + '_
-    {
+    ) -> impl std::future::Future<Output = Result<InitializeResult, ErrorData>>
+           + MaybeSendFuture
+           + '_ {
         let supports_roots = matches!(
             &request.capabilities,
             ClientCapabilities { roots: Some(_), .. }
@@ -266,33 +251,34 @@ impl ServerHandler for BuiltinServer {
         self.client_supports_roots
             .store(supports_roots, std::sync::atomic::Ordering::Relaxed);
 
-        // Extract agent name and session ID from client_info.
+        // Extract client name and version from client_info.
         {
             let info = &request.client_info;
-            *self.agent.lock().unwrap() = info.name.clone();
-            *self.session_id.lock().unwrap() = info.version.clone();
+            *self.client.lock().unwrap() = Some(info.name.clone());
+            *self.client_version.lock().unwrap() = Some(info.version.clone());
+            // session_id stays as UUID v4 — no session ID in MCP protocol
         }
 
-        if let Some(peer_info) = context.peer.peer_info() {
-            if let Ok(v) = serde_json::to_value(&peer_info) {
-                for key in ["rootUri", "root_uri"] {
-                    if let Some(uri) = v.get(key).and_then(|v| v.as_str()) {
+        // Extract workspace roots from initialize params if present.
+        if let Ok(v) = serde_json::to_value(&request) {
+            let params = v.get("params").unwrap_or(&v);
+            for key in ["rootUri", "root_uri"] {
+                if let Some(uri) = params.get(key).and_then(|v| v.as_str()) {
+                    self.wm.ensure_watching(
+                        &file_uri_to_path(uri),
+                        self.client().as_deref(),
+                        Some(&self.connection_id()),
+                    );
+                }
+            }
+            if let Some(folders) = params.get("workspaceFolders").and_then(|v| v.as_array()) {
+                for folder in folders {
+                    if let Some(uri) = folder.get("uri").and_then(|v| v.as_str()) {
                         self.wm.ensure_watching(
                             &file_uri_to_path(uri),
-                            Some(&self.agent()),
-                            Some(&self.session_id()),
+                            self.client().as_deref(),
+                            Some(&self.connection_id()),
                         );
-                    }
-                }
-                if let Some(folders) = v.get("workspaceFolders").and_then(|v| v.as_array()) {
-                    for folder in folders {
-                        if let Some(uri) = folder.get("uri").and_then(|v| v.as_str()) {
-                            self.wm.ensure_watching(
-                                &file_uri_to_path(uri),
-                                Some(&self.agent()),
-                                Some(&self.session_id()),
-                            );
-                        }
                     }
                 }
             }
@@ -306,9 +292,7 @@ impl ServerHandler for BuiltinServer {
         }
     }
 
-    // -----------------------------------------------------------------------
     // Post-handshake — hook 2: roots/list from client
-    // -----------------------------------------------------------------------
 
     fn on_initialized(
         &self,
@@ -322,8 +306,8 @@ impl ServerHandler for BuiltinServer {
                 if let Ok(cwd) = std::env::current_dir() {
                     self.wm.ensure_watching(
                         cwd.to_string_lossy().as_ref(),
-                        Some(&self.agent()),
-                        Some(&self.session_id()),
+                        self.client().as_deref(),
+                        Some(&self.connection_id()),
                     );
                 }
                 return;
@@ -342,16 +326,16 @@ impl ServerHandler for BuiltinServer {
                         if let Ok(cwd) = std::env::current_dir() {
                             self.wm.ensure_watching(
                                 cwd.to_string_lossy().as_ref(),
-                                Some(&self.agent()),
-                                Some(&self.session_id()),
+                                self.client().as_deref(),
+                                Some(&self.connection_id()),
                             );
                         }
                     } else {
                         for root in &roots_result.roots {
                             self.wm.ensure_watching(
                                 &file_uri_to_path(&root.uri),
-                                Some(&self.agent()),
-                                Some(&self.session_id()),
+                                self.client().as_deref(),
+                                Some(&self.connection_id()),
                             );
                         }
                     }
@@ -361,8 +345,8 @@ impl ServerHandler for BuiltinServer {
                     if let Ok(cwd) = std::env::current_dir() {
                         self.wm.ensure_watching(
                             cwd.to_string_lossy().as_ref(),
-                            Some(&self.agent()),
-                            Some(&self.session_id()),
+                            self.client().as_deref(),
+                            Some(&self.connection_id()),
                         );
                     }
                 }
@@ -371,8 +355,8 @@ impl ServerHandler for BuiltinServer {
                     if let Ok(cwd) = std::env::current_dir() {
                         self.wm.ensure_watching(
                             cwd.to_string_lossy().as_ref(),
-                            Some(&self.agent()),
-                            Some(&self.session_id()),
+                            self.client().as_deref(),
+                            Some(&self.connection_id()),
                         );
                     }
                 }
@@ -380,54 +364,46 @@ impl ServerHandler for BuiltinServer {
         }
     }
 
-    // -----------------------------------------------------------------------
     // Tool dispatch — hook 3: cwd last-resort before every tool call
-    // -----------------------------------------------------------------------
 
     fn call_tool(
         &self,
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> impl std::future::Future<Output = Result<CallToolResult, ErrorData>> + MaybeSendFuture + '_
-    {
+    ) -> impl std::future::Future<Output = Result<CallToolResult, ErrorData>>
+           + MaybeSendFuture
+           + '_ {
         async move {
-            if let Ok(cwd) = std::env::current_dir() {
-                self.wm.ensure_watching(
-                    cwd.to_string_lossy().as_ref(),
-                    Some(&self.agent()),
-                    Some(&self.session_id()),
-                );
-            }
-
             self.tool_router
                 .call(ToolCallContext::new(self, request, context))
                 .await
         }
     }
 
-    // -----------------------------------------------------------------------
     // Metadata
-    // -----------------------------------------------------------------------
 
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
-            "so-context MCP server.\n\
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_instructions(
+                "so-context MCP server.\n\
 \n\
 Projects are auto-discovered from workspace roots on connect — no setup needed.\n\
 \n\
 Tools:\n\
-  so_read      — read a file (mode: full / outline / graph)\n\
-  so_search    — FTS search over an indexed project graph\n\
-  so_status    — list all watched projects and their current state",
-        )
+  so_read        — read a file (mode: full / outline / graph)\n\
+  so_search      — FTS search over an indexed project graph\n\
+  so_references  — find all usages of a symbol (callers/callees/imports/all)\n\
+  so_status      — list all watched projects and their current state",
+            )
     }
 
     fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
-    ) -> impl std::future::Future<Output = Result<ListToolsResult, ErrorData>> + MaybeSendFuture + '_
-    {
+    ) -> impl std::future::Future<Output = Result<ListToolsResult, ErrorData>>
+           + MaybeSendFuture
+           + '_ {
         async move {
             Ok(ListToolsResult {
                 tools: self.tool_router.list_all(),

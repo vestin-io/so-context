@@ -7,3 +7,5 @@ Cargo.lock
 *.swo
 *~
 .DS_Store
+events.jsonl*
+.opencode/
