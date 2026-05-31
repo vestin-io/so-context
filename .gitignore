@@ -1,5 +1,7 @@
 /target
-/.so-context
+artifacts/
+.so-context/
+.idea/
 Cargo.lock
 *.swp
 *.swo

@@ -15,6 +15,7 @@ use clap::{Parser, Subcommand};
 use std::process;
 
 use daemon::Daemon;
+use shell::{ShellRunOptions, ShellRunner};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -53,12 +54,6 @@ enum Commands {
         /// Print raw command output instead of the compressed shell view.
         #[arg(long)]
         full: bool,
-        /// Persist raw stdout/stderr for later compression analysis.
-        #[arg(long)]
-        record_raw: bool,
-        /// Include shell classifier and execution metadata in the output.
-        #[arg(long)]
-        debug_shell: bool,
         /// Command and arguments to execute.
         #[arg(required = true, num_args = 1.., trailing_var_arg = true, allow_hyphen_values = true)]
         argv: Vec<String>,
@@ -117,13 +112,9 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Commands::Watch { path } => core_graph::watch_project(&path).map_err(anyhow::Error::msg),
-        Commands::Shell {
-            full,
-            record_raw,
-            debug_shell,
-            argv,
-        } => {
-            let output = shell::run(&argv, full, record_raw, debug_shell)?;
+        Commands::Shell { full, argv } => {
+            let runner = ShellRunner::new(ShellRunOptions::new(full));
+            let output = runner.run(&argv)?;
             print!("{}", output.rendered);
             if output.exit_code != 0 {
                 process::exit(output.exit_code);

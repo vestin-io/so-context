@@ -64,6 +64,15 @@ cargo run -- index [path]
 cargo run -- watch [path]
 ```
 
+### Shell compression
+
+```sh
+cargo run -- shell -- git diff
+cargo run -- shell --full -- git diff
+```
+
+Supported commands are tracked in [docs/shell-support.md](/Users/jiatwork/Works/so-context/docs/shell-support.md).
+
 ---
 
 ## MCP tools

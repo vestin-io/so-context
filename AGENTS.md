@@ -156,8 +156,17 @@ This file defines repository-level engineering rules for humans and coding agent
 ## 13. Testing and Verification
 
 - Prefer focused unit tests for substantive modules.
+- Keep tests in separate files, not inline in production source files.
+- Prefer adjacent test files for module-level unit tests.
+  - Preferred pattern:
+    - `foo.rs` + `foo_tests.rs`
+- Use the repository-root `tests/` directory for integration, CLI, daemon, MCP, or other black-box tests that should exercise public behavior from outside the module boundary.
+- Keep pattern-level and reducer-level tests close to the implementation they verify.
 - Runtime changes should include an end-to-end path test where practical.
 - Graph changes should add tests for indexing/search behavior when feasible.
+- Shell compression changes should generally include:
+  - pattern-level tests in adjacent files next to the implementation
+  - `tests/` coverage only for representative end-to-end CLI behavior, not every pattern
 - Before considering work done, try to run:
   - `cargo fmt --all --check`
   - `cargo check`
@@ -216,3 +225,5 @@ These rules intentionally align with the primary Rust guidance below:
 - Rust module/file organization:
   - https://doc.rust-lang.org/reference/items/modules.html
   - https://doc.rust-lang.org/book/ch07-05-separating-modules-into-different-files.html
+
+@RTK.md

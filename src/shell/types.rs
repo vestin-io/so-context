@@ -1,10 +1,3 @@
-use std::fmt::Write;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RenderMode {
-    Compressed,
-}
-
 #[derive(Debug, Clone)]
 pub struct ShellInvocation {
     pub argv: Vec<String>,
@@ -24,7 +17,14 @@ impl ShellInvocation {
     }
 
     pub fn command_line(&self) -> String {
-        self.argv.join(" ")
+        Self::render_argv(&self.argv)
+    }
+
+    pub(crate) fn render_argv(argv: &[String]) -> String {
+        argv.iter()
+            .map(|arg| shell_quote(arg))
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 }
 
@@ -36,10 +36,82 @@ pub struct ShellResult {
     pub exit_code: i32,
 }
 
+impl ShellResult {
+    pub fn render_full(&self) -> String {
+        match (self.stdout.is_empty(), self.stderr.is_empty()) {
+            (false, true) => self.stdout.clone(),
+            (true, false) => with_trailing_newline(&self.stderr),
+            _ => self.render_full_body(),
+        }
+    }
+
+    pub fn render_full_len(&self) -> usize {
+        match (self.stdout.is_empty(), self.stderr.is_empty()) {
+            (false, true) => self.stdout.len(),
+            (true, false) => with_trailing_newline_len(&self.stderr),
+            _ => self.render_full_body_len(),
+        }
+    }
+
+    fn render_full_body(&self) -> String {
+        let mut output = String::with_capacity(self.stdout.len() + self.stderr.len() + 1);
+
+        if !self.stdout.is_empty() {
+            output.push_str(&self.stdout);
+            if !self.stdout.ends_with('\n') && !self.stderr.is_empty() {
+                output.push('\n');
+            }
+        }
+        if !self.stderr.is_empty() {
+            output.push_str(&self.stderr);
+            if !self.stderr.ends_with('\n') {
+                output.push('\n');
+            }
+        }
+        output
+    }
+
+    fn render_full_body_len(&self) -> usize {
+        let mut len = 0;
+
+        if !self.stdout.is_empty() {
+            len += self.stdout.len();
+            if !self.stdout.ends_with('\n') && !self.stderr.is_empty() {
+                len += 1;
+            }
+        }
+        if !self.stderr.is_empty() {
+            len += self.stderr.len();
+            if !self.stderr.ends_with('\n') {
+                len += 1;
+            }
+        }
+
+        len
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RunOutput {
     pub rendered: String,
     pub exit_code: i32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellOutputMode {
+    Compressed,
+    RawFallback,
+    Full,
+}
+
+impl ShellOutputMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Compressed => "compressed",
+            Self::RawFallback => "raw_fallback",
+            Self::Full => "full",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +128,12 @@ pub enum ShellPattern {
     GitCheckout,
     GitSwitch,
     GitCommit,
+    GitAdd,
+    GitClone,
+    GitMerge,
+    GitTag,
+    GitReset,
+    GitStash,
     DockerPs,
     DockerImages,
     DockerCompose,
@@ -63,6 +141,36 @@ pub enum ShellPattern {
     DockerBuild,
     DockerInspect,
     DockerPull,
+    NodeNpm,
+    NodePnpm,
+    NodeYarn,
+    NodeBun,
+    NodeNpx,
+    CargoBuild,
+    CargoTest,
+    CargoClippy,
+    CargoCheck,
+    CargoInstall,
+    CargoNextest,
+    GhPr,
+    GhIssue,
+    GhRun,
+    KubectlPods,
+    KubectlServices,
+    KubectlLogs,
+    KubectlDescribe,
+    KubectlApply,
+    Tsc,
+    NextBuild,
+    ViteBuild,
+    Make,
+    Gradle,
+    Maven,
+    DotnetBuild,
+    DotnetTest,
+    DotnetRestore,
+    DotnetFormat,
+    Cmake,
     Ls,
     Find,
     Rg,
@@ -91,6 +199,12 @@ impl ShellPattern {
             Self::GitCheckout => "git.checkout",
             Self::GitSwitch => "git.switch",
             Self::GitCommit => "git.commit",
+            Self::GitAdd => "git.add",
+            Self::GitClone => "git.clone",
+            Self::GitMerge => "git.merge",
+            Self::GitTag => "git.tag",
+            Self::GitReset => "git.reset",
+            Self::GitStash => "git.stash",
             Self::DockerPs => "docker.ps",
             Self::DockerImages => "docker.images",
             Self::DockerCompose => "docker.compose",
@@ -98,6 +212,36 @@ impl ShellPattern {
             Self::DockerBuild => "docker.build",
             Self::DockerInspect => "docker.inspect",
             Self::DockerPull => "docker.pull",
+            Self::NodeNpm => "node.npm",
+            Self::NodePnpm => "node.pnpm",
+            Self::NodeYarn => "node.yarn",
+            Self::NodeBun => "node.bun",
+            Self::NodeNpx => "node.npx",
+            Self::CargoBuild => "rust.cargo-build",
+            Self::CargoTest => "rust.cargo-test",
+            Self::CargoClippy => "rust.cargo-clippy",
+            Self::CargoCheck => "rust.cargo-check",
+            Self::CargoInstall => "rust.cargo-install",
+            Self::CargoNextest => "rust.cargo-nextest",
+            Self::GhPr => "gh.pr",
+            Self::GhIssue => "gh.issue",
+            Self::GhRun => "gh.run",
+            Self::KubectlPods => "k8s.kubectl-pods",
+            Self::KubectlServices => "k8s.kubectl-services",
+            Self::KubectlLogs => "k8s.kubectl-logs",
+            Self::KubectlDescribe => "k8s.kubectl-describe",
+            Self::KubectlApply => "k8s.kubectl-apply",
+            Self::Tsc => "build.tsc",
+            Self::NextBuild => "build.next",
+            Self::ViteBuild => "build.vite",
+            Self::Make => "build.make",
+            Self::Gradle => "build.gradle",
+            Self::Maven => "build.maven",
+            Self::DotnetBuild => "build.dotnet-build",
+            Self::DotnetTest => "build.dotnet-test",
+            Self::DotnetRestore => "build.dotnet-restore",
+            Self::DotnetFormat => "build.dotnet-format",
+            Self::Cmake => "build.cmake",
             Self::Ls => "generic.ls",
             Self::Find => "generic.find",
             Self::Rg => "generic.rg",
@@ -119,34 +263,46 @@ pub struct CompressionSummary {
     pub summary: String,
     pub details: Vec<String>,
     pub stderr_preview: Vec<String>,
-    pub exit_code: i32,
-    pub command_line: String,
 }
 
 impl CompressionSummary {
-    pub fn render(&self, mode: RenderMode, debug: bool) -> String {
-        let mut output = String::new();
-        if debug {
-            let _ = writeln!(output, "pattern: {}", self.pattern.label());
-            let _ = writeln!(output, "exit_code: {}", self.exit_code);
-            let _ = writeln!(output, "command: {}", self.command_line);
+    pub fn new(
+        pattern: ShellPattern,
+        summary: impl Into<String>,
+        details: Vec<String>,
+        stderr_preview: Vec<String>,
+        _result: &ShellResult,
+    ) -> Self {
+        Self {
+            pattern,
+            summary: summary.into(),
+            details,
+            stderr_preview,
         }
+    }
 
-        let _ = writeln!(output, "{}", self.summary);
+    pub fn render(&self) -> String {
+        let mut output = String::new();
+        output.push_str(&self.summary);
+        output.push('\n');
 
-        if matches!(mode, RenderMode::Compressed) && !self.details.is_empty() {
+        if !self.details.is_empty() {
             for line in &self.details {
-                let _ = writeln!(output, "- {line}");
+                output.push_str("- ");
+                output.push_str(line);
+                output.push('\n');
             }
         }
 
         if !self.stderr_preview.is_empty() {
             if !output.ends_with('\n') {
-                let _ = writeln!(output);
+                output.push('\n');
             }
-            let _ = writeln!(output, "stderr:");
+            output.push_str("stderr:\n");
             for line in &self.stderr_preview {
-                let _ = writeln!(output, "- {line}");
+                output.push_str("- ");
+                output.push_str(line);
+                output.push('\n');
             }
         }
 
@@ -154,40 +310,33 @@ impl CompressionSummary {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{CompressionSummary, RenderMode, ShellPattern};
-
-    fn sample_summary() -> CompressionSummary {
-        CompressionSummary {
-            pattern: ShellPattern::GitDiff,
-            summary: "files=2; hunks=3; additions=10; deletions=4".into(),
-            details: vec!["src/main.rs".into(), "README.md".into()],
-            stderr_preview: vec!["warning: demo".into()],
-            exit_code: 0,
-            command_line: "git diff".into(),
-        }
+fn shell_quote(arg: &str) -> String {
+    if arg.is_empty() {
+        return "''".to_string();
     }
 
-    #[test]
-    fn default_render_hides_debug_metadata() {
-        let rendered = sample_summary().render(RenderMode::Compressed, false);
-
-        assert!(rendered.starts_with("files=2; hunks=3; additions=10; deletions=4\n"));
-        assert!(rendered.contains("- src/main.rs\n"));
-        assert!(rendered.contains("stderr:\n- warning: demo\n"));
-        assert!(!rendered.contains("pattern:"));
-        assert!(!rendered.contains("exit_code:"));
-        assert!(!rendered.contains("command:"));
+    if arg
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '/' | ':' | '='))
+    {
+        return arg.to_string();
     }
 
-    #[test]
-    fn debug_render_includes_metadata() {
-        let rendered = sample_summary().render(RenderMode::Compressed, true);
+    format!("'{}'", arg.replace('\'', "'\\''"))
+}
 
-        assert!(rendered.contains("pattern: git.diff\n"));
-        assert!(rendered.contains("exit_code: 0\n"));
-        assert!(rendered.contains("command: git diff\n"));
-        assert!(rendered.contains("files=2; hunks=3; additions=10; deletions=4\n"));
+fn with_trailing_newline(text: &str) -> String {
+    if text.ends_with('\n') {
+        text.to_string()
+    } else {
+        format!("{text}\n")
     }
 }
+
+fn with_trailing_newline_len(text: &str) -> usize {
+    text.len() + usize::from(!text.ends_with('\n'))
+}
+
+#[cfg(test)]
+#[path = "types_tests.rs"]
+mod tests;
