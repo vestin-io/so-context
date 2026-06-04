@@ -16,6 +16,8 @@ use crate::shell::{
     build_shell_event,
 };
 
+const FULL_REASON_TEE_MISSING_OR_EXPIRED: &str = "tee_missing_or_expired";
+
 pub fn route(wm: Arc<WatchManager>) -> ToolRoute<BuiltinServer> {
     ToolRoute::new_dyn(
         Tool::new(
@@ -52,10 +54,7 @@ fn handler(
     };
 
     let argv = parse_argv(&args)?;
-    let full = args
-        .get("full")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false);
+    let full = parse_full_request(&args)?;
     let cwd = resolve_cwd(&args, &client, &connection_id, &wm.status())?;
     let cwd_display = cwd.display().to_string();
     let timer = Timer::start();
@@ -152,6 +151,35 @@ fn parse_argv(args: &JsonObject) -> Result<Vec<String>, rmcp::ErrorData> {
             })
         })
         .collect()
+}
+
+fn parse_full_request(args: &JsonObject) -> Result<bool, rmcp::ErrorData> {
+    let full = args
+        .get("full")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    if !full {
+        return Ok(false);
+    }
+
+    let reason = args
+        .get("full_reason")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            rmcp::ErrorData::invalid_params(
+                "full=true requires full_reason=tee_missing_or_expired; use compressed output first, then so_shell_output, and only rerun full when tee is unavailable",
+                None,
+            )
+        })?;
+
+    if reason != FULL_REASON_TEE_MISSING_OR_EXPIRED {
+        return Err(rmcp::ErrorData::invalid_params(
+            "full_reason must be tee_missing_or_expired; use compressed output first, then so_shell_output, and only rerun full when tee is unavailable",
+            None,
+        ));
+    }
+
+    Ok(true)
 }
 
 fn resolve_cwd(
@@ -257,7 +285,12 @@ fn schema() -> Arc<JsonObject> {
                 "full": {
                     "type": "boolean",
                     "default": false,
-                    "description": "Return raw command output immediately. Leave this false by default. Set it to true only when the user explicitly needs verbatim raw output right away. Normal workflow is: use compressed output first, answer from it if sufficient, and only then call so_shell_output when the summary is missing required detail."
+                    "description": "Deprecated escape hatch. Leave this false by default. Normal workflow is: use compressed output first, then so_shell_output for cached raw output, and only rerun with full=true when tee is unavailable."
+                },
+                "full_reason": {
+                    "type": "string",
+                    "enum": ["tee_missing_or_expired"],
+                    "description": "Required only when full=true. Use this only after so_shell_output could not return raw output because tee is missing or expired."
                 },
                 "_so_session_id": {
                     "type": "string",

@@ -54,7 +54,8 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
         .unwrap_or("full");
 
     // -----------------------------------------------------------------------
-    // File-visit cache check — full mode only, mirrors lean-ctx behaviour.
+    // File-visit cache check — full mode only, returning an unchanged-file stub
+    // when the file content hash matches the last read in this session.
     // -----------------------------------------------------------------------
     if mode == "full" {
         // Read file content upfront so we can hash it regardless of the cache

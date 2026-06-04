@@ -404,6 +404,7 @@ Use compressed so_shell output as the default and preferred final answer.\n\
 Only call so_shell_output when the user explicitly asks for verbatim raw output or the compressed summary is missing required detail.\n\
 Do not call so_shell_output just to confirm, double-check, or restate a compressed result that already answers the request.\n\
 The text content returned by so_shell or so_shell_output is the actual command output. Read and use that text directly; do not rerun the same command in native shell just to confirm stdout unless the result is empty or the user explicitly asks for a rerun.\n\
+Do not set full=true on the first so_shell call. Sequence is strict: compressed so_shell first, then so_shell_output, and only if tee is unavailable may you rerun so_shell with full=true and full_reason=tee_missing_or_expired.\n\
 Keep native shell only for long-running, streaming, or interactive commands.\n\
 \n\
 Tools:\n\

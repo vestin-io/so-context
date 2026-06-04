@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Result, bail};
 
 use super::exec;
-use super::output_cache;
+use super::output_spool;
 use super::patterns;
 use super::types::{RunOutput, ShellInvocation, ShellOutputMode, ShellResult};
 
@@ -73,7 +73,7 @@ impl ShellRunner {
             stdout_bytes: result.stdout.len(),
             stderr_bytes: result.stderr.len(),
         };
-        output_cache::store_run_output(&output);
+        output_spool::store_run_output(&output);
         Ok(output)
     }
 
@@ -93,7 +93,7 @@ impl ShellRunner {
             stdout_bytes: result.stdout.len(),
             stderr_bytes: result.stderr.len(),
         };
-        output_cache::store_run_output(&output);
+        output_spool::store_run_output(&output);
         Ok(output)
     }
 

@@ -9,6 +9,8 @@ use serde_json::{Map, Value};
 use std::fs;
 use std::path::PathBuf;
 
+use crate::shell::native_shell_policy_json;
+
 const SERVER_NAME: &str = "so-context";
 
 pub fn config_dir() -> PathBuf {
@@ -120,7 +122,21 @@ fn install_plugin(binary: &str) -> Result<()> {
         .with_context(|| format!("create dir {}", path.parent().unwrap().display()))?;
 
     let escaped_binary = binary.replace('\\', "\\\\").replace('"', "\\\"");
-    let source = include_str!("so-context.ts").replace("__SO_CONTEXT_BINARY__", &escaped_binary);
+    let policy = native_shell_policy_json();
+    let shell_tool_names = serde_json::to_string(
+        policy
+            .get("shell_tool_names")
+            .cloned()
+            .unwrap_or_else(|| Value::Array(Vec::new()))
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .as_slice(),
+    )?;
+    let source = include_str!("so-context.ts")
+        .replace("__SO_CONTEXT_BINARY__", &escaped_binary)
+        .replace("__SO_CONTEXT_NATIVE_SHELL_TOOL_NAMES__", &shell_tool_names)
+        .replace("__SO_CONTEXT_NATIVE_SHELL_POLICY__", &policy.to_string());
     fs::write(&path, source).with_context(|| format!("write {}", path.display()))?;
     println!("OpenCode: wrote plugin to {}", path.display());
     Ok(())

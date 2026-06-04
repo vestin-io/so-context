@@ -136,7 +136,7 @@ fn install_pre_tool_use_hook(root: &mut Map<String, Value>, binary: &str) {
             matcher,
             make_pre_tool_handler(
                 binary,
-                "Blocking one-shot native shell commands; use so-context so_shell",
+                "Short shell command detected; routing to mcp__so-context__so_shell",
             ),
         );
     }

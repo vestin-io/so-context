@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
-use super::super::text::{compact_whitespace, truncate_text};
+use super::super::text::{append_omitted_line, compact_whitespace, truncate_text};
+
+const FIND_PASSTHROUGH_THRESHOLD: usize = 80;
 
 pub(super) struct SummaryDetails {
     pub summary: String,
@@ -11,12 +13,12 @@ pub(super) struct SummaryDetails {
 pub(super) fn summarize_find_paths(paths: &[String]) -> SummaryDetails {
     if paths.is_empty() {
         return SummaryDetails {
-            summary: "0F 0D".to_string(),
+            summary: "0 paths".to_string(),
             details: Vec::new(),
         };
     }
 
-    let mut by_dir: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut by_dir: BTreeMap<String, usize> = BTreeMap::new();
     let mut by_ext: HashMap<String, usize> = HashMap::new();
 
     for path in paths {
@@ -26,40 +28,41 @@ pub(super) fn summarize_find_paths(paths: &[String]) -> SummaryDetails {
             .map(|parent| parent.display().to_string())
             .filter(|parent| !parent.is_empty())
             .unwrap_or_else(|| ".".to_string());
-        let name = path_obj
-            .file_name()
-            .map(|name| name.to_string_lossy().to_string())
-            .unwrap_or_else(|| path.clone());
-
         let ext = path_obj
             .extension()
             .map(|ext| format!(".{}", ext.to_string_lossy()))
             .unwrap_or_else(|| "no-ext".to_string());
         *by_ext.entry(ext).or_default() += 1;
-        by_dir.entry(dir).or_default().push(name);
+        *by_dir.entry(dir).or_default() += 1;
     }
 
-    let mut details = Vec::new();
-    for (dir, names) in &by_dir {
-        let mut names = names.clone();
-        names.sort();
-        details.push(format!("{dir}/ {}", names.join(" ")));
-    }
+    let shown = paths.len().min(FIND_PASSTHROUGH_THRESHOLD);
+    let mut details = paths
+        .iter()
+        .take(FIND_PASSTHROUGH_THRESHOLD)
+        .cloned()
+        .collect::<Vec<_>>();
+    append_omitted_line(&mut details, paths.len(), shown, "paths");
 
     let mut ext_counts: Vec<(String, usize)> = by_ext.into_iter().collect();
     ext_counts.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
-    if !ext_counts.is_empty() {
-        let ext_summary = ext_counts
-            .into_iter()
-            .take(5)
-            .map(|(ext, count)| format!("{ext}({count})"))
-            .collect::<Vec<_>>()
-            .join(" ");
-        details.push(format!("ext: {ext_summary}"));
-    }
+    let ext_summary = ext_counts
+        .into_iter()
+        .take(5)
+        .map(|(ext, count)| format!("{count} {ext}"))
+        .collect::<Vec<_>>()
+        .join(", ");
 
     SummaryDetails {
-        summary: format!("{}F {}D", paths.len(), by_dir.len()),
+        summary: if ext_summary.is_empty() {
+            format!("{} paths in {} dirs", paths.len(), by_dir.len())
+        } else {
+            format!(
+                "{} paths in {} dirs ({ext_summary})",
+                paths.len(),
+                by_dir.len()
+            )
+        },
         details,
     }
 }

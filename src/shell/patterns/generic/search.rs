@@ -1,14 +1,19 @@
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 use super::super::text::{append_omitted_line, sample_lines, truncate_text};
 use super::analyze::{SummaryDetails, clean_search_snippet};
 
+const SEARCH_PASSTHROUGH_THRESHOLD: usize = 60;
+
 pub(super) fn summarize_search_hits(hits: &[String]) -> SummaryDetails {
-    let grouped = group_search_hits(hits);
-    let total_files = grouped.len();
-    let shown = total_files.min(6);
-    let mut details = sample_lines(grouped, 6);
-    append_omitted_line(&mut details, total_files, shown, "files");
+    let total_files = count_files(hits);
+    let shown = hits.len().min(SEARCH_PASSTHROUGH_THRESHOLD);
+    let mut details = sample_lines(
+        hits.iter()
+            .map(|hit| render_search_hit(&parse_search_hit(hit))),
+        SEARCH_PASSTHROUGH_THRESHOLD,
+    );
+    append_omitted_line(&mut details, hits.len(), shown, "matches");
 
     SummaryDetails {
         summary: format!(
@@ -21,21 +26,12 @@ pub(super) fn summarize_search_hits(hits: &[String]) -> SummaryDetails {
     }
 }
 
-fn group_search_hits(hits: &[String]) -> Vec<String> {
-    let mut grouped: BTreeMap<String, SearchGroup> = BTreeMap::new();
-
+fn count_files(hits: &[String]) -> usize {
+    let mut files = BTreeSet::new();
     for hit in hits {
-        let parsed = parse_search_hit(hit);
-        let entry = grouped
-            .entry(parsed.file.clone())
-            .or_insert_with(|| SearchGroup::new(parsed.line.clone(), parsed.snippet.clone()));
-        entry.count += 1;
+        files.insert(parse_search_hit(hit).file);
     }
-
-    grouped
-        .into_iter()
-        .map(|(file, group)| group.render(file))
-        .collect()
+    files.len()
 }
 
 fn parse_search_hit(hit: &str) -> SearchHit {
@@ -72,34 +68,16 @@ struct SearchHit {
     snippet: String,
 }
 
-#[derive(Debug, Clone)]
-struct SearchGroup {
-    count: usize,
-    first_line: Option<String>,
-    first_snippet: String,
-}
-
-impl SearchGroup {
-    fn new(first_line: Option<String>, first_snippet: String) -> Self {
-        Self {
-            count: 0,
-            first_line,
-            first_snippet,
-        }
-    }
-
-    fn render(self, file: String) -> String {
-        let location = self
-            .first_line
-            .as_ref()
-            .map(|line| format!("{file}:{line}"))
-            .unwrap_or(file);
-        let match_label = if self.count == 1 { "match" } else { "matches" };
-        let snippet = truncate_text(&clean_search_snippet(&self.first_snippet), 100);
-        if self.first_snippet.is_empty() {
-            format!("{location} ({} {match_label})", self.count)
-        } else {
-            format!("{location} ({} {match_label}) — {snippet}", self.count)
-        }
+fn render_search_hit(hit: &SearchHit) -> String {
+    let location = hit
+        .line
+        .as_ref()
+        .map(|line| format!("{}:{line}", hit.file))
+        .unwrap_or_else(|| hit.file.clone());
+    let snippet = truncate_text(&clean_search_snippet(&hit.snippet), 100);
+    if hit.snippet.is_empty() {
+        location
+    } else {
+        format!("{location} — {snippet}")
     }
 }

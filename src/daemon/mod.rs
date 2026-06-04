@@ -15,7 +15,6 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 pub use watch_manager::WatchManager;
 
-use crate::core_events::{EventRecord, enqueue};
 use crate::file_visit_cache::FileVisitCache;
 use crate::mcp::BuiltinServer;
 use crate::socket::{ctrl_socket_path, socket_path};
@@ -179,18 +178,6 @@ fn dispatch_ctrl(msg: &serde_json::Value, wm: &WatchManager, fvc: &FileVisitCach
                 session_id.unwrap(),
                 deleted
             );
-        }
-        "record_event" => {
-            let Some(event_value) = params.and_then(|p| p.get("event")).cloned() else {
-                eprintln!("so-context daemon: ctrl record_event missing event payload");
-                return;
-            };
-            match serde_json::from_value::<EventRecord>(event_value) {
-                Ok(event) => enqueue(event),
-                Err(error) => {
-                    eprintln!("so-context daemon: ctrl record_event invalid payload: {error}")
-                }
-            }
         }
         other => {
             eprintln!("so-context daemon: ctrl unknown method: {other}");

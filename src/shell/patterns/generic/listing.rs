@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use super::analyze::SummaryDetails;
 
 const LS_PASSTHROUGH_THRESHOLD: usize = 20;
+const LS_LONG_LISTING_PASSTHROUGH_THRESHOLD: usize = 120;
 const LS_MAX_DETAILS: usize = 20;
 const LS_MAX_OMITTED_NAMES: usize = 15;
 
@@ -79,6 +80,7 @@ fn summarize_long_listing(entries: &[String]) -> SummaryDetails {
     let mut files = Vec::new();
     let mut others = Vec::new();
     let mut hidden = 0usize;
+    let mut extension_counts = std::collections::BTreeMap::new();
 
     for entry in entries {
         let trimmed = entry.trim();
@@ -96,7 +98,12 @@ fn summarize_long_listing(entries: &[String]) -> SummaryDetails {
                 }
                 match parsed.kind {
                     InventoryKind::Directory => dirs.push(format!("{}/", parsed.name)),
-                    InventoryKind::File => files.push(format!("{}  {}", parsed.name, parsed.size)),
+                    InventoryKind::File => {
+                        if let Some(ext) = file_extension_label(&parsed.name) {
+                            *extension_counts.entry(ext).or_insert(0usize) += 1;
+                        }
+                        files.push(format!("{}  {}", parsed.name, parsed.size));
+                    }
                     InventoryKind::Other => others.push(parsed.name),
                 }
             }
@@ -114,18 +121,34 @@ fn summarize_long_listing(entries: &[String]) -> SummaryDetails {
     ordered.extend(files.iter().cloned());
     ordered.extend(others.iter().cloned());
 
-    let mut summary = format!("entries={entry_count}");
-    if !dirs.is_empty() || !files.is_empty() {
-        summary.push_str(&format!("; dirs={}; files={}", dirs.len(), files.len()));
-    }
+    let mut summary = format!("Summary: {} files, {} dirs", files.len(), dirs.len());
     if hidden > 0 {
-        summary.push_str(&format!("; hidden={hidden}"));
+        summary.push_str(&format!(" ({hidden} hidden)"));
+    }
+    let ext_summary = render_extension_summary(&extension_counts);
+    if !ext_summary.is_empty() {
+        summary.push_str(&format!(" ({ext_summary})"));
     }
 
     SummaryDetails {
         summary,
-        details: select_ls_details(ordered),
+        details: select_long_listing_details(ordered),
     }
+}
+
+fn select_long_listing_details(ordered: Vec<String>) -> Vec<String> {
+    if ordered.len() <= LS_LONG_LISTING_PASSTHROUGH_THRESHOLD {
+        return ordered;
+    }
+
+    let mut details: Vec<String> = ordered
+        .iter()
+        .take(LS_LONG_LISTING_PASSTHROUGH_THRESHOLD)
+        .cloned()
+        .collect();
+    let remaining = ordered.len() - LS_LONG_LISTING_PASSTHROUGH_THRESHOLD;
+    details.push(format!("+ {remaining} more entries"));
+    details
 }
 
 fn select_ls_details(ordered: Vec<String>) -> Vec<String> {
@@ -255,6 +278,23 @@ fn format_size(raw: &str) -> String {
     }
 
     format!("{:.1}G", mib / 1024.0)
+}
+
+fn file_extension_label(name: &str) -> Option<String> {
+    let path = Path::new(name);
+    let ext = path.extension()?.to_str()?;
+    if ext.is_empty() {
+        return None;
+    }
+    Some(format!(".{ext}"))
+}
+
+fn render_extension_summary(counts: &std::collections::BTreeMap<String, usize>) -> String {
+    let mut parts = Vec::new();
+    for (ext, count) in counts {
+        parts.push(format!("{count} {ext}"));
+    }
+    parts.join(", ")
 }
 
 #[derive(Debug, Clone)]

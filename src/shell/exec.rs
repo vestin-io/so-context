@@ -7,10 +7,10 @@ use anyhow::{Context, Result};
 
 use super::types::{ShellInvocation, ShellResult};
 
-/// Per-stream capture limit aligned with RTK `RAW_CAP` (10 MiB).
+/// Per-stream capture limit for raw command output capture (10 MiB).
 const MAX_STDOUT_BYTES: usize = 10_485_760;
 const MAX_STDERR_BYTES: usize = 10_485_760;
-const DEFAULT_COMMAND_TIMEOUT_MS: u64 = 30_000;
+const DEFAULT_COMMAND_TIMEOUT_MS: u64 = 120_000;
 const COMMAND_TIMEOUT_ENV: &str = "SO_CONTEXT_SHELL_TIMEOUT_MS";
 
 #[derive(Debug, Clone, Copy)]

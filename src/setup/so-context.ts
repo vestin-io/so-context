@@ -22,20 +22,8 @@ import type { Plugin } from "@opencode-ai/plugin";
 
 const SO_CONTEXT_BINARY = "__SO_CONTEXT_BINARY__";
 const SO_CONTEXT_TOOL_PREFIX = "so-context_";
-const NATIVE_SHELL_TOOL_NAMES = new Set([
-  "Bash",
-  "bash",
-  "Shell",
-  "shell",
-  "runTerminalCommand",
-  "runInTerminal",
-  "run_in_terminal",
-  "terminal",
-  "shell_command",
-  "exec_command",
-  "local_shell",
-  "run_shell_command",
-]);
+const NATIVE_SHELL_TOOL_NAMES = new Set(__SO_CONTEXT_NATIVE_SHELL_TOOL_NAMES__);
+const NATIVE_SHELL_POLICY = __SO_CONTEXT_NATIVE_SHELL_POLICY__;
 
 function parseSimpleShellCommand(command: string): string[] | null {
   if (command.includes("\n") || command.includes("\r")) return null;
@@ -139,16 +127,12 @@ function shouldPreferDocker(args: string[]): boolean {
   if (!subcommand) return true;
 
   switch (subcommand) {
-    case "run":
-    case "exec":
-    case "attach":
-      return false;
     case "logs":
-      return !hasAnyFlag(args, ["-f", "--follow"]);
+      return !hasAnyFlag(args, NATIVE_SHELL_POLICY.follow_flags);
     case "compose":
       return shouldPreferDockerCompose(afterSubcommand(args, "compose"));
     default:
-      return true;
+      return !NATIVE_SHELL_POLICY.docker_keep_native_subcommands.includes(subcommand);
   }
 }
 
@@ -157,16 +141,10 @@ function shouldPreferDockerCompose(args: string[]): boolean {
   if (!subcommand) return true;
 
   switch (subcommand) {
-    case "up":
-    case "exec":
-    case "run":
-    case "attach":
-    case "watch":
-      return false;
     case "logs":
-      return !hasAnyFlag(args, ["-f", "--follow"]);
+      return !hasAnyFlag(args, NATIVE_SHELL_POLICY.follow_flags);
     default:
-      return true;
+      return !NATIVE_SHELL_POLICY.docker_compose_keep_native_subcommands.includes(subcommand);
   }
 }
 
@@ -175,19 +153,15 @@ function shouldPreferKubectl(args: string[]): boolean {
   if (!subcommand) return true;
 
   switch (subcommand) {
-    case "exec":
-    case "attach":
-    case "port-forward":
-      return false;
     case "logs":
-      return !hasAnyFlag(args, ["-f", "--follow"]);
+      return !hasAnyFlag(args, NATIVE_SHELL_POLICY.follow_flags);
     default:
-      return true;
+      return !NATIVE_SHELL_POLICY.kubectl_keep_native_subcommands.includes(subcommand);
   }
 }
 
 function shouldKeepNativeCargo(args: string[]): boolean {
-  return ["run", "watch"].includes(firstNonFlag(args) ?? "");
+  return NATIVE_SHELL_POLICY.cargo_keep_native_subcommands.includes(firstNonFlag(args) ?? "");
 }
 
 function shouldKeepNativeJsRunner(args: string[]): boolean {
@@ -195,59 +169,39 @@ function shouldKeepNativeJsRunner(args: string[]): boolean {
   if (!subcommand) return false;
 
   switch (subcommand) {
-    case "dev":
-    case "start":
-    case "serve":
-    case "watch":
-    case "create":
-      return true;
     case "run": {
       const nested = firstNonFlag(afterSubcommand(args, "run"));
-      return ["dev", "start", "serve", "watch"].includes(nested ?? "");
+      return NATIVE_SHELL_POLICY.js_runner_keep_native_run_subcommands.includes(nested ?? "");
     }
     default:
-      return false;
+      return NATIVE_SHELL_POLICY.js_runner_keep_native_subcommands.includes(subcommand);
   }
 }
 
 function shouldKeepNativePython(args: string[]): boolean {
-  if (hasAnyFlag(args, ["-i"])) return true;
+  if (hasAnyFlag(args, NATIVE_SHELL_POLICY.python_interactive_flags)) return true;
 
   if (args[0] === "-m") {
-    return args[1] === "http.server";
+    return NATIVE_SHELL_POLICY.python_keep_native_modules.includes(args[1] ?? "");
   }
 
   if (args[0]?.endsWith("manage.py")) {
-    return args[1] === "runserver";
+    return (NATIVE_SHELL_POLICY.python_keep_native_scripts["manage.py"] ?? []).includes(args[1] ?? "");
   }
 
   return false;
 }
 
 function shouldKeepNativeNode(args: string[]): boolean {
-  return hasAnyFlag(args, ["--watch"]);
+  return hasAnyFlag(args, NATIVE_SHELL_POLICY.node_keep_native_flags);
 }
 
 function shouldKeepNativeShell(program: string, args: string[]): boolean {
+  if (NATIVE_SHELL_POLICY.always_keep_native_programs.includes(program)) return true;
+
   switch (program) {
-    case "ssh":
-    case "scp":
-    case "sftp":
-    case "mosh":
-    case "top":
-    case "htop":
-    case "less":
-    case "more":
-    case "man":
-    case "vim":
-    case "nvim":
-    case "nano":
-    case "tmux":
-    case "screen":
-    case "watch":
-      return true;
     case "tail":
-      return hasAnyFlag(args, ["-f", "--follow"]);
+      return hasAnyFlag(args, NATIVE_SHELL_POLICY.follow_flags);
     case "docker":
       return !shouldPreferDocker(args);
     case "docker-compose":
@@ -305,7 +259,7 @@ export const SoContextPlugin: Plugin = async ({ $ }) => {
       const argv = preferredSoShellArgv(command);
       if (!argv) return;
       throw new Error(
-        `Prefer so-context_so_shell for this short shell command. Retry with argv: ${JSON.stringify(argv)}. Keep the native shell only for long-running, streaming, or interactive commands.`
+        `This short shell command was automatically routed to mcp__so-context__so_shell. This is expected, not an error. Retry with argv: ${JSON.stringify(argv)}. Keep the native shell only for long-running, streaming, or interactive commands.`
       );
     },
 

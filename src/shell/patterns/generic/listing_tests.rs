@@ -70,7 +70,10 @@ fn summarizes_long_listing_as_inventory() {
 
     let summary = summarize_ls_entries(&entries, &["-la".to_string()]);
 
-    assert_eq!(summary.summary, "entries=4; dirs=2; files=2; hidden=2");
+    assert_eq!(
+        summary.summary,
+        "Summary: 2 files, 2 dirs (2 hidden) (1 .toml)"
+    );
     assert_eq!(summary.details[0], ".git/");
     assert_eq!(summary.details[1], "docs/");
     assert_eq!(summary.details[2], ".gitignore  62B");
@@ -78,4 +81,22 @@ fn summarizes_long_listing_as_inventory() {
     assert!(!summary.details.iter().any(|line| line == "total 184"));
     assert!(!summary.details.iter().any(|line| line.contains(" .")));
     assert!(!summary.details.iter().any(|line| line.contains(" ..")));
+}
+
+#[test]
+fn keeps_all_medium_long_listing_entries() {
+    let mut entries = vec!["total 200".to_string()];
+    for index in 0..30 {
+        entries.push(format!(
+            "-rw-r--r--@  1 user  staff  {} Jun  4 10:00 file{index:02}.txt",
+            100 + index
+        ));
+    }
+
+    let summary = summarize_ls_entries(&entries, &["-l".to_string()]);
+
+    assert_eq!(summary.details.len(), 30);
+    assert_eq!(summary.details[0], "file00.txt  100B");
+    assert_eq!(summary.details[29], "file29.txt  129B");
+    assert!(!summary.details.iter().any(|line| line.starts_with("+ ")));
 }

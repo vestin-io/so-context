@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use rmcp::model::JsonObject;
 
-use super::{infer_connection_cwd, render_tool_text, resolve_cwd};
+use super::{infer_connection_cwd, parse_full_request, render_tool_text, resolve_cwd};
 use crate::daemon::watch_manager::{Consumer, ProjectStatus, WatchState};
 
 #[test]
@@ -94,4 +94,27 @@ fn keeps_absolute_cwd_as_is() {
 
     let cwd = resolve_cwd(&args, &Some("codex".into()), "conn-1", &[]).unwrap();
     assert_eq!(cwd, PathBuf::from("/tmp/alpha/src"));
+}
+
+#[test]
+fn rejects_full_without_tee_missing_reason() {
+    let args: JsonObject = serde_json::json!({ "full": true })
+        .as_object()
+        .cloned()
+        .unwrap();
+
+    assert!(parse_full_request(&args).is_err());
+}
+
+#[test]
+fn accepts_full_with_tee_missing_reason() {
+    let args: JsonObject = serde_json::json!({
+        "full": true,
+        "full_reason": "tee_missing_or_expired"
+    })
+    .as_object()
+    .cloned()
+    .unwrap();
+
+    assert!(parse_full_request(&args).unwrap());
 }

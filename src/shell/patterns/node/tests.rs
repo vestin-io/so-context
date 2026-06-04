@@ -21,6 +21,26 @@ fn summarizes_npm_and_strips_boilerplate() {
 }
 
 #[test]
+fn keeps_more_meaningful_node_lines_before_truncating() {
+    let stdout = (0..12)
+        .map(|index| format!("line {index}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let result = ShellResult {
+        invocation: ShellInvocation::new(vec!["npm".into(), "run".into(), "demo".into()]),
+        stdout: format!("{stdout}\n"),
+        stderr: String::new(),
+        exit_code: 0,
+    };
+
+    let summary = summarize_case(&result);
+    assert_eq!(summary.summary, "line 0");
+    assert_eq!(summary.details.len(), 11);
+    assert_eq!(summary.details[0], "line 1");
+    assert_eq!(summary.details[10], "line 11");
+}
+
+#[test]
 fn summarizes_pnpm() {
     let result = ShellResult {
         invocation: ShellInvocation::new(vec!["pnpm".into(), "install".into()]),

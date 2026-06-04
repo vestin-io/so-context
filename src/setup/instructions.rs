@@ -9,47 +9,27 @@ const CODEX_INCLUDE_FILE: &str = "SO-CONTEXT.md";
 const CLAUDE_RULES_DIR: &str = "rules";
 const CLAUDE_RULES_FILE: &str = "so-context.md";
 
-const CODEX_INCLUDE_BODY: &str = r#"# so-context — Shell Guidance
-
-Prefer `mcp__so-context__so_shell` over the native `Bash` tool for short, one-shot shell commands.
-Expect short native shell calls to be blocked and retried through `mcp__so-context__so_shell`.
-Prefer compressed `so_shell` results first, and treat them as the default final answer.
-Only use `so_shell_output` when the user explicitly asks for verbatim raw output or the compressed result is missing required detail.
-Do not call `so_shell_output` just to confirm, double-check, or restate a compressed result that already answers the request.
-The text content returned by `so_shell` or `so_shell_output` is the actual command output. Read and use that text directly. Do not rerun the same command in native shell just to confirm stdout unless the tool result is empty or the user explicitly asks for a rerun.
-
-Use `so_shell` when:
-- you want `pwd`, `git status`, `git diff`, `cargo test`, `rg`, or similar non-interactive commands
-- compressed output is useful
-- you want the command recorded through so-context
-
-Keep native `Bash` only for:
-- long-running or streaming commands
-- interactive commands that need stdin/TTY
-- background jobs, servers, watchers, or shells that should stay open
-"#;
-
-const CLAUDE_RULES_BODY: &str = r#"## so-context
-
-Prefer `mcp__so-context__so_shell` over the native shell tool for short, one-shot commands.
+const SHARED_SHELL_GUIDANCE: &str = r#"Prefer `mcp__so-context__so_shell` over native shell tools for short, one-shot shell commands.
 Expect short native shell calls to be blocked and retried through `mcp__so-context__so_shell`.
 Prefer compressed `so_shell` results first, and treat them as the default final answer.
 Only call `so_shell_output` when the user explicitly asks for verbatim raw output or the compressed result is missing required detail.
 Do not call `so_shell_output` just to confirm, double-check, or restate a compressed result that already answers the request.
 The text content returned by `so_shell` or `so_shell_output` is the actual command output. Read and use that text directly. Do not rerun the same command in native shell just to confirm stdout unless the tool result is empty or the user explicitly asks for a rerun.
+Do not set `full: true` on the first `so_shell` call. Sequence is strict: compressed `so_shell` first, then `so_shell_output`, and only if tee is unavailable may you rerun `so_shell` with `full: true` and `full_reason: "tee_missing_or_expired"`."#;
 
-Use `mcp__so-context__so_shell` for commands like:
-- `pwd`
-- `git status`
-- `git diff`
-- `cargo test`
-- `rg ...`
+fn codex_include_body() -> String {
+    format!(
+        "# so-context — Shell Guidance\n\n{}\n\nUse `so_shell` when:\n- you want `pwd`, `git status`, `git diff`, `cargo test`, `rg`, or similar non-interactive commands\n- compressed output is useful\n- you want the command recorded through so-context\n\nKeep native `Bash` only for:\n- long-running or streaming commands\n- interactive commands that need stdin/TTY\n- background jobs, servers, watchers, or shells that should stay open\n",
+        SHARED_SHELL_GUIDANCE
+    )
+}
 
-Keep the native shell only for:
-- long-running or streaming commands
-- interactive commands that need stdin/TTY
-- background jobs, servers, watchers, or shells that should stay open
-"#;
+fn claude_rules_body() -> String {
+    format!(
+        "## so-context\n\n{}\n\nUse `mcp__so-context__so_shell` for commands like:\n- `pwd`\n- `git status`\n- `git diff`\n- `cargo test`\n- `rg ...`\n\nKeep the native shell only for:\n- long-running or streaming commands\n- interactive commands that need stdin/TTY\n- background jobs, servers, watchers, or shells that should stay open\n",
+        SHARED_SHELL_GUIDANCE
+    )
+}
 
 pub fn install_codex_instructions(home: &Path) -> Result<()> {
     let codex_dir = home.join(".codex");
@@ -57,7 +37,7 @@ pub fn install_codex_instructions(home: &Path) -> Result<()> {
         .with_context(|| format!("create dir {}", codex_dir.display()))?;
 
     let include_path = codex_dir.join(CODEX_INCLUDE_FILE);
-    fs::write(&include_path, CODEX_INCLUDE_BODY)
+    fs::write(&include_path, codex_include_body())
         .with_context(|| format!("write {}", include_path.display()))?;
 
     let agents_path = codex_dir.join("AGENTS.md");
@@ -85,7 +65,7 @@ pub fn install_claude_instructions(home: &Path) -> Result<()> {
         .with_context(|| format!("create dir {}", rules_dir.display()))?;
 
     let rules_path = rules_dir.join(CLAUDE_RULES_FILE);
-    fs::write(&rules_path, CLAUDE_RULES_BODY)
+    fs::write(&rules_path, claude_rules_body())
         .with_context(|| format!("write {}", rules_path.display()))?;
 
     let claude_md_path = claude_dir.join("CLAUDE.md");
@@ -182,17 +162,17 @@ mod tests {
     #[test]
     fn removes_managed_block_and_keeps_other_content() {
         let text = format!(
-            "# Global Agent Instructions\n\n{}\n@/tmp/SO-CONTEXT.md\n{}\n\n@/tmp/RTK.md\n",
+            "# Global Agent Instructions\n\n{}\n@/tmp/SO-CONTEXT.md\n{}\n\n@/tmp/OTHER.md\n",
             SO_CONTEXT_BLOCK_START, SO_CONTEXT_BLOCK_END
         );
 
         let cleaned = remove_block_from_text(&text);
-        assert_eq!(cleaned, "# Global Agent Instructions\n\n@/tmp/RTK.md\n");
+        assert_eq!(cleaned, "# Global Agent Instructions\n\n@/tmp/OTHER.md\n");
     }
 
     #[test]
     fn leaves_unmanaged_text_unchanged() {
-        let text = "# Global Agent Instructions\n\n@/tmp/RTK.md\n";
+        let text = "# Global Agent Instructions\n\n@/tmp/OTHER.md\n";
         assert_eq!(remove_block_from_text(text), text);
     }
 }

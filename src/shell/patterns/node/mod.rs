@@ -1,5 +1,7 @@
 use super::super::types::{CompressionSummary, ShellPattern, ShellResult};
-use super::text::{compact_whitespace, sample_lines, truncate_text};
+use super::text::{append_omitted_line, compact_whitespace, sample_lines, truncate_text};
+
+const NODE_PASSTHROUGH_THRESHOLD: usize = 30;
 
 fn summarize(result: &ShellResult, pattern: ShellPattern) -> CompressionSummary {
     let lines = meaningful_lines(&result.stdout);
@@ -10,7 +12,11 @@ fn summarize(result: &ShellResult, pattern: ShellPattern) -> CompressionSummary 
     let details = if lines.len() <= 1 {
         Vec::new()
     } else {
-        sample_lines(lines.into_iter().skip(1), 6)
+        let remaining = lines.len() - 1;
+        let shown = remaining.min(NODE_PASSTHROUGH_THRESHOLD);
+        let mut details = sample_lines(lines.into_iter().skip(1), NODE_PASSTHROUGH_THRESHOLD);
+        append_omitted_line(&mut details, remaining, shown, "lines");
+        details
     };
 
     CompressionSummary::new(

@@ -6,12 +6,12 @@ use serde::{Deserialize, Serialize};
 
 use super::types::RunOutput;
 
-const CACHE_TTL_SECS: u64 = 24 * 60 * 60;
-const MAX_CACHE_BYTES: u64 = 256 * 1024 * 1024;
+const SPOOL_TTL_SECS: u64 = 24 * 60 * 60;
+const MAX_SPOOL_BYTES: u64 = 256 * 1024 * 1024;
 const TEE_DIR_ENV: &str = "SO_CONTEXT_SHELL_TEE_DIR";
 
 #[derive(Debug, Clone)]
-pub struct CachedShellOutput {
+pub struct SpooledShellOutput {
     pub run_id: String,
     pub argv: Vec<String>,
     pub cwd: Option<PathBuf>,
@@ -20,7 +20,7 @@ pub struct CachedShellOutput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct CachedShellOutputMeta {
+struct SpooledShellOutputMeta {
     run_id: String,
     argv: Vec<String>,
     cwd: Option<PathBuf>,
@@ -40,17 +40,17 @@ pub fn store_run_output(output: &RunOutput) {
     store_run_output_in_dir(&tee_dir(), output);
 }
 
-pub fn get_cached_output(run_id: &str) -> Option<CachedShellOutput> {
-    get_cached_output_in_dir(&tee_dir(), run_id)
+pub fn get_spooled_output(run_id: &str) -> Option<SpooledShellOutput> {
+    get_spooled_output_in_dir(&tee_dir(), run_id)
 }
 
-fn read_cached_output(tee_dir: &Path, run_id: &str) -> Option<CachedShellOutput> {
+fn read_spooled_output(tee_dir: &Path, run_id: &str) -> Option<SpooledShellOutput> {
     let log_path = tee_dir.join(format!("{run_id}.log"));
     let meta_path = tee_dir.join(format!("{run_id}.json"));
     let full_output = fs::read_to_string(log_path).ok()?;
     let meta = fs::read_to_string(meta_path).ok()?;
-    let meta: CachedShellOutputMeta = serde_json::from_str(&meta).ok()?;
-    Some(CachedShellOutput {
+    let meta: SpooledShellOutputMeta = serde_json::from_str(&meta).ok()?;
+    Some(SpooledShellOutput {
         run_id: meta.run_id,
         argv: meta.argv,
         cwd: meta.cwd,
@@ -85,13 +85,13 @@ fn store_run_output_in_dir(tee_dir: &Path, output: &RunOutput) {
     }
     rotate_spool(
         tee_dir,
-        Duration::from_secs(CACHE_TTL_SECS),
-        MAX_CACHE_BYTES,
+        Duration::from_secs(SPOOL_TTL_SECS),
+        MAX_SPOOL_BYTES,
     );
 
     let log_path = tee_dir.join(format!("{}.log", output.run_id));
     let meta_path = tee_dir.join(format!("{}.json", output.run_id));
-    let meta = CachedShellOutputMeta {
+    let meta = SpooledShellOutputMeta {
         run_id: output.run_id.clone(),
         argv: output.invocation.argv.clone(),
         cwd: output.invocation.cwd().map(PathBuf::from),
@@ -113,18 +113,18 @@ fn store_run_output_in_dir(tee_dir: &Path, output: &RunOutput) {
 
     rotate_spool(
         tee_dir,
-        Duration::from_secs(CACHE_TTL_SECS),
-        MAX_CACHE_BYTES,
+        Duration::from_secs(SPOOL_TTL_SECS),
+        MAX_SPOOL_BYTES,
     );
 }
 
-fn get_cached_output_in_dir(tee_dir: &Path, run_id: &str) -> Option<CachedShellOutput> {
+fn get_spooled_output_in_dir(tee_dir: &Path, run_id: &str) -> Option<SpooledShellOutput> {
     rotate_spool(
         tee_dir,
-        Duration::from_secs(CACHE_TTL_SECS),
-        MAX_CACHE_BYTES,
+        Duration::from_secs(SPOOL_TTL_SECS),
+        MAX_SPOOL_BYTES,
     );
-    read_cached_output(tee_dir, run_id)
+    read_spooled_output(tee_dir, run_id)
 }
 
 fn rotate_spool(tee_dir: &Path, ttl: Duration, max_bytes: u64) {
@@ -208,7 +208,7 @@ fn now_epoch_secs() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        CACHE_TTL_SECS, collect_entries, get_cached_output_in_dir, rotate_spool,
+        SPOOL_TTL_SECS, collect_entries, get_spooled_output_in_dir, rotate_spool,
         store_run_output_in_dir,
     };
     use crate::shell::types::{RunOutput, ShellInvocation, ShellOutputMode, ShellPattern};
@@ -248,7 +248,7 @@ mod tests {
     fn stores_and_reads_spooled_output() {
         let dir = temp_dir("so-context-shell-tee");
         store_run_output_in_dir(&dir, &sample_output("run-1", "hello world"));
-        let cached = get_cached_output_in_dir(&dir, "run-1").expect("cached output");
+        let cached = get_spooled_output_in_dir(&dir, "run-1").expect("spooled output");
         assert_eq!(cached.full_output, "hello world");
         assert_eq!(cached.argv, vec!["echo".to_string(), "hello".to_string()]);
 
@@ -281,7 +281,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(10));
         store_run_output_in_dir(&dir, &sample_output("run-3", &"c".repeat(80)));
 
-        rotate_spool(&dir, Duration::from_secs(CACHE_TTL_SECS), 220);
+        rotate_spool(&dir, Duration::from_secs(SPOOL_TTL_SECS), 220);
         let entries = collect_entries(&dir).unwrap();
         let remaining_logs: Vec<String> = entries
             .into_iter()

@@ -138,7 +138,7 @@ async fn main() -> Result<()> {
         Commands::Mcp => mcp::run_mcp_bridge().await,
         Commands::Hook { event } => match event {
             HookCommands::PreTool => hook::run_pre_tool_use_hook(),
-            HookCommands::PostCompact => hook::run_post_compact_hook(),
+            HookCommands::PostCompact => hook::run_post_compact_hook().await,
         },
         Commands::Index { path, watch } => {
             if watch {

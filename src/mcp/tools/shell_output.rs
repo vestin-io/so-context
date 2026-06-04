@@ -9,7 +9,7 @@ use rmcp::model::{CallToolResult, Content, JsonObject, Tool};
 use super::BuiltinServer;
 use crate::core_events::{EventRecord, Timer, enqueue};
 use crate::core_tokens::count_tokens;
-use crate::shell::get_cached_output;
+use crate::shell::get_spooled_output;
 
 pub fn route() -> ToolRoute<BuiltinServer> {
     ToolRoute::new_dyn(
@@ -60,7 +60,7 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
     }
 
     let timer = Timer::start();
-    let result = match get_cached_output(&run_id) {
+    let result = match get_spooled_output(&run_id) {
         Some(output) => {
             let text = render_cached_output(&output.full_output, output.exit_code);
             let mut tool_result = if output.exit_code == 0 {
@@ -84,7 +84,7 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
         }
         None => {
             let message = format!(
-                "no cached raw shell output found for run_id `{run_id}`; rerun so_shell with `full: true` if you still need the original output"
+                "no cached raw shell output found for run_id `{run_id}`; rerun so_shell with `full: true` and `full_reason: \"tee_missing_or_expired\"` if you still need the original output"
             );
             let mut tool_result = CallToolResult::error(vec![Content::text(message.clone())]);
             tool_result.structured_content = Some(serde_json::json!({
