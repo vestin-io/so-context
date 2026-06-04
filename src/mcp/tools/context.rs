@@ -70,6 +70,28 @@ pub(crate) fn resolve_project_path_arg(
     )
 }
 
+pub(crate) fn infer_connection_project_for_path(
+    statuses: &[ProjectStatus],
+    client: &str,
+    connection_id: &str,
+    path: &str,
+) -> Option<PathBuf> {
+    let path = PathBuf::from(path);
+    let mut matches: Vec<PathBuf> =
+        statuses
+            .iter()
+            .filter(|status| {
+                status.consumers.iter().any(|consumer| {
+                    consumer.client == client && consumer.session_id == connection_id
+                }) && path.starts_with(&status.path)
+            })
+            .map(|status| status.path.clone())
+            .collect();
+
+    matches.sort_by_key(|candidate| std::cmp::Reverse(candidate.components().count()));
+    matches.into_iter().next()
+}
+
 #[cfg(test)]
 #[path = "context_tests.rs"]
 mod tests;

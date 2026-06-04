@@ -7,22 +7,30 @@ use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::model::{CallToolResult, Content, JsonObject, Tool};
 
 use super::BuiltinServer;
-use crate::core_events::{EventRecord, enqueue};
+use super::infer_connection_project_for_path;
+use crate::core_events::{EventRecord, Timer, enqueue};
 use crate::core_tokens::count_tokens;
+use crate::daemon::WatchManager;
 use crate::file_visit_cache::hash_content;
 
-pub fn route() -> ToolRoute<BuiltinServer> {
+pub fn route(wm: Arc<WatchManager>) -> ToolRoute<BuiltinServer> {
     ToolRoute::new_dyn(
         Tool::new(
             "so_read",
             "Read file by path. mode=full (default) returns full content; mode=outline returns a compact symbol outline from the graph DB.",
             schema(),
         ),
-        |ctx| Box::pin(async move { handler(ctx) }),
+        move |ctx| {
+            let wm = Arc::clone(&wm);
+            Box::pin(async move { handler(ctx, &wm) })
+        },
     )
 }
 
-fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rmcp::ErrorData> {
+fn handler(
+    ctx: ToolCallContext<'_, BuiltinServer>,
+    wm: &WatchManager,
+) -> Result<CallToolResult, rmcp::ErrorData> {
     let client = ctx.service.client();
     let client_version = ctx.service.client_version();
     let connection_id = ctx.service.connection_id();
@@ -52,6 +60,14 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
         .get("mode")
         .and_then(serde_json::Value::as_str)
         .unwrap_or("full");
+    let project = infer_connection_project_for_path(
+        &wm.status(),
+        client.as_deref().unwrap_or("unknown"),
+        &connection_id,
+        path,
+    )
+    .map(|path| path.display().to_string());
+    let timer = Timer::start();
 
     // -----------------------------------------------------------------------
     // File-visit cache check — full mode only, returning an unchanged-file stub
@@ -84,9 +100,9 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
                 ev.client_version = client_version.clone();
                 ev.client_source = "client_info".to_string();
                 ev.session_source = session_source.to_string();
-                ev.project = Some(path.to_string());
+                ev.project = project.clone();
                 ev.params = Some(serde_json::json!({ "path": path, "mode": mode }).to_string());
-                ev.duration_ms = Some(0);
+                ev.duration_ms = Some(timer.elapsed_ms());
                 ev.estimated_origin_tokens = Some(count_tokens(&raw_content));
                 ev.estimated_origin_size = Some(raw_content.len() as i64);
                 ev.actual_tokens = Some(count_tokens(&msg));
@@ -107,9 +123,9 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
         ev.client_version = client_version;
         ev.client_source = "client_info".to_string();
         ev.session_source = session_source.to_string();
-        ev.project = Some(path.to_string());
+        ev.project = project.clone();
         ev.params = Some(serde_json::json!({ "path": path, "mode": mode }).to_string());
-        ev.duration_ms = Some(0);
+        ev.duration_ms = Some(timer.elapsed_ms());
         ev.actual_tokens = Some(token_count);
         ev.estimated_origin_tokens = Some(token_count);
         ev.actual_size = Some(raw_content.len() as i64);
@@ -136,9 +152,9 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
         ev.client_version = client_version;
         ev.client_source = "client_info".to_string();
         ev.session_source = session_source.to_string();
-        ev.project = Some(path.to_string());
+        ev.project = project;
         ev.params = Some(serde_json::json!({ "path": path, "mode": mode }).to_string());
-        ev.duration_ms = Some(0);
+        ev.duration_ms = Some(timer.elapsed_ms());
         ev.actual_tokens = Some(token_count);
         ev.estimated_origin_tokens = Some(count_tokens(&raw_content));
         ev.actual_size = Some(output.len() as i64);

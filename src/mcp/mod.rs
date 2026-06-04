@@ -218,7 +218,7 @@ pub struct BuiltinServer {
 impl BuiltinServer {
     pub fn new(wm: Arc<WatchManager>, file_visit_cache: FileVisitCache) -> Self {
         let mut tool_router = ToolRouter::<Self>::new();
-        tool_router.add_route(tools::read::route());
+        tool_router.add_route(tools::read::route(Arc::clone(&wm)));
         tool_router.add_route(tools::references::route(Arc::clone(&wm)));
         tool_router.add_route(tools::search::route(Arc::clone(&wm)));
         tool_router.add_route(tools::shell::route(Arc::clone(&wm)));

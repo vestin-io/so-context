@@ -1,4 +1,7 @@
-use super::{install_pre_tool_use_hook, remove_post_compact_hook, remove_pre_tool_use_hook};
+use super::{
+    install_post_compact_hook, install_pre_tool_use_hook, remove_post_compact_hook,
+    remove_pre_tool_use_hook,
+};
 use toml_edit::DocumentMut;
 
 #[test]
@@ -86,4 +89,34 @@ command = "/usr/local/bin/custom-post"
         hook.get("command").and_then(|v| v.as_str()),
         Some("/usr/local/bin/custom-post")
     );
+}
+
+#[test]
+fn install_post_compact_hook_replaces_only_so_context_entry() {
+    let mut doc: DocumentMut = r#"
+[hooks]
+[[hooks.PostCompact]]
+[[hooks.PostCompact.hooks]]
+type = "command"
+command = "/tmp/so-context hook post-compact"
+[[hooks.PostCompact.hooks]]
+type = "command"
+command = "/usr/local/bin/custom-post"
+"#
+    .parse()
+    .unwrap();
+
+    install_post_compact_hook(&mut doc, "/opt/bin/so-context");
+
+    let hooks = doc["hooks"]["PostCompact"][0]["hooks"]
+        .as_array_of_tables()
+        .unwrap();
+    assert_eq!(hooks.len(), 2);
+    assert!(hooks.iter().any(|hook| {
+        hook.get("command").and_then(|v| v.as_str()) == Some("/usr/local/bin/custom-post")
+    }));
+    assert!(hooks.iter().any(|hook| {
+        hook.get("command").and_then(|v| v.as_str())
+            == Some("/opt/bin/so-context hook post-compact")
+    }));
 }

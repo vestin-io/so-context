@@ -302,29 +302,58 @@ fn install_post_compact_hook(doc: &mut DocumentMut, binary: &str) {
         None => return,
     };
 
-    let matching_groups: Vec<usize> = event_aot
-        .iter()
-        .enumerate()
-        .filter(|(_, group)| {
-            group
-                .get("hooks")
-                .and_then(|h| h.as_array_of_tables())
-                .map(|inner| inner.iter().any(is_so_context_post_compact_handler))
-                .unwrap_or(false)
-        })
-        .map(|(i, _)| i)
-        .collect();
+    let mut target_group_idx: Option<usize> = None;
+    let mut groups_to_remove = Vec::new();
 
-    for idx in matching_groups.into_iter().rev() {
-        event_aot.remove(idx);
+    for (idx, group) in event_aot.iter_mut().enumerate() {
+        let Some(inner) = group["hooks"].as_array_of_tables_mut() else {
+            continue;
+        };
+        let had_so_context = inner.iter().any(is_so_context_post_compact_handler);
+        if !had_so_context {
+            continue;
+        }
+        if target_group_idx.is_none() {
+            target_group_idx = Some(idx);
+        }
+
+        let to_remove: Vec<usize> = inner
+            .iter()
+            .enumerate()
+            .filter(|(_, hook)| is_so_context_post_compact_handler(hook))
+            .map(|(i, _)| i)
+            .collect();
+        for hook_idx in to_remove.into_iter().rev() {
+            inner.remove(hook_idx);
+        }
+        if inner.is_empty() && Some(idx) != target_group_idx {
+            groups_to_remove.push(idx);
+        }
     }
 
-    let mut group = Table::new();
-    // PostCompact has no matcher — it fires unconditionally.
-    let mut inner_aot = toml_edit::ArrayOfTables::new();
-    inner_aot.push(make_post_compact_handler(binary));
-    group["hooks"] = Item::ArrayOfTables(inner_aot);
-    event_aot.push(group);
+    match target_group_idx {
+        Some(idx) => {
+            if let Some(inner) = event_aot
+                .iter_mut()
+                .nth(idx)
+                .and_then(|group| group["hooks"].as_array_of_tables_mut())
+            {
+                inner.push(make_post_compact_handler(binary));
+            }
+        }
+        None => {
+            let mut group = Table::new();
+            // PostCompact has no matcher — it fires unconditionally.
+            let mut inner_aot = toml_edit::ArrayOfTables::new();
+            inner_aot.push(make_post_compact_handler(binary));
+            group["hooks"] = Item::ArrayOfTables(inner_aot);
+            event_aot.push(group);
+        }
+    }
+
+    for idx in groups_to_remove.into_iter().rev() {
+        event_aot.remove(idx);
+    }
 }
 
 fn make_post_compact_handler(binary: &str) -> Table {
