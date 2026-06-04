@@ -5,7 +5,7 @@
 //! Writes:
 //!   - `mcpServers.so-context`          — MCP stdio bridge
 //!   - `hooks.PreToolUse[].hooks[]`     — injects `_so_session_id` into so-context tool calls
-//!                                        and rewrites short native shell commands through `so-context shell`
+//!                                        and blocks short native shell commands so the agent retries with `so_shell`
 //!   - `hooks.PostCompact[].hooks[]`    — resets file-visit cache after context compaction
 //!   - `~/.claude/CLAUDE.md` snippet    — prefer `so_shell` for one-shot shell commands
 //!
@@ -136,7 +136,7 @@ fn install_pre_tool_use_hook(root: &mut Map<String, Value>, binary: &str) {
             matcher,
             make_pre_tool_handler(
                 binary,
-                "Routing one-shot shell commands through so-context shell",
+                "Blocking one-shot native shell commands; use so-context so_shell",
             ),
         );
     }

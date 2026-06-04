@@ -19,37 +19,6 @@ pub struct ShellEventContext {
 }
 
 impl ShellEventContext {
-    pub fn cli_shell(run_id: String, project: Option<PathBuf>) -> Self {
-        let client = std::env::var("SO_CONTEXT_CLIENT")
-            .ok()
-            .filter(|value| !value.trim().is_empty());
-        let client_version = std::env::var("SO_CONTEXT_CLIENT_VERSION")
-            .ok()
-            .filter(|value| !value.trim().is_empty());
-        let session_id = std::env::var("SO_CONTEXT_SESSION_ID")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or(run_id);
-        let session_source = std::env::var("SO_CONTEXT_SESSION_SOURCE")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| "generated".to_string());
-        let agent = std::env::var("SO_CONTEXT_AGENT")
-            .ok()
-            .filter(|value| !value.trim().is_empty());
-
-        Self {
-            tool: "shell".to_string(),
-            client,
-            client_version,
-            client_source: "cli".to_string(),
-            session_id,
-            session_source,
-            project: project.map(|path| path.to_string_lossy().to_string()),
-            agent,
-        }
-    }
-
     pub fn mcp_shell(
         client: Option<String>,
         client_version: Option<String>,
@@ -128,7 +97,6 @@ fn shell_params(output: &RunOutput, displayed_output: &str) -> serde_json::Value
         "run_id": output.run_id,
         "argv": redact_argv(&output.invocation.argv),
         "command_line": render_redacted_command_line(&output.invocation.argv),
-        "command_string": output.invocation.command_string(),
         "cwd": output
             .invocation
             .cwd()

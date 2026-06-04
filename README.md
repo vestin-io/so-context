@@ -49,6 +49,7 @@ so-context setup
 ```
 
 `setup` installs the MCP server, registers agent hooks, and adds global agent instructions that prefer `so_shell` for short, one-shot shell commands.
+Short native shell calls are blocked and should be retried through the MCP `so_shell` tool.
 
 ---
 
@@ -86,15 +87,6 @@ so-context index [path]
 ```sh
 so-context watch [path]
 ```
-
-### Shell compression
-
-```sh
-so-context shell -- git diff
-so-context shell --full -- git diff
-```
-
----
 
 ## MCP tools
 

@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS events (
   session_id               TEXT    NOT NULL,
   session_source           TEXT    NOT NULL,         -- hook | connection | generated | fallback
   project                  TEXT,                     -- absolute project root, nullable
-  tool                     TEXT    NOT NULL,          -- so_read / so_search / shell / so_shell / ...
+  tool                     TEXT    NOT NULL,          -- so_read / so_search / so_shell / so_shell_output / ...
   params                   TEXT,                     -- JSON blob of tool arguments
   result_ok                INTEGER NOT NULL DEFAULT 1, -- 1 = success, 0 = error
   duration_ms              INTEGER,                  -- wall-clock time of tool call

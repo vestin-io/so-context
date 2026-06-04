@@ -1,5 +1,3 @@
-use std::env;
-
 pub fn parse_simple_shell_command(command: &str) -> Option<Vec<String>> {
     if command.contains('\n') || command.contains('\r') {
         return None;
@@ -67,40 +65,6 @@ pub fn rewrite_env_prefix(argv: Vec<String>) -> Vec<String> {
     rewritten.push("env".to_string());
     rewritten.extend(argv);
     rewritten
-}
-
-pub fn logical_argv_for_shell_command(command: &str) -> Vec<String> {
-    parse_simple_shell_command(command)
-        .map(rewrite_env_prefix)
-        .unwrap_or_else(|| {
-            vec![
-                current_shell_program(),
-                shell_flag().to_string(),
-                command.to_string(),
-            ]
-        })
-}
-
-pub fn current_shell_program() -> String {
-    #[cfg(windows)]
-    {
-        env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string())
-    }
-    #[cfg(not(windows))]
-    {
-        env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
-    }
-}
-
-pub fn shell_flag() -> &'static str {
-    #[cfg(windows)]
-    {
-        "/C"
-    }
-    #[cfg(not(windows))]
-    {
-        "-lc"
-    }
 }
 
 fn is_env_assignment(arg: &str) -> bool {

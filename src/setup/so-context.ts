@@ -4,15 +4,15 @@
 // reaches the daemon, so the daemon can attribute events to the correct
 // context window (sub-agent).
 //
-// Also rewrites short native shell commands through `so-context shell` so the
-// agent does not need to retry manually.
+// Also blocks short native shell commands and tells the agent to retry with
+// the so-context MCP shell tool instead.
 //
 // Also resets the file-visit cache after context compaction so the agent
 // receives full file content again instead of "use cached context" stubs.
 //
 // Hooks used:
 //   tool.execute.before  — injects _so_session_id into so-context tool args
-//                          and rewrites selected native shell calls
+//                          and blocks selected native shell calls
 //   session.compacted    — calls `so-context hook post-compact` to reset cache
 //
 // OpenCode registers MCP tools as "<server-name>_<tool-name>", so tools from
@@ -285,23 +285,6 @@ function preferredSoShellArgv(command: string): string[] | null {
   return shouldKeepNativeShell(program, args) ? null : argv;
 }
 
-function shellQuote(arg: string): string {
-  if (!arg) return "''";
-  if (/^[A-Za-z0-9/._:=+-]+$/.test(arg)) return arg;
-  return `'${arg.replace(/'/g, `'\\''`)}'`;
-}
-
-function buildSoContextShellCommand(argv: string[]): string {
-  return [
-    "SO_CONTEXT_CLIENT=opencode",
-    "SO_CONTEXT_SESSION_SOURCE=hook",
-    shellQuote(SO_CONTEXT_BINARY),
-    "shell",
-    "-c",
-    shellQuote(argv.map(shellQuote).join(" ")),
-  ].join(" ");
-}
-
 export const SoContextPlugin: Plugin = async ({ $ }) => {
   return {
     "tool.execute.before": async (input, output) => {
@@ -321,13 +304,9 @@ export const SoContextPlugin: Plugin = async ({ $ }) => {
 
       const argv = preferredSoShellArgv(command);
       if (!argv) return;
-      const rewritten = buildSoContextShellCommand(argv);
-
-      if (typeof (output.args as any)?.command === "string") {
-        (output.args as Record<string, unknown>).command = rewritten;
-      } else if (typeof (output.args as any)?.cmd === "string") {
-        (output.args as Record<string, unknown>).cmd = rewritten;
-      }
+      throw new Error(
+        `Prefer so-context_so_shell for this short shell command. Retry with argv: ${JSON.stringify(argv)}. Keep the native shell only for long-running, streaming, or interactive commands.`
+      );
     },
 
     "session.compacted": async (input) => {

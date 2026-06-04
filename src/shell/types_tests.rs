@@ -50,22 +50,6 @@ fn invocation_can_carry_working_directory() {
 }
 
 #[test]
-fn shell_command_invocation_prefers_original_command_line() {
-    let invocation = ShellInvocation::shell_command(
-        vec!["ls".into(), "*.rs".into()],
-        "/bin/zsh".into(),
-        "ls *.rs".into(),
-    );
-
-    assert_eq!(invocation.command_line(), "ls *.rs");
-    assert_eq!(invocation.execution_program(), "/bin/zsh");
-    assert_eq!(
-        invocation.execution_args(),
-        vec!["-lc".to_string(), "ls *.rs".to_string()]
-    );
-}
-
-#[test]
 fn full_render_includes_newline_between_stdout_and_stderr() {
     let result = ShellResult {
         invocation: ShellInvocation::new(vec!["sh".into(), "-c".into(), "echo demo".into()]),

@@ -29,7 +29,13 @@ fn sample_output() -> RunOutput {
 #[test]
 fn shell_event_redacts_sensitive_argv_in_params() {
     let event = build_shell_event(
-        ShellEventContext::cli_shell("run-1".into(), Some(PathBuf::from("/tmp/demo"))),
+        ShellEventContext::mcp_shell(
+            Some("codex".into()),
+            Some("1.0.0".into()),
+            "session-123".into(),
+            "hook",
+            PathBuf::from("/tmp/demo"),
+        ),
         &sample_output(),
         "compressed output",
         12,
@@ -42,31 +48,15 @@ fn shell_event_redacts_sensitive_argv_in_params() {
 }
 
 #[test]
-fn cli_shell_context_uses_hook_env_when_present() {
-    unsafe {
-        std::env::set_var("SO_CONTEXT_CLIENT", "codex");
-        std::env::set_var("SO_CONTEXT_SESSION_ID", "session-123");
-        std::env::set_var("SO_CONTEXT_SESSION_SOURCE", "hook");
-    }
-
-    let context =
-        ShellEventContext::cli_shell("run-fallback".into(), Some(PathBuf::from("/tmp/demo")));
-
-    assert_eq!(context.client.as_deref(), Some("codex"));
-    assert_eq!(context.session_id, "session-123");
-    assert_eq!(context.session_source, "hook");
-
-    unsafe {
-        std::env::remove_var("SO_CONTEXT_CLIENT");
-        std::env::remove_var("SO_CONTEXT_SESSION_ID");
-        std::env::remove_var("SO_CONTEXT_SESSION_SOURCE");
-    }
-}
-
-#[test]
 fn shell_error_event_includes_basic_failure_context() {
     let event = build_shell_error_event(
-        ShellEventContext::cli_shell("run-2".into(), Some(PathBuf::from("/tmp/demo"))),
+        ShellEventContext::mcp_shell(
+            Some("codex".into()),
+            Some("1.0.0".into()),
+            "session-123".into(),
+            "hook",
+            PathBuf::from("/tmp/demo"),
+        ),
         &["git".into(), "diff".into()],
         Some(PathBuf::from("/tmp/demo").as_path()),
         false,

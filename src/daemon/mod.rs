@@ -13,17 +13,13 @@ use anyhow::{Context, Result};
 use rmcp::ServiceExt;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
-use tokio::time::{self, Duration};
-
 pub use watch_manager::WatchManager;
 
-use crate::core_event_spool::{sync_global_event_spool, sync_project_event_spool};
-use crate::core_events::{EventRecord, enqueue, persist_now};
+use crate::core_events::{EventRecord, enqueue};
 use crate::file_visit_cache::FileVisitCache;
 use crate::mcp::BuiltinServer;
 use crate::socket::{ctrl_socket_path, socket_path};
 
-const EVENT_SPOOL_SWEEP_INTERVAL: Duration = Duration::from_secs(5 * 60);
 /// The daemon runtime.
 pub struct Daemon {
     pub watch_manager: Arc<WatchManager>,
@@ -77,11 +73,6 @@ impl Daemon {
             run_ctrl_listener(ctrl_listener, wm_ctrl, fvc_ctrl).await;
         });
 
-        let wm_spool = Arc::clone(&wm);
-        tokio::spawn(async move {
-            run_event_spool_sweeper(wm_spool).await;
-        });
-
         // --- MCP accept loop ---
         loop {
             let (stream, _addr) = mcp_listener.accept().await?;
@@ -108,33 +99,6 @@ impl Daemon {
                 }
             });
         }
-    }
-}
-
-async fn run_event_spool_sweeper(wm: Arc<WatchManager>) {
-    sweep_event_spool(&wm);
-    let mut interval = time::interval(EVENT_SPOOL_SWEEP_INTERVAL);
-    loop {
-        interval.tick().await;
-        sweep_event_spool(&wm);
-    }
-}
-
-fn sweep_event_spool(wm: &WatchManager) {
-    for status in wm.status() {
-        match sync_project_event_spool(&status.path, persist_now) {
-            Ok(_count) => {}
-            Err(error) => {
-                eprintln!(
-                    "so-context daemon: event-spool sweep failed for {}: {error}",
-                    status.path.display()
-                );
-            }
-        }
-    }
-
-    if let Err(error) = sync_global_event_spool(persist_now) {
-        eprintln!("so-context daemon: global event-spool sweep failed: {error}");
     }
 }
 

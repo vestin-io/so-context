@@ -2,11 +2,8 @@
 //!
 //! PreToolUse currently serves two purposes:
 //! - inject `_so_session_id` into so-context MCP tool calls
-//! - rewrite selected native shell commands through `so-context shell`
-//!
-//! We rewrite the command input directly instead of denying and asking the
-//! agent to retry. This is more deterministic for short, one-shot commands
-//! and mirrors the "strong" shell-hook behavior used by lean-ctx.
+//! - block selected native shell commands and direct the agent to retry with
+//!   `mcp__so-context__so_shell`
 
 use anyhow::Result;
 use serde_json::{Value, json};
@@ -51,7 +48,7 @@ fn run_pre_tool_use_hook_value(input: &Value) -> Option<Value> {
     }
 
     if SHELL_TOOL_NAMES.contains(&tool_name) {
-        return rewrite_native_shell_if_needed(input);
+        return deny_native_shell_if_needed(input);
     }
 
     None
@@ -92,17 +89,17 @@ fn inject_session_id(input: &Value) -> Option<Value> {
     }))
 }
 
-fn rewrite_native_shell_if_needed(input: &Value) -> Option<Value> {
-    let (command_key, command) = if let Some(command) = input
+fn deny_native_shell_if_needed(input: &Value) -> Option<Value> {
+    let command = if let Some(command) = input
         .pointer("/tool_input/command")
         .and_then(|value| value.as_str())
     {
-        ("command", command)
+        command
     } else if let Some(command) = input
         .pointer("/tool_input/cmd")
         .and_then(|value| value.as_str())
     {
-        ("cmd", command)
+        command
     } else {
         return None;
     };
@@ -114,26 +111,20 @@ fn rewrite_native_shell_if_needed(input: &Value) -> Option<Value> {
 
     let argv = parse_simple_shell_command(command)?;
     let inspected_argv = rewrite_env_prefix(argv);
-    if is_already_so_context_shell_command(&inspected_argv) {
-        return None;
-    }
     if !should_prefer_so_shell(&inspected_argv) {
         return None;
     }
 
-    let rewritten_command = build_so_context_shell_command(input, command)?;
-    let mut tool_input = input
-        .get("tool_input")
-        .and_then(|v| v.as_object())
-        .cloned()
-        .unwrap_or_default();
-    tool_input.insert(command_key.to_string(), Value::String(rewritten_command));
+    let reason = format!(
+        "Prefer `mcp__so-context__so_shell` for this short shell command. Retry with `argv: {}`. Keep the native shell only for long-running, streaming, or interactive commands.",
+        serde_json::to_string(&inspected_argv).unwrap_or_else(|_| "[]".to_string())
+    );
 
     Some(json!({
         "hookSpecificOutput": {
             "hookEventName": PRE_TOOL_USE_EVENT,
-            "permissionDecision": "allow",
-            "updatedInput": tool_input,
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
         }
     }))
 }
@@ -268,85 +259,6 @@ fn should_keep_native_node(args: &[String]) -> bool {
     has_any_flag(args, &["--watch"])
 }
 
-fn is_already_so_context_shell_command(argv: &[String]) -> bool {
-    let Some(program) = argv.first().map(|value| value.as_str()) else {
-        return false;
-    };
-    if base_program_name(program) != "so-context" {
-        return false;
-    }
-
-    argv.get(1).map(|arg| arg.as_str()) == Some("shell")
-}
-
-fn build_so_context_shell_command(input: &Value, command: &str) -> Option<String> {
-    let binary = std::env::current_exe().ok()?;
-    let binary = binary.to_string_lossy();
-
-    let mut parts = Vec::with_capacity(8);
-    if let Some(client) = detect_hook_client(input) {
-        parts.push(format!("SO_CONTEXT_CLIENT={}", shell_quote(&client)));
-    }
-    if let Some(session_id) = hook_context_id(input) {
-        parts.push(format!(
-            "SO_CONTEXT_SESSION_ID={}",
-            shell_quote(&session_id)
-        ));
-    }
-    if let Some(agent_id) = input
-        .get("agent_id")
-        .and_then(|value| value.as_str())
-        .filter(|value| !value.trim().is_empty())
-    {
-        parts.push(format!("SO_CONTEXT_AGENT={}", shell_quote(agent_id)));
-    }
-    parts.push("SO_CONTEXT_SESSION_SOURCE=hook".to_string());
-    parts.push(shell_quote(&binary));
-    parts.push("shell".to_string());
-    parts.push("-c".to_string());
-    parts.push(shell_quote(command));
-    Some(parts.join(" "))
-}
-
-fn hook_context_id(input: &Value) -> Option<String> {
-    input
-        .get("agent_id")
-        .and_then(|value| value.as_str())
-        .filter(|value| !value.trim().is_empty())
-        .map(ToString::to_string)
-        .or_else(|| {
-            input
-                .get("session_id")
-                .and_then(|value| value.as_str())
-                .filter(|value| !value.trim().is_empty())
-                .map(ToString::to_string)
-        })
-}
-
-fn detect_hook_client(input: &Value) -> Option<String> {
-    if std::env::var("CLAUDECODE").is_ok() || input.get("agent_id").is_some() {
-        return Some("claude".to_string());
-    }
-    if std::env::var("CODEX_CLI_SESSION").is_ok() {
-        return Some("codex".to_string());
-    }
-    None
-}
-
-fn shell_quote(arg: &str) -> String {
-    if arg.is_empty() {
-        return "''".to_string();
-    }
-    if arg
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-' | ':' | '='))
-    {
-        return arg.to_string();
-    }
-
-    format!("'{}'", arg.replace('\'', r"'\''"))
-}
-
 fn has_any_flag(args: &[String], flags: &[&str]) -> bool {
     args.iter().any(|arg| flags.iter().any(|flag| arg == flag))
 }
@@ -431,69 +343,57 @@ mod tests {
     }
 
     #[test]
-    fn rewrites_short_bash_commands_through_so_context_shell() {
+    fn blocks_short_bash_commands_and_suggests_so_shell() {
         let output = hook(json!({
             "tool_name": "Bash",
             "tool_input": { "command": "git status" }
         }))
-        .expect("expected rewrite output");
+        .expect("expected deny output");
 
         assert_eq!(
             output.pointer("/hookSpecificOutput/permissionDecision"),
-            Some(&Value::String("allow".into()))
+            Some(&Value::String("deny".into()))
         );
-
-        let rewritten = output
-            .pointer("/hookSpecificOutput/updatedInput/command")
+        let reason = output
+            .pointer("/hookSpecificOutput/permissionDecisionReason")
             .and_then(|value| value.as_str())
             .unwrap();
-        assert!(rewritten.contains("so-context"));
-        assert!(rewritten.contains(" shell -c "));
-        assert!(rewritten.ends_with("'git status'"));
+        assert!(reason.contains("mcp__so-context__so_shell"));
+        assert!(reason.contains("[\"git\",\"status\"]"));
     }
 
     #[test]
-    fn rewrites_short_exec_command_aliases_too() {
+    fn blocks_short_exec_command_aliases_too() {
         let output = hook(json!({
             "tool_name": "exec_command",
             "tool_input": { "cmd": "pwd" }
         }))
-        .expect("expected rewrite output");
+        .expect("expected deny output");
 
         assert_eq!(
             output.pointer("/hookSpecificOutput/permissionDecision"),
-            Some(&Value::String("allow".into()))
+            Some(&Value::String("deny".into()))
         );
-        let rewritten = output
-            .pointer("/hookSpecificOutput/updatedInput/cmd")
+        let reason = output
+            .pointer("/hookSpecificOutput/permissionDecisionReason")
             .and_then(|value| value.as_str())
             .unwrap();
-        assert!(rewritten.contains("so-context"));
-        assert!(rewritten.ends_with("pwd"));
+        assert!(reason.contains("[\"pwd\"]"));
     }
 
     #[test]
-    fn rewrites_env_prefixed_commands() {
+    fn blocks_env_prefixed_commands() {
         let output = hook(json!({
             "tool_name": "Bash",
             "tool_input": { "command": "FOO=bar git status" }
         }))
-        .expect("expected rewrite output");
+        .expect("expected deny output");
 
-        let rewritten = output
-            .pointer("/hookSpecificOutput/updatedInput/command")
+        let reason = output
+            .pointer("/hookSpecificOutput/permissionDecisionReason")
             .and_then(|value| value.as_str())
             .unwrap();
-        assert!(rewritten.ends_with("'FOO=bar git status'"));
-    }
-
-    #[test]
-    fn does_not_rewrite_so_context_shell_again() {
-        let output = hook(json!({
-            "tool_name": "Bash",
-            "tool_input": { "command": "so-context shell -c 'ls -la'" }
-        }));
-        assert!(output.is_none());
+        assert!(reason.contains("[\"env\",\"FOO=bar\",\"git\",\"status\"]"));
     }
 
     #[test]

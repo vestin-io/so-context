@@ -12,6 +12,7 @@ const CLAUDE_RULES_FILE: &str = "so-context.md";
 const CODEX_INCLUDE_BODY: &str = r#"# so-context — Shell Guidance
 
 Prefer `mcp__so-context__so_shell` over the native `Bash` tool for short, one-shot shell commands.
+Expect short native shell calls to be blocked and retried through `mcp__so-context__so_shell`.
 Prefer compressed `so_shell` results first, and treat them as the default final answer.
 Only use `so_shell_output` when the user explicitly asks for verbatim raw output or the compressed result is missing required detail.
 Do not call `so_shell_output` just to confirm, double-check, or restate a compressed result that already answers the request.
@@ -31,6 +32,7 @@ Keep native `Bash` only for:
 const CLAUDE_RULES_BODY: &str = r#"## so-context
 
 Prefer `mcp__so-context__so_shell` over the native shell tool for short, one-shot commands.
+Expect short native shell calls to be blocked and retried through `mcp__so-context__so_shell`.
 Prefer compressed `so_shell` results first, and treat them as the default final answer.
 Only call `so_shell_output` when the user explicitly asks for verbatim raw output or the compressed result is missing required detail.
 Do not call `so_shell_output` just to confirm, double-check, or restate a compressed result that already answers the request.

@@ -4,49 +4,17 @@ use std::path::{Path, PathBuf};
 pub struct ShellInvocation {
     pub argv: Vec<String>,
     pub cwd: Option<PathBuf>,
-    pub command_string: Option<String>,
-    pub shell_program: Option<String>,
 }
 
 impl ShellInvocation {
     pub fn new(argv: Vec<String>) -> Self {
-        Self {
-            argv,
-            cwd: None,
-            command_string: None,
-            shell_program: None,
-        }
+        Self { argv, cwd: None }
     }
 
     pub fn with_cwd(argv: Vec<String>, cwd: PathBuf) -> Self {
         Self {
             argv,
             cwd: Some(cwd),
-            command_string: None,
-            shell_program: None,
-        }
-    }
-
-    pub fn shell_command(argv: Vec<String>, shell_program: String, command_string: String) -> Self {
-        Self {
-            argv,
-            cwd: None,
-            command_string: Some(command_string),
-            shell_program: Some(shell_program),
-        }
-    }
-
-    pub fn shell_command_with_cwd(
-        argv: Vec<String>,
-        shell_program: String,
-        command_string: String,
-        cwd: PathBuf,
-    ) -> Self {
-        Self {
-            argv,
-            cwd: Some(cwd),
-            command_string: Some(command_string),
-            shell_program: Some(shell_program),
         }
     }
 
@@ -62,31 +30,8 @@ impl ShellInvocation {
         self.cwd.as_deref()
     }
 
-    pub fn command_string(&self) -> Option<&str> {
-        self.command_string.as_deref()
-    }
-
-    pub fn execution_program(&self) -> &str {
-        self.shell_program
-            .as_deref()
-            .unwrap_or_else(|| self.program())
-    }
-
-    pub fn execution_args(&self) -> Vec<String> {
-        if let Some(command_string) = &self.command_string {
-            return vec![
-                crate::shell::shell_flag().to_string(),
-                command_string.clone(),
-            ];
-        }
-
-        self.args().to_vec()
-    }
-
     pub fn command_line(&self) -> String {
-        self.command_string
-            .clone()
-            .unwrap_or_else(|| Self::render_argv(&self.argv))
+        Self::render_argv(&self.argv)
     }
 
     pub(crate) fn render_argv(argv: &[String]) -> String {
