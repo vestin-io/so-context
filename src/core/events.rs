@@ -12,13 +12,15 @@
 //!
 //! How each tool populates the token fields:
 //! - `so_search`       : estimated = sum of matched files' stored token counts
-//!                       actual    = tokenizer count of result text
+//!   actual            = tokenizer count of result text
 //! - `so_read outline` : estimated = tokenizer count of full file content
-//!                       actual    = tokenizer count of outline result
-//! - `so_read graph`   : estimated = tokenizer count of full file content
-//!                       actual    = tokenizer count of graph result
+//!   actual            = tokenizer count of outline result
 //! - `so_read full`    : estimated = actual (no saving)
-//! - `so_status`       : estimated = 0, actual = tokenizer count of result text
+//! - `so_status`       : estimated = 0
+//!   actual            = tokenizer count of result text
+//! - `so_shell` / `so_shell_output`
+//!   estimated         = tokenizer count of full raw output
+//!   actual            = tokenizer count of displayed output
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -27,14 +29,15 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use rusqlite::{Connection, params};
+use serde::{Deserialize, Serialize};
 
 const EVENT_BATCH_SIZE: usize = 64;
 const EVENT_FLUSH_INTERVAL: Duration = Duration::from_millis(100);
-
+const EVENT_BUSY_TIMEOUT_MS: u64 = 1_000;
 static EVENT_TX: OnceLock<Sender<EventRecord>> = OnceLock::new();
 
 /// Returns the path to the global events database.
-pub fn events_db_path() -> PathBuf {
+fn events_db_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_default();
     PathBuf::from(home)
         .join(".local")
@@ -46,50 +49,62 @@ pub fn events_db_path() -> PathBuf {
 fn open_db() -> Result<Connection, String> {
     let path = events_db_path();
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("create events dir: {e}"))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("create events dir: {e}"))?;
     }
     let conn = Connection::open(&path).map_err(|e| format!("open events db: {e}"))?;
+    conn.execute_batch(&format!(
+        "PRAGMA journal_mode = WAL;\nPRAGMA busy_timeout = {EVENT_BUSY_TIMEOUT_MS};"
+    ))
+    .map_err(|e| format!("configure events db pragmas: {e}"))?;
     conn.execute_batch(include_str!("events_schema.sql"))
         .map_err(|e| format!("init events schema: {e}"))?;
     // Migrations: add columns introduced after initial schema.
     // ALTER TABLE fails with "duplicate column" if already present — safe to ignore.
     for sql in [
+        "ALTER TABLE events ADD COLUMN event_id TEXT",
         "ALTER TABLE events ADD COLUMN estimated_origin_size INTEGER",
         "ALTER TABLE events ADD COLUMN actual_size INTEGER",
     ] {
         let _ = conn.execute_batch(sql);
     }
+    let _ = conn.execute_batch(
+        "UPDATE events SET event_id = lower(hex(randomblob(16))) WHERE event_id IS NULL OR event_id = '';",
+    );
+    let _ = conn.execute_batch(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_events_event_id ON events(event_id);",
+    );
     Ok(conn)
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug, Serialize, Deserialize)]
 pub struct EventRecord {
-    pub client:                  Option<String>,
-    pub client_version:          Option<String>,
-    pub client_source:           String,
-    pub agent:                   Option<String>,
-    pub session_id:              String,
-    pub session_source:          String,
-    pub project:                 Option<String>,
-    pub tool:                    String,
-    pub params:                  Option<String>,
-    pub result_ok:               bool,
-    pub duration_ms:             Option<i64>,
+    pub event_id: String,
+    pub client: Option<String>,
+    pub client_version: Option<String>,
+    pub client_source: String,
+    pub agent: Option<String>,
+    pub session_id: String,
+    pub session_source: String,
+    pub project: Option<String>,
+    pub tool: String,
+    pub params: Option<String>,
+    pub result_ok: bool,
+    pub duration_ms: Option<i64>,
     pub estimated_origin_tokens: Option<i64>,
-    pub actual_tokens:           Option<i64>,
-    pub estimated_origin_size:   Option<i64>,
-    pub actual_size:             Option<i64>,
+    pub actual_tokens: Option<i64>,
+    pub estimated_origin_size: Option<i64>,
+    pub actual_size: Option<i64>,
 }
 
 impl EventRecord {
     pub fn new(session_id: &str, tool: &str) -> Self {
         Self {
-            client_source:  "fallback".to_string(),
-            session_id:     session_id.to_string(),
+            event_id: uuid::Uuid::new_v4().to_string(),
+            client_source: "fallback".to_string(),
+            session_id: session_id.to_string(),
             session_source: "fallback".to_string(),
-            tool:           tool.to_string(),
-            result_ok:      true,
+            tool: tool.to_string(),
+            result_ok: true,
             ..Default::default()
         }
     }
@@ -171,33 +186,7 @@ fn flush_batch(conn: &Connection, batch: &mut Vec<EventRecord>) {
     };
 
     for ev in batch.iter() {
-        if let Err(e) = tx.execute(
-            "INSERT INTO events(
-                client, client_version, client_source,
-                agent,
-                session_id, session_source, project, tool, params,
-                result_ok, duration_ms,
-                estimated_origin_tokens, actual_tokens,
-                estimated_origin_size, actual_size
-             ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
-            params![
-                ev.client,
-                ev.client_version,
-                ev.client_source,
-                ev.agent,
-                ev.session_id,
-                ev.session_source,
-                ev.project,
-                ev.tool,
-                ev.params,
-                ev.result_ok as i32,
-                ev.duration_ms,
-                ev.estimated_origin_tokens,
-                ev.actual_tokens,
-                ev.estimated_origin_size,
-                ev.actual_size,
-            ],
-        ) {
+        if let Err(e) = insert_event(&tx, ev) {
             eprintln!("so-context events: insert failed: {e}");
         }
     }
@@ -208,205 +197,46 @@ fn flush_batch(conn: &Connection, batch: &mut Vec<EventRecord>) {
     batch.clear();
 }
 
+fn insert_event(conn: &Connection, event: &EventRecord) -> rusqlite::Result<usize> {
+    conn.execute(
+        "INSERT OR IGNORE INTO events(
+            event_id,
+            client, client_version, client_source,
+            agent,
+            session_id, session_source, project, tool, params,
+            result_ok, duration_ms,
+            estimated_origin_tokens, actual_tokens,
+            estimated_origin_size, actual_size
+         ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
+        params![
+            event.event_id,
+            event.client,
+            event.client_version,
+            event.client_source,
+            event.agent,
+            event.session_id,
+            event.session_source,
+            event.project,
+            event.tool,
+            event.params,
+            event.result_ok as i32,
+            event.duration_ms,
+            event.estimated_origin_tokens,
+            event.actual_tokens,
+            event.estimated_origin_size,
+            event.actual_size,
+        ],
+    )
+}
+
 /// Convenience timer — wrap around a tool call to auto-measure duration.
 pub struct Timer(Instant);
 
 impl Timer {
-    pub fn start() -> Self { Self(Instant::now()) }
-    pub fn elapsed_ms(&self) -> i64 { self.0.elapsed().as_millis() as i64 }
-}
-
-pub struct EventRow {
-    pub id:                      i64,
-    pub ts:                      String,
-    pub client:                  Option<String>,
-    pub client_version:          Option<String>,
-    pub client_source:           String,
-    pub agent:                   Option<String>,
-    pub session_id:              String,
-    pub session_source:          String,
-    pub project:                 Option<String>,
-    pub tool:                    String,
-    pub params:                  Option<String>,
-    pub result_ok:               bool,
-    pub duration_ms:             Option<i64>,
-    pub estimated_origin_tokens: Option<i64>,
-    pub actual_tokens:           Option<i64>,
-    pub estimated_origin_size:   Option<i64>,
-    pub actual_size:             Option<i64>,
-}
-
-impl EventRow {
-    pub fn tokens_saved(&self) -> Option<i64> {
-        match (self.estimated_origin_tokens, self.actual_tokens) {
-            (Some(e), Some(a)) => Some(e - a),
-            _ => None,
-        }
+    pub fn start() -> Self {
+        Self(Instant::now())
     }
-}
-
-pub struct EventQuery {
-    pub client:     Option<String>,
-    pub session_id: Option<String>,
-    pub tool:       Option<String>,
-    pub project:    Option<String>,
-    pub limit:      usize,
-}
-
-impl Default for EventQuery {
-    fn default() -> Self {
-        Self { client: None, session_id: None, tool: None, project: None, limit: 50 }
+    pub fn elapsed_ms(&self) -> i64 {
+        self.0.elapsed().as_millis() as i64
     }
-}
-
-pub fn query_events(q: &EventQuery) -> Result<Vec<EventRow>, String> {
-    let conn = open_db()?;
-
-    let mut conditions: Vec<String> = Vec::new();
-    let mut values: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-
-    if let Some(a) = &q.client {
-        conditions.push(format!("client = ?{}", values.len() + 1));
-        values.push(Box::new(a.clone()));
-    }
-    if let Some(s) = &q.session_id {
-        conditions.push(format!("session_id = ?{}", values.len() + 1));
-        values.push(Box::new(s.clone()));
-    }
-    if let Some(t) = &q.tool {
-        conditions.push(format!("tool = ?{}", values.len() + 1));
-        values.push(Box::new(t.clone()));
-    }
-    if let Some(p) = &q.project {
-        conditions.push(format!("project = ?{}", values.len() + 1));
-        values.push(Box::new(p.clone()));
-    }
-
-    let where_clause = if conditions.is_empty() {
-        String::new()
-    } else {
-        format!("WHERE {}", conditions.join(" AND "))
-    };
-
-    values.push(Box::new(q.limit as i64));
-    let limit_param = values.len();
-
-    let sql = format!(
-        "SELECT id, ts, client, client_version, client_source,
-                agent, session_id, session_source, project, tool, params,
-                result_ok, duration_ms,
-                estimated_origin_tokens, actual_tokens,
-                estimated_origin_size, actual_size
-         FROM events
-         {where_clause}
-         ORDER BY ts DESC
-         LIMIT ?{limit_param}"
-    );
-
-    let refs: Vec<&dyn rusqlite::ToSql> = values.iter().map(|v| v.as_ref()).collect();
-
-    let mut stmt = conn.prepare(&sql).map_err(|e| format!("prepare: {e}"))?;
-    let rows = stmt
-        .query_map(refs.as_slice(), |row| {
-            Ok(EventRow {
-                id:                      row.get(0)?,
-                ts:                      row.get(1)?,
-                client:                  row.get(2)?,
-                client_version:          row.get(3)?,
-                client_source:           row.get(4)?,
-                agent:                   row.get(5)?,
-                session_id:              row.get(6)?,
-                session_source:          row.get(7)?,
-                project:                 row.get(8)?,
-                tool:                    row.get(9)?,
-                params:                  row.get(10)?,
-                result_ok:               row.get::<_, i32>(11)? != 0,
-                duration_ms:             row.get(12)?,
-                estimated_origin_tokens: row.get(13)?,
-                actual_tokens:           row.get(14)?,
-                estimated_origin_size:   row.get(15)?,
-                actual_size:             row.get(16)?,
-            })
-        })
-        .map_err(|e| format!("query: {e}"))?;
-
-    let mut out = Vec::new();
-    for row in rows {
-        out.push(row.map_err(|e| format!("row: {e}"))?);
-    }
-    Ok(out)
-}
-
-pub fn query_stats(client: Option<&str>, session_id: Option<&str>) -> Result<String, String> {
-    let conn = open_db()?;
-
-    let mut conditions = Vec::new();
-    let mut vals: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-    if let Some(a) = client {
-        conditions.push(format!("client = ?{}", vals.len() + 1));
-        vals.push(Box::new(a.to_string()));
-    }
-    if let Some(s) = session_id {
-        conditions.push(format!("session_id = ?{}", vals.len() + 1));
-        vals.push(Box::new(s.to_string()));
-    }
-    let where_clause = if conditions.is_empty() {
-        String::new()
-    } else {
-        format!("WHERE {}", conditions.join(" AND "))
-    };
-
-    let sql = format!(
-        "SELECT tool,
-                COUNT(*) as calls,
-                SUM(COALESCE(estimated_origin_tokens, 0) - COALESCE(actual_tokens, 0)) as tokens_saved,
-                SUM(COALESCE(actual_tokens, 0)) as tokens_used,
-                SUM(COALESCE(estimated_origin_size, 0) - COALESCE(actual_size, 0)) as bytes_saved,
-                SUM(COALESCE(actual_size, 0)) as bytes_used
-         FROM events {where_clause}
-         GROUP BY tool
-         ORDER BY tokens_saved DESC"
-    );
-
-    let refs: Vec<&dyn rusqlite::ToSql> = vals.iter().map(|v| v.as_ref()).collect();
-    let mut stmt = conn.prepare(&sql).map_err(|e| format!("prepare stats: {e}"))?;
-
-    let rows = stmt
-        .query_map(refs.as_slice(), |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, i64>(2)?,
-                row.get::<_, i64>(3)?,
-                row.get::<_, i64>(4)?,
-                row.get::<_, i64>(5)?,
-            ))
-        })
-        .map_err(|e| format!("query stats: {e}"))?;
-
-    let mut lines = vec!["tool            calls   tokens_saved   tokens_used   bytes_saved   bytes_used".to_string()];
-    let mut total_tokens_saved = 0i64;
-    let mut total_tokens_used  = 0i64;
-    let mut total_bytes_saved  = 0i64;
-    let mut total_bytes_used   = 0i64;
-    let mut total_calls        = 0i64;
-
-    for row in rows {
-        let (tool, calls, tokens_saved, tokens_used, bytes_saved, bytes_used) =
-            row.map_err(|e| format!("row: {e}"))?;
-        lines.push(format!(
-            "{tool:<16} {calls:>5}   {tokens_saved:>12}   {tokens_used:>11}   {bytes_saved:>11}   {bytes_used:>10}"
-        ));
-        total_calls        += calls;
-        total_tokens_saved += tokens_saved;
-        total_tokens_used  += tokens_used;
-        total_bytes_saved  += bytes_saved;
-        total_bytes_used   += bytes_used;
-    }
-
-    lines.push(format!(
-        "{:<16} {:>5}   {:>12}   {:>11}   {:>11}   {:>10}",
-        "TOTAL", total_calls, total_tokens_saved, total_tokens_used, total_bytes_saved, total_bytes_used
-    ));
-    Ok(lines.join("\n"))
 }

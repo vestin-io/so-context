@@ -53,3 +53,40 @@ fn summarizes_diff_stats() {
         "src/main.rs (+2/-1, 1 hunk) — @@ -1,2 +1,3 @@ | -old | +new | +extra"
     );
 }
+
+#[test]
+fn keeps_all_changed_files_in_diff_details() {
+    let result = ShellResult {
+        invocation: ShellInvocation::new(vec!["git".into(), "diff".into()]),
+        stdout: concat!(
+            "diff --git a/src/a.rs b/src/a.rs\n",
+            "@@ -1 +1 @@\n-old_a\n+new_a\n",
+            "diff --git a/src/b.rs b/src/b.rs\n",
+            "@@ -1 +1 @@\n-old_b\n+new_b\n",
+            "diff --git a/src/c.rs b/src/c.rs\n",
+            "@@ -1 +1 @@\n-old_c\n+new_c\n",
+            "diff --git a/src/d.rs b/src/d.rs\n",
+            "@@ -1 +1 @@\n-old_d\n+new_d\n",
+            "diff --git a/src/e.rs b/src/e.rs\n",
+            "@@ -1 +1 @@\n-old_e\n+new_e\n"
+        )
+        .into(),
+        stderr: String::new(),
+        exit_code: 0,
+    };
+
+    let summary = diff::summarize(&result);
+    assert_eq!(summary.details.len(), 5);
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.starts_with("src/a.rs"))
+    );
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.starts_with("src/e.rs"))
+    );
+}

@@ -7,10 +7,11 @@
 //! agent session.
 //!
 //! **Bridge** (`run_mcp_bridge`): a thin stdio ↔ Unix-socket pipe spawned by
-//! each agent session (`so-context mcp`).  It has zero MCP logic — it just
-//! forwards bytes in both directions, and injects three metadata fields
-//! (`_so_client`, `_so_client_version`, `_so_session_id`) into any
-//! `tools/call` request before forwarding, so the daemon can attribute events.
+//! each agent session (`so-context mcp`). It has zero MCP logic and forwards
+//! bytes unchanged in both directions. Session attribution comes from the
+//! MCP handshake (`client_info`) plus the agent-side PreToolUse hook that
+//! injects `_so_session_id` into so-context tool calls before they reach
+//! the bridge.
 //!
 //! # Auto-discovery hooks (inside BuiltinServer)
 //!
@@ -29,7 +30,8 @@ pub mod tools;
 use std::sync::Arc;
 
 use anyhow::Result;
-use rmcp::{    RoleServer, ServerHandler,
+use rmcp::{
+    RoleServer, ServerHandler,
     handler::server::{router::tool::ToolRouter, tool::ToolCallContext},
     model::{
         CallToolRequestParams, CallToolResult, ClientCapabilities, ErrorData,
@@ -43,8 +45,8 @@ use uuid::Uuid;
 
 use crate::daemon::WatchManager;
 use crate::daemon::watch_manager::file_uri_to_path;
-use crate::socket::{ctrl_socket_path, socket_path};
 use crate::file_visit_cache::FileVisitCache;
+use crate::socket::{ctrl_socket_path, socket_path};
 
 const ROOTS_LIST_TIMEOUT_MS: u64 = 5_000;
 
@@ -57,15 +59,6 @@ const ROOTS_LIST_TIMEOUT_MS: u64 = 5_000;
 /// Called by the PostCompact hook handler after context compaction so the
 /// daemon drops all file-visit cache entries for that session.
 pub async fn send_compact_reset(connection_id: &str, session_id: &str) -> Result<()> {
-    use tokio::io::AsyncWriteExt;
-    use tokio::net::UnixStream;
-
-    let sock = ctrl_socket_path();
-    if !sock.exists() {
-        // Daemon not running — nothing to reset, that's fine.
-        return Ok(());
-    }
-
     let msg = serde_json::json!({
         "jsonrpc": "2.0",
         "method": "compact_reset",
@@ -74,17 +67,7 @@ pub async fn send_compact_reset(connection_id: &str, session_id: &str) -> Result
             "session_id":    session_id,
         }
     });
-
-    let mut line = serde_json::to_string(&msg)?;
-    line.push('\n');
-
-    let mut stream = UnixStream::connect(&sock)
-        .await
-        .map_err(|e| anyhow::anyhow!("connect to ctrl socket: {e}"))?;
-    stream.write_all(line.as_bytes()).await
-        .map_err(|e| anyhow::anyhow!("write to ctrl socket: {e}"))?;
-
-    Ok(())
+    send_ctrl_message(&msg, true).await
 }
 
 /// Sends a JSON-RPC notification to the daemon's ctrl socket.
@@ -96,15 +79,6 @@ pub async fn send_ctrl_request(
     client: Option<&str>,
     session_id: Option<&str>,
 ) -> Result<()> {
-    use tokio::io::AsyncWriteExt;
-    use tokio::net::UnixStream;
-
-    let sock = ctrl_socket_path();
-    if !sock.exists() {
-        eprintln!("so-context: daemon not running, skipping {method} for {path}");
-        return Ok(());
-    }
-
     let abs_path = if std::path::Path::new(path).is_absolute() {
         path.to_string()
     } else {
@@ -122,14 +96,39 @@ pub async fn send_ctrl_request(
             "session_id": session_id,
         }
     });
+    send_ctrl_message(&msg, false).await
+}
 
-    let mut line = serde_json::to_string(&msg)?;
+async fn send_ctrl_message(msg: &serde_json::Value, silent_if_missing: bool) -> Result<()> {
+    use tokio::io::AsyncWriteExt;
+    use tokio::net::UnixStream;
+
+    let sock = ctrl_socket_path();
+    if !sock.exists() {
+        if silent_if_missing {
+            return Ok(());
+        }
+        let method = msg
+            .get("method")
+            .and_then(|v| v.as_str())
+            .unwrap_or("request");
+        let path = msg
+            .pointer("/params/path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        eprintln!("so-context: daemon not running, skipping {method} for {path}");
+        return Ok(());
+    }
+
+    let mut line = serde_json::to_string(msg)?;
     line.push('\n');
 
     let mut stream = UnixStream::connect(&sock)
         .await
         .map_err(|e| anyhow::anyhow!("connect to ctrl socket: {e}"))?;
-    stream.write_all(line.as_bytes()).await
+    stream
+        .write_all(line.as_bytes())
+        .await
         .map_err(|e| anyhow::anyhow!("write to ctrl socket: {e}"))?;
 
     Ok(())
@@ -153,18 +152,24 @@ pub async fn run_mcp_bridge() -> Result<()> {
         let mut connected = None;
         for _ in 0..20 {
             match UnixStream::connect(&sock).await {
-                Ok(s) => { connected = Some(s); break; }
+                Ok(s) => {
+                    connected = Some(s);
+                    break;
+                }
                 Err(e) => {
                     last_err = e.to_string();
                     tokio::time::sleep(std::time::Duration::from_millis(250)).await;
                 }
             }
         }
-        connected.ok_or_else(|| anyhow::anyhow!(
-            "so-context daemon is not running (could not connect to {}: {}).\n\
+        connected.ok_or_else(|| {
+            anyhow::anyhow!(
+                "so-context daemon is not running (could not connect to {}: {}).\n\
              Start it with: so-context daemon",
-            sock.display(), last_err
-        ))?
+                sock.display(),
+                last_err
+            )
+        })?
     };
 
     let (mut sock_read, mut sock_write) = tokio::io::split(stream);
@@ -213,9 +218,11 @@ pub struct BuiltinServer {
 impl BuiltinServer {
     pub fn new(wm: Arc<WatchManager>, file_visit_cache: FileVisitCache) -> Self {
         let mut tool_router = ToolRouter::<Self>::new();
-        tool_router.add_route(tools::read::route());
-        tool_router.add_route(tools::references::route());
-        tool_router.add_route(tools::search::route());
+        tool_router.add_route(tools::read::route(Arc::clone(&wm)));
+        tool_router.add_route(tools::references::route(Arc::clone(&wm)));
+        tool_router.add_route(tools::search::route(Arc::clone(&wm)));
+        tool_router.add_route(tools::shell::route(Arc::clone(&wm)));
+        tool_router.add_route(tools::shell_output::route());
         tool_router.add_route(tools::status::route(Arc::clone(&wm)));
 
         Self {
@@ -229,9 +236,15 @@ impl BuiltinServer {
         }
     }
 
-    pub fn client(&self) -> Option<String> { self.client.lock().unwrap().clone() }
-    pub fn client_version(&self) -> Option<String> { self.client_version.lock().unwrap().clone() }
-    pub fn connection_id(&self) -> String { self.connection_id.lock().unwrap().clone() }
+    pub fn client(&self) -> Option<String> {
+        self.client.lock().unwrap().clone()
+    }
+    pub fn client_version(&self) -> Option<String> {
+        self.client_version.lock().unwrap().clone()
+    }
+    pub fn connection_id(&self) -> String {
+        self.connection_id.lock().unwrap().clone()
+    }
 }
 
 impl ServerHandler for BuiltinServer {
@@ -241,9 +254,8 @@ impl ServerHandler for BuiltinServer {
         &self,
         request: InitializeRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> impl std::future::Future<Output = Result<InitializeResult, ErrorData>>
-           + MaybeSendFuture
-           + '_ {
+    ) -> impl std::future::Future<Output = Result<InitializeResult, ErrorData>> + MaybeSendFuture + '_
+    {
         let supports_roots = matches!(
             &request.capabilities,
             ClientCapabilities { roots: Some(_), .. }
@@ -370,9 +382,8 @@ impl ServerHandler for BuiltinServer {
         &self,
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> impl std::future::Future<Output = Result<CallToolResult, ErrorData>>
-           + MaybeSendFuture
-           + '_ {
+    ) -> impl std::future::Future<Output = Result<CallToolResult, ErrorData>> + MaybeSendFuture + '_
+    {
         async move {
             self.tool_router
                 .call(ToolCallContext::new(self, request, context))
@@ -383,27 +394,35 @@ impl ServerHandler for BuiltinServer {
     // Metadata
 
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_instructions(
-                "so-context MCP server.\n\
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
+            "so-context MCP server.\n\
 \n\
 Projects are auto-discovered from workspace roots on connect — no setup needed.\n\
 \n\
+Prefer so_shell over native shell tools for short, one-shot commands.\n\
+Use compressed so_shell output as the default and preferred final answer.\n\
+Only call so_shell_output when the user explicitly asks for verbatim raw output or the compressed summary is missing required detail.\n\
+Do not call so_shell_output just to confirm, double-check, or restate a compressed result that already answers the request.\n\
+The text content returned by so_shell or so_shell_output is the actual command output. Read and use that text directly; do not rerun the same command in native shell just to confirm stdout unless the result is empty or the user explicitly asks for a rerun.\n\
+Do not set full=true on the first so_shell call. Sequence is strict: compressed so_shell first, then so_shell_output, and only if tee is unavailable may you rerun so_shell with full=true and full_reason=tee_missing_or_expired.\n\
+Keep native shell only for long-running, streaming, or interactive commands.\n\
+\n\
 Tools:\n\
-  so_read        — read a file (mode: full / outline / graph)\n\
-  so_search      — FTS search over an indexed project graph\n\
-  so_references  — find all usages of a symbol (callers/callees/imports/all)\n\
-  so_status      — list all watched projects and their current state",
-            )
+  so_read         — read a file (mode: full / outline)\n\
+  so_search       — FTS search over an indexed project graph\n\
+  so_shell        — run a local shell command and return compressed output\n\
+  so_shell_output — fetch cached raw output from a prior so_shell run_id\n\
+  so_references   — find all usages of a symbol (callers/callees/imports/all)\n\
+  so_status       — list all watched projects and their current state",
+        )
     }
 
     fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
-    ) -> impl std::future::Future<Output = Result<ListToolsResult, ErrorData>>
-           + MaybeSendFuture
-           + '_ {
+    ) -> impl std::future::Future<Output = Result<ListToolsResult, ErrorData>> + MaybeSendFuture + '_
+    {
         async move {
             Ok(ListToolsResult {
                 tools: self.tool_router.list_all(),

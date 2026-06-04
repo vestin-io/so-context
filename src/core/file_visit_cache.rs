@@ -119,12 +119,7 @@ impl FileVisitCache {
     /// Remove a single file entry from the given connection + context window.
     ///
     /// Returns `true` if the entry existed and was removed, `false` otherwise.
-    pub fn expire_file(
-        &self,
-        connection_id: &str,
-        cw_id: &str,
-        file_path: &str,
-    ) -> bool {
+    pub fn expire_file(&self, connection_id: &str, cw_id: &str, file_path: &str) -> bool {
         let mut guard = self.inner.lock().unwrap();
         guard
             .data
@@ -137,11 +132,7 @@ impl FileVisitCache {
     /// Remove all file entries for a specific context window within a connection.
     ///
     /// Returns `true` if the context window existed and was removed.
-    pub fn delete_context_window(
-        &self,
-        connection_id: &str,
-        cw_id: &str,
-    ) -> bool {
+    pub fn delete_context_window(&self, connection_id: &str, cw_id: &str) -> bool {
         let mut guard = self.inner.lock().unwrap();
         guard
             .data
@@ -164,12 +155,7 @@ impl FileVisitCache {
 
     /// Return `true` if the file has been visited within this connection +
     /// context window.
-    pub fn is_visited(
-        &self,
-        connection_id: &str,
-        cw_id: &str,
-        file_path: &str,
-    ) -> bool {
+    pub fn is_visited(&self, connection_id: &str, cw_id: &str, file_path: &str) -> bool {
         let guard = self.inner.lock().unwrap();
         guard
             .data
@@ -180,12 +166,7 @@ impl FileVisitCache {
     }
 
     /// Return the `FileEntry` for the given file, if it exists.
-    pub fn get_file(
-        &self,
-        connection_id: &str,
-        cw_id: &str,
-        file_path: &str,
-    ) -> Option<FileEntry> {
+    pub fn get_file(&self, connection_id: &str, cw_id: &str, file_path: &str) -> Option<FileEntry> {
         let guard = self.inner.lock().unwrap();
         guard
             .data
@@ -198,11 +179,7 @@ impl FileVisitCache {
     /// Return all file entries for the given connection + context window.
     ///
     /// Returns an empty `Vec` if the key pair does not exist.
-    pub fn list_files(
-        &self,
-        connection_id: &str,
-        cw_id: &str,
-    ) -> Vec<FileEntry> {
+    pub fn list_files(&self, connection_id: &str, cw_id: &str) -> Vec<FileEntry> {
         let guard = self.inner.lock().unwrap();
         guard
             .data
@@ -225,11 +202,7 @@ impl FileVisitCache {
     /// Return the total number of unique (connection, cw) pairs.
     pub fn len(&self) -> usize {
         let guard = self.inner.lock().unwrap();
-        guard
-            .data
-            .values()
-            .map(|cw_map| cw_map.len())
-            .sum()
+        guard.data.values().map(|cw_map| cw_map.len()).sum()
     }
 
     /// Return `true` when the cache contains no entries at all.

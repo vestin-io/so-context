@@ -22,10 +22,34 @@ Five separate techniques exist to fix this. They all work. None of them talk to 
 | Incremental sync + multi-project watch | ✅ |
 | Multi-agent auto-discovery | ✅ |
 | Repeat-read deduplication | Planned |
-| Shell output compression | Planned |
+| Shell output compression | ✅ |
 | Large-output FTS offloading | Planned |
 | MCP tool description shrinking | Planned |
 | MCP stdio transparent proxy | Planned |
+
+---
+
+## Installation
+
+```sh
+# Quick install (GitHub release when available, cargo fallback)
+curl -fsSL https://raw.githubusercontent.com/vestin-io/so-context/main/scripts/install.sh | sh
+
+# Homebrew (HEAD formula)
+brew install --HEAD https://raw.githubusercontent.com/vestin-io/so-context/main/Formula/so-context.rb
+
+# Cargo
+cargo install --git https://github.com/vestin-io/so-context so-context
+```
+
+After install:
+
+```sh
+so-context setup
+```
+
+`setup` installs the MCP server, registers agent hooks, and adds global agent instructions that prefer `so_shell` for short, one-shot shell commands.
+Short native shell calls are blocked and should be retried through the MCP `so_shell` tool.
 
 ---
 
@@ -34,7 +58,7 @@ Five separate techniques exist to fix this. They all work. None of them talk to 
 ### Daemon (MCP server)
 
 ```sh
-cargo run -- daemon
+so-context daemon
 ```
 
 Add to your agent's MCP config:
@@ -44,7 +68,7 @@ Add to your agent's MCP config:
   "mcpServers": {
     "so-context": {
       "command": "so-context",
-      "args": ["daemon"]
+      "args": ["mcp"]
     }
   }
 }
@@ -55,32 +79,23 @@ The daemon auto-discovers your project on first tool call — no path configurat
 ### One-shot index
 
 ```sh
-cargo run -- index [path]
+so-context index [path]
 ```
 
 ### Foreground watch (single project)
 
 ```sh
-cargo run -- watch [path]
+so-context watch [path]
 ```
-
-### Shell compression
-
-```sh
-cargo run -- shell -- git diff
-cargo run -- shell --full -- git diff
-```
-
-Supported commands are tracked in [docs/shell-support.md](/Users/jiatwork/Works/so-context/docs/shell-support.md).
-
----
 
 ## MCP tools
 
 | Tool | Description |
 |---|---|
-| `so_read` | Read a file. `mode`: `full` (default), `outline`, `graph` (triggers index) |
+| `so_read` | Read a file. `mode`: `full` (default) or `outline` |
 | `so_search` | FTS search over the indexed code graph |
+| `so_references` | Find callers, callees, imports, or all references for a named symbol |
+| `so_shell` | Run a local shell command and return compressed output |
 | `so_status` | List all auto-discovered projects and their sync state |
 
 ---
@@ -90,7 +105,7 @@ Supported commands are tracked in [docs/shell-support.md](/Users/jiatwork/Works/
 ```sh
 cargo build
 cargo check
-cargo run -- daemon
+so-context daemon
 ```
 
 ---

@@ -7,25 +7,33 @@ use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::model::{CallToolResult, Content, JsonObject, Tool};
 
 use super::BuiltinServer;
+use super::resolve_project_path_arg;
 use crate::core_events::{EventRecord, Timer, enqueue};
 use crate::core_graph;
 use crate::core_tokens::count_tokens;
+use crate::daemon::WatchManager;
 
-pub fn route() -> ToolRoute<BuiltinServer> {
+pub fn route(wm: Arc<WatchManager>) -> ToolRoute<BuiltinServer> {
     ToolRoute::new_dyn(
         Tool::new(
             "so_search",
-            "Search indexed project code graph (FTS). Run graph_watch or so_read(mode=graph) first.",
+            "Search the indexed project code graph (FTS). Index the project first if results are missing or stale.",
             schema(),
         ),
-        |ctx| Box::pin(async move { handler(ctx) }),
+        move |ctx| {
+            let wm = Arc::clone(&wm);
+            Box::pin(async move { handler(ctx, &wm) })
+        },
     )
 }
 
-fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rmcp::ErrorData> {
-    let client         = ctx.service.client();
+fn handler(
+    ctx: ToolCallContext<'_, BuiltinServer>,
+    wm: &WatchManager,
+) -> Result<CallToolResult, rmcp::ErrorData> {
+    let client = ctx.service.client();
     let client_version = ctx.service.client_version();
-    let connection_id  = ctx.service.connection_id();
+    let connection_id = ctx.service.connection_id();
 
     let args = ctx
         .arguments
@@ -39,7 +47,7 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
         .filter(|s| !s.is_empty())
     {
         Some(sid) => (sid.to_string(), "hook"),
-        None      => (connection_id,   "connection"),
+        None => (connection_id.clone(), "connection"),
     };
 
     let query = args
@@ -47,10 +55,8 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| rmcp::ErrorData::invalid_params("missing string argument: query", None))?;
 
-    let path = args
-        .get("path")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or(".");
+    let path = resolve_project_path_arg(&args, "path", &client, &connection_id, &wm.status())?;
+    let path_display = path.display().to_string();
 
     let limit = args
         .get("limit")
@@ -58,25 +64,27 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
         .unwrap_or(20) as usize;
 
     let timer = Timer::start();
-    let call_result = core_graph::search_project_with_stats(path, query, limit);
+    let call_result = core_graph::search_project_with_stats(&path_display, query, limit);
     let duration_ms = timer.elapsed_ms();
 
     let mut ev = EventRecord::new(&session_id, "so_search");
-    ev.client         = client;
+    ev.client = client;
     ev.client_version = client_version;
-    ev.client_source  = "client_info".to_string();
+    ev.client_source = "client_info".to_string();
     ev.session_source = session_source.to_string();
-    ev.project     = Some(path.to_string());
-    ev.params      = Some(serde_json::json!({ "query": query, "path": path, "limit": limit }).to_string());
+    ev.project = Some(path_display.clone());
+    ev.params = Some(
+        serde_json::json!({ "query": query, "path": path_display, "limit": limit }).to_string(),
+    );
     ev.duration_ms = Some(duration_ms);
 
     match call_result {
         Ok((output, matched_files_tokens, matched_files_size)) => {
-            ev.actual_tokens           = Some(count_tokens(&output));
+            ev.actual_tokens = Some(count_tokens(&output));
             ev.estimated_origin_tokens = Some(matched_files_tokens);
-            ev.actual_size             = Some(output.len() as i64);
-            ev.estimated_origin_size   = Some(matched_files_size);
-            ev.result_ok               = true;
+            ev.actual_size = Some(output.len() as i64);
+            ev.estimated_origin_size = Some(matched_files_size);
+            ev.result_ok = true;
             enqueue(ev);
             Ok(CallToolResult::success(vec![Content::text(output)]))
         }
@@ -94,7 +102,10 @@ fn schema() -> Arc<JsonObject> {
             "type": "object",
             "properties": {
                 "query": { "type": "string" },
-                "path": { "type": "string", "default": "." },
+                "path": {
+                    "type": "string",
+                    "description": "Project root path. Defaults to the sole watched project for the current MCP connection."
+                },
                 "limit": { "type": "integer", "minimum": 1, "maximum": 200, "default": 20 },
                 "_so_session_id": {
                     "type": "string",

@@ -6,7 +6,13 @@ use self::analyze::{SummaryDetails, stream_source, summarize_env_vars, summarize
 use self::listing::summarize_ls_entries;
 use self::search::summarize_search_hits;
 use super::super::types::{CompressionSummary, ShellPattern, ShellResult};
-use super::text::{non_empty_lines, preferred_output, preview, sample_lines};
+use super::text::{
+    append_omitted_line, non_empty_lines, preferred_output, preview, sample_lines, truncate_text,
+};
+
+const FALLBACK_PASSTHROUGH_THRESHOLD: usize = 40;
+const SCRIPT_PASSTHROUGH_THRESHOLD: usize = 80;
+const TEXT_TRANSFORM_PASSTHROUGH_THRESHOLD: usize = 120;
 
 fn summarize_ls(result: &ShellResult) -> CompressionSummary {
     let entries = non_empty_lines(&result.stdout);
@@ -120,24 +126,18 @@ pub(super) fn summarize_fallback(
     result: &ShellResult,
     pattern: ShellPattern,
 ) -> CompressionSummary {
-    let details = non_empty_lines(&result.stdout);
+    let program = result.invocation.program();
+    let output = preferred_output(result);
+    let details = non_empty_lines(&output);
+    let threshold = fallback_passthrough_threshold(program);
+    let shown = details.len().min(threshold);
+    let mut rendered_details = sample_lines(details.clone(), threshold);
+    append_omitted_line(&mut rendered_details, details.len(), shown, "lines");
 
     CompressionSummary::new(
         pattern,
-        format!(
-            "stdout_lines={}; stderr_lines={}",
-            result
-                .stdout
-                .lines()
-                .filter(|line| !line.trim().is_empty())
-                .count(),
-            result
-                .stderr
-                .lines()
-                .filter(|line| !line.trim().is_empty())
-                .count()
-        ),
-        sample_lines(details, 8),
+        fallback_summary(result, program, &details),
+        rendered_details,
         preview(&result.stderr),
         result,
     )
@@ -215,6 +215,48 @@ fn looks_like_json(text: &str) -> bool {
     (text.starts_with('{') && text.ends_with('}'))
         || (text.starts_with('[') && text.ends_with(']'))
         || (text.starts_with('"') && text.ends_with('"') && text.len() >= 2)
+}
+
+fn fallback_passthrough_threshold(program: &str) -> usize {
+    match program {
+        "jq" | "sed" => TEXT_TRANSFORM_PASSTHROUGH_THRESHOLD,
+        "sh" | "bash" | "zsh" => SCRIPT_PASSTHROUGH_THRESHOLD,
+        _ => FALLBACK_PASSTHROUGH_THRESHOLD,
+    }
+}
+
+fn fallback_summary(result: &ShellResult, program: &str, details: &[String]) -> String {
+    let bytes = result.render_full().len();
+    let stdout_lines = non_empty_lines(&result.stdout).len();
+    let stderr_lines = non_empty_lines(&result.stderr).len();
+    let line_count = details.len();
+
+    if line_count == 0 {
+        return "no output".to_string();
+    }
+
+    if program == "jq" && looks_like_json(result.stdout.trim()) {
+        return if line_count == 1 {
+            format!("JSON output | {bytes}B")
+        } else {
+            format!("JSON output | {line_count} lines | {bytes}B")
+        };
+    }
+
+    if stderr_lines > 0 && stdout_lines == 0 {
+        return format!("{stderr_lines} stderr lines | {bytes}B");
+    }
+
+    if stdout_lines > 0 && stderr_lines == 0 {
+        return if line_count == 1 {
+            format!("1 line | {bytes}B")
+        } else {
+            format!("{line_count} lines | {bytes}B")
+        };
+    }
+
+    let lead = truncate_text(details.first().map(String::as_str).unwrap_or(""), 80);
+    format!("{line_count} lines | {stderr_lines} stderr lines | {lead}")
 }
 
 fn infer_wget_filename(stderr: &str, args: &[String]) -> Option<String> {

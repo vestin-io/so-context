@@ -25,7 +25,7 @@ fn suppresses_success_stderr_noise_for_cargo_build() {
         invocation: ShellInvocation::new(vec!["cargo".into(), "build".into()]),
         stdout: String::new(),
         stderr: concat!(
-            "   Compiling shell_audit_fixture v0.1.0 (/tmp/demo)\n",
+            "   Compiling demo_fixture v0.1.0 (/tmp/demo)\n",
             "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.75s\n",
         )
         .into(),
@@ -133,11 +133,11 @@ fn keeps_only_warning_preview_for_successful_cargo_install() {
         invocation: ShellInvocation::new(vec!["cargo".into(), "install".into(), "--path".into(), ".".into()]),
         stdout: String::new(),
         stderr: concat!(
-            "  Installing shell_audit_fixture v0.1.0 (/tmp/demo)\n",
-            "   Compiling shell_audit_fixture v0.1.0 (/tmp/demo)\n",
+            "  Installing demo_fixture v0.1.0 (/tmp/demo)\n",
+            "   Compiling demo_fixture v0.1.0 (/tmp/demo)\n",
             "    Finished `release` profile [optimized] target(s) in 0.22s\n",
-            "  Installing /tmp/demo/install-root/bin/shell_audit_fixture\n",
-            "   Installed package `shell_audit_fixture v0.1.0 (/tmp/demo)` (executable `shell_audit_fixture`)\n",
+            "  Installing /tmp/demo/install-root/bin/demo_fixture\n",
+            "   Installed package `demo_fixture v0.1.0 (/tmp/demo)` (executable `demo_fixture`)\n",
             "warning: be sure to add `/tmp/demo/install-root/bin` to your PATH to be able to run the installed binaries\n",
         )
         .into(),
@@ -147,7 +147,7 @@ fn keeps_only_warning_preview_for_successful_cargo_install() {
     let summary = summarize_case(&result);
     assert_eq!(
         summary.summary,
-        "cargo install: installed shell_audit_fixture v0.1.0"
+        "cargo install: installed demo_fixture v0.1.0"
     );
     assert_eq!(summary.stderr_preview.len(), 1);
     assert!(summary.stderr_preview[0].starts_with("warning:"));

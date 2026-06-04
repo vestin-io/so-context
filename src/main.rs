@@ -6,9 +6,9 @@ mod core_graph;
 mod core_read;
 #[path = "core/tokens.rs"]
 pub mod core_tokens;
+mod daemon;
 #[path = "core/file_visit_cache.rs"]
 pub mod file_visit_cache;
-mod daemon;
 mod hook;
 mod mcp;
 
@@ -19,10 +19,7 @@ mod socket;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use std::process;
-
 use daemon::Daemon;
-use shell::{ShellRunOptions, ShellRunner};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -39,12 +36,14 @@ struct Cli {
 enum HookCommands {
     /// PreToolUse hook handler for agent CLIs (Claude Code, Codex).
     ///
-    /// Reads the hook JSON from stdin, injects _so_session_id into the
-    /// tool arguments for so-context MCP tool calls, and writes the
-    /// rewritten input to stdout. Exit 0 with no output for non-so-context
-    /// tools (agent continues normally).
+    /// Reads the hook JSON from stdin. For so-context MCP tools it injects
+    /// `_so_session_id`. For short, one-shot native shell calls it blocks the
+    /// tool call and tells the agent to retry with `mcp__so-context__so_shell`.
+    /// Exit 0 with no output for everything else (agent continues normally).
     ///
-    /// Register as a PreToolUse hook with matcher "mcp__so-context__.*".
+    /// Register as a PreToolUse hook with matchers `"mcp__so-context__.*"`
+    /// plus the shell-tool aliases this agent exposes (for example `"Bash"`
+    /// or `"runTerminalCommand"`).
     PreTool,
     /// PostCompact hook handler for Claude Code.
     ///
@@ -81,15 +80,6 @@ enum Commands {
         /// Keep running and re-index on file changes (foreground).
         #[arg(long)]
         watch: bool,
-    },
-    /// Execute a shell command and print a deterministic compressed summary.
-    Shell {
-        /// Print raw command output instead of the compressed shell view.
-        #[arg(long)]
-        full: bool,
-        /// Command and arguments to execute.
-        #[arg(required = true, num_args = 1.., trailing_var_arg = true, allow_hyphen_values = true)]
-        argv: Vec<String>,
     },
     /// Tell the running daemon to start watching a project directory.
     /// Intended for use in agent session-start hooks.
@@ -140,13 +130,15 @@ async fn main() -> Result<()> {
         Commands::Daemon => {
             // Ignore SIGHUP so the daemon survives terminal disconnects.
             #[cfg(unix)]
-            unsafe { libc::signal(libc::SIGHUP, libc::SIG_IGN); }
+            unsafe {
+                libc::signal(libc::SIGHUP, libc::SIG_IGN);
+            }
             Daemon::new().run().await
         }
         Commands::Mcp => mcp::run_mcp_bridge().await,
         Commands::Hook { event } => match event {
-            HookCommands::PreTool     => hook::run_pre_tool_use_hook(),
-            HookCommands::PostCompact => hook::run_post_compact_hook(),
+            HookCommands::PreTool => hook::run_pre_tool_use_hook(),
+            HookCommands::PostCompact => hook::run_post_compact_hook().await,
         },
         Commands::Index { path, watch } => {
             if watch {
@@ -157,19 +149,16 @@ async fn main() -> Result<()> {
                 Ok(())
             }
         }
-        Commands::Shell { full, argv } => {
-            let runner = ShellRunner::new(ShellRunOptions::new(full));
-            let output = runner.run(&argv)?;
-            print!("{}", output.rendered);
-            if output.exit_code != 0 {
-                process::exit(output.exit_code);
-            }
-            Ok(())
-        }
-        Commands::Watch { path, client, session_id } => {
-            mcp::send_ctrl_request("watch", &path, client.as_deref(), session_id.as_deref()).await
-        }
-        Commands::Unwatch { path, client, session_id } => {
+        Commands::Watch {
+            path,
+            client,
+            session_id,
+        } => mcp::send_ctrl_request("watch", &path, client.as_deref(), session_id.as_deref()).await,
+        Commands::Unwatch {
+            path,
+            client,
+            session_id,
+        } => {
             mcp::send_ctrl_request("unwatch", &path, client.as_deref(), session_id.as_deref()).await
         }
         Commands::Setup { binary } => {

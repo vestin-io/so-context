@@ -13,12 +13,12 @@ use anyhow::{Context, Result};
 use rmcp::ServiceExt;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
-
 pub use watch_manager::WatchManager;
 
+use crate::file_visit_cache::FileVisitCache;
 use crate::mcp::BuiltinServer;
 use crate::socket::{ctrl_socket_path, socket_path};
-use crate::file_visit_cache::FileVisitCache;
+
 /// The daemon runtime.
 pub struct Daemon {
     pub watch_manager: Arc<WatchManager>,
@@ -122,7 +122,9 @@ async fn handle_ctrl_connection(stream: UnixStream, wm: Arc<WatchManager>, fvc: 
     let mut lines = BufReader::new(stream).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         let line = line.trim().to_string();
-        if line.is_empty() { continue; }
+        if line.is_empty() {
+            continue;
+        }
         if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&line) {
             dispatch_ctrl(&msg, &wm, &fvc);
         } else {
@@ -134,9 +136,16 @@ async fn handle_ctrl_connection(stream: UnixStream, wm: Arc<WatchManager>, fvc: 
 fn dispatch_ctrl(msg: &serde_json::Value, wm: &WatchManager, fvc: &FileVisitCache) {
     let method = msg.get("method").and_then(|v| v.as_str()).unwrap_or("");
     let params = msg.get("params");
-    let path = params.and_then(|p| p.get("path")).and_then(|v| v.as_str()).unwrap_or("");
-    let client     = params.and_then(|p| p.get("client")).and_then(|v| v.as_str());
-    let session_id = params.and_then(|p| p.get("session_id")).and_then(|v| v.as_str());
+    let path = params
+        .and_then(|p| p.get("path"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let client = params
+        .and_then(|p| p.get("client"))
+        .and_then(|v| v.as_str());
+    let session_id = params
+        .and_then(|p| p.get("session_id"))
+        .and_then(|v| v.as_str());
 
     match method {
         "watch" | "unwatch" => {
@@ -158,15 +167,20 @@ fn dispatch_ctrl(msg: &serde_json::Value, wm: &WatchManager, fvc: &FileVisitCach
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             if connection_id.is_empty() || session_id.unwrap_or("").is_empty() {
-                eprintln!("so-context daemon: ctrl compact_reset missing connection_id or session_id");
+                eprintln!(
+                    "so-context daemon: ctrl compact_reset missing connection_id or session_id"
+                );
                 return;
             }
             let deleted = fvc.delete_context_window(connection_id, session_id.unwrap());
             eprintln!(
                 "so-context daemon: compact_reset connection={connection_id} session={} deleted={}",
-                session_id.unwrap(), deleted
+                session_id.unwrap(),
+                deleted
             );
         }
-        other => { eprintln!("so-context daemon: ctrl unknown method: {other}"); }
+        other => {
+            eprintln!("so-context daemon: ctrl unknown method: {other}");
+        }
     }
 }

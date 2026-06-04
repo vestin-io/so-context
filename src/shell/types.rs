@@ -1,11 +1,21 @@
+use std::path::{Path, PathBuf};
+
 #[derive(Debug, Clone)]
 pub struct ShellInvocation {
     pub argv: Vec<String>,
+    pub cwd: Option<PathBuf>,
 }
 
 impl ShellInvocation {
     pub fn new(argv: Vec<String>) -> Self {
-        Self { argv }
+        Self { argv, cwd: None }
+    }
+
+    pub fn with_cwd(argv: Vec<String>, cwd: PathBuf) -> Self {
+        Self {
+            argv,
+            cwd: Some(cwd),
+        }
     }
 
     pub fn program(&self) -> &str {
@@ -14,6 +24,10 @@ impl ShellInvocation {
 
     pub fn args(&self) -> &[String] {
         &self.argv[1..]
+    }
+
+    pub fn cwd(&self) -> Option<&Path> {
+        self.cwd.as_deref()
     }
 
     pub fn command_line(&self) -> String {
@@ -45,14 +59,6 @@ impl ShellResult {
         }
     }
 
-    pub fn render_full_len(&self) -> usize {
-        match (self.stdout.is_empty(), self.stderr.is_empty()) {
-            (false, true) => self.stdout.len(),
-            (true, false) => with_trailing_newline_len(&self.stderr),
-            _ => self.render_full_body_len(),
-        }
-    }
-
     fn render_full_body(&self) -> String {
         let mut output = String::with_capacity(self.stdout.len() + self.stderr.len() + 1);
 
@@ -70,31 +76,20 @@ impl ShellResult {
         }
         output
     }
-
-    fn render_full_body_len(&self) -> usize {
-        let mut len = 0;
-
-        if !self.stdout.is_empty() {
-            len += self.stdout.len();
-            if !self.stdout.ends_with('\n') && !self.stderr.is_empty() {
-                len += 1;
-            }
-        }
-        if !self.stderr.is_empty() {
-            len += self.stderr.len();
-            if !self.stderr.ends_with('\n') {
-                len += 1;
-            }
-        }
-
-        len
-    }
 }
 
 #[derive(Debug, Clone)]
 pub struct RunOutput {
+    pub run_id: String,
+    pub invocation: ShellInvocation,
+    pub pattern: ShellPattern,
     pub rendered: String,
+    pub full_output: String,
     pub exit_code: i32,
+    pub output_mode: ShellOutputMode,
+    pub requested_full: bool,
+    pub stdout_bytes: usize,
+    pub stderr_bytes: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -331,10 +326,6 @@ fn with_trailing_newline(text: &str) -> String {
     } else {
         format!("{text}\n")
     }
-}
-
-fn with_trailing_newline_len(text: &str) -> usize {
-    text.len() + usize::from(!text.ends_with('\n'))
 }
 
 #[cfg(test)]

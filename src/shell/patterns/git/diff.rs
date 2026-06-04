@@ -59,12 +59,16 @@ pub(super) fn summarize(result: &ShellResult) -> CompressionSummary {
         }
     }
 
-    let mut ranked_indexes: Vec<usize> = (0..files.len()).collect();
+    let file_count = files.len();
+    let mut ranked_indexes: Vec<usize> = (0..file_count).collect();
     ranked_indexes.sort_by_key(|index| Reverse(files[*index].weight()));
     let details = ranked_indexes
         .into_iter()
         .enumerate()
-        .map(|(position, index)| files[index].render(position < 3))
+        .map(|(position, index)| {
+            let include_evidence = file_count <= 8 || position < 4;
+            files[index].render(include_evidence)
+        })
         .collect();
 
     CompressionSummary::new(

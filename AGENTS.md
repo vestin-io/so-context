@@ -225,5 +225,3 @@ These rules intentionally align with the primary Rust guidance below:
 - Rust module/file organization:
   - https://doc.rust-lang.org/reference/items/modules.html
   - https://doc.rust-lang.org/book/ch07-05-separating-modules-into-different-files.html
-
-@RTK.md

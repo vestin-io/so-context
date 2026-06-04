@@ -4,11 +4,15 @@
 // reaches the daemon, so the daemon can attribute events to the correct
 // context window (sub-agent).
 //
+// Also blocks short native shell commands and tells the agent to retry with
+// the so-context MCP shell tool instead.
+//
 // Also resets the file-visit cache after context compaction so the agent
 // receives full file content again instead of "use cached context" stubs.
 //
 // Hooks used:
 //   tool.execute.before  — injects _so_session_id into so-context tool args
+//                          and blocks selected native shell calls
 //   session.compacted    — calls `so-context hook post-compact` to reset cache
 //
 // OpenCode registers MCP tools as "<server-name>_<tool-name>", so tools from
@@ -16,17 +20,247 @@
 
 import type { Plugin } from "@opencode-ai/plugin";
 
+const SO_CONTEXT_BINARY = "__SO_CONTEXT_BINARY__";
+const SO_CONTEXT_TOOL_PREFIX = "so-context_";
+const NATIVE_SHELL_TOOL_NAMES = new Set(__SO_CONTEXT_NATIVE_SHELL_TOOL_NAMES__);
+const NATIVE_SHELL_POLICY = __SO_CONTEXT_NATIVE_SHELL_POLICY__;
+
+function parseSimpleShellCommand(command: string): string[] | null {
+  if (command.includes("\n") || command.includes("\r")) return null;
+
+  const args: string[] = [];
+  let current = "";
+  let quote: "'" | '"' | null = null;
+
+  for (let i = 0; i < command.length; i += 1) {
+    const ch = command[i];
+
+    if (quote) {
+      if (ch === quote) {
+        quote = null;
+      } else if (ch === "\\" && quote === '"') {
+        i += 1;
+        if (i < command.length) current += command[i];
+      } else {
+        current += ch;
+      }
+      continue;
+    }
+
+    switch (ch) {
+      case "'":
+      case '"':
+        quote = ch;
+        break;
+      case "\\":
+        i += 1;
+        if (i < command.length) current += command[i];
+        break;
+      case " ":
+      case "\t":
+        if (current) {
+          args.push(current);
+          current = "";
+        }
+        break;
+      case "|":
+      case "&":
+      case ";":
+      case "<":
+      case ">":
+      case "`":
+      case "$":
+      case "(":
+      case ")":
+        return null;
+      default:
+        current += ch;
+        break;
+    }
+  }
+
+  if (quote) return null;
+  if (current) args.push(current);
+  return args.length > 0 ? args : null;
+}
+
+function isEnvAssignment(arg: string): boolean {
+  const idx = arg.indexOf("=");
+  if (idx <= 0) return false;
+  return /^[A-Za-z0-9_]+$/.test(arg.slice(0, idx));
+}
+
+function rewriteEnvPrefix(argv: string[]): string[] {
+  const envPrefixLen = argv.findIndex((arg) => !isEnvAssignment(arg));
+  if (envPrefixLen === -1 || envPrefixLen === 0) return argv;
+  return ["env", ...argv];
+}
+
+function programIndex(argv: string[]): number {
+  if (argv[0] !== "env") return 0;
+  let index = 1;
+  while (index < argv.length && isEnvAssignment(argv[index])) index += 1;
+  return index;
+}
+
+function baseProgramName(program: string): string {
+  const normalized = program.replace(/\\/g, "/");
+  const parts = normalized.split("/");
+  return parts[parts.length - 1] || program;
+}
+
+function hasAnyFlag(args: string[], flags: string[]): boolean {
+  return args.some((arg) => flags.includes(arg));
+}
+
+function firstNonFlag(args: string[]): string | null {
+  return args.find((arg) => !arg.startsWith("-")) ?? null;
+}
+
+function afterSubcommand(args: string[], subcommand: string): string[] {
+  const index = args.indexOf(subcommand);
+  return index >= 0 ? args.slice(index + 1) : [];
+}
+
+function shouldPreferDocker(args: string[]): boolean {
+  const subcommand = firstNonFlag(args);
+  if (!subcommand) return true;
+
+  switch (subcommand) {
+    case "logs":
+      return !hasAnyFlag(args, NATIVE_SHELL_POLICY.follow_flags);
+    case "compose":
+      return shouldPreferDockerCompose(afterSubcommand(args, "compose"));
+    default:
+      return !NATIVE_SHELL_POLICY.docker_keep_native_subcommands.includes(subcommand);
+  }
+}
+
+function shouldPreferDockerCompose(args: string[]): boolean {
+  const subcommand = firstNonFlag(args);
+  if (!subcommand) return true;
+
+  switch (subcommand) {
+    case "logs":
+      return !hasAnyFlag(args, NATIVE_SHELL_POLICY.follow_flags);
+    default:
+      return !NATIVE_SHELL_POLICY.docker_compose_keep_native_subcommands.includes(subcommand);
+  }
+}
+
+function shouldPreferKubectl(args: string[]): boolean {
+  const subcommand = firstNonFlag(args);
+  if (!subcommand) return true;
+
+  switch (subcommand) {
+    case "logs":
+      return !hasAnyFlag(args, NATIVE_SHELL_POLICY.follow_flags);
+    default:
+      return !NATIVE_SHELL_POLICY.kubectl_keep_native_subcommands.includes(subcommand);
+  }
+}
+
+function shouldKeepNativeCargo(args: string[]): boolean {
+  return NATIVE_SHELL_POLICY.cargo_keep_native_subcommands.includes(firstNonFlag(args) ?? "");
+}
+
+function shouldKeepNativeJsRunner(args: string[]): boolean {
+  const subcommand = firstNonFlag(args);
+  if (!subcommand) return false;
+
+  switch (subcommand) {
+    case "run": {
+      const nested = firstNonFlag(afterSubcommand(args, "run"));
+      return NATIVE_SHELL_POLICY.js_runner_keep_native_run_subcommands.includes(nested ?? "");
+    }
+    default:
+      return NATIVE_SHELL_POLICY.js_runner_keep_native_subcommands.includes(subcommand);
+  }
+}
+
+function shouldKeepNativePython(args: string[]): boolean {
+  if (hasAnyFlag(args, NATIVE_SHELL_POLICY.python_interactive_flags)) return true;
+
+  if (args[0] === "-m") {
+    return NATIVE_SHELL_POLICY.python_keep_native_modules.includes(args[1] ?? "");
+  }
+
+  if (args[0]?.endsWith("manage.py")) {
+    return (NATIVE_SHELL_POLICY.python_keep_native_scripts["manage.py"] ?? []).includes(args[1] ?? "");
+  }
+
+  return false;
+}
+
+function shouldKeepNativeNode(args: string[]): boolean {
+  return hasAnyFlag(args, NATIVE_SHELL_POLICY.node_keep_native_flags);
+}
+
+function shouldKeepNativeShell(program: string, args: string[]): boolean {
+  if (NATIVE_SHELL_POLICY.always_keep_native_programs.includes(program)) return true;
+
+  switch (program) {
+    case "tail":
+      return hasAnyFlag(args, NATIVE_SHELL_POLICY.follow_flags);
+    case "docker":
+      return !shouldPreferDocker(args);
+    case "docker-compose":
+      return !shouldPreferDockerCompose(args);
+    case "kubectl":
+      return !shouldPreferKubectl(args);
+    case "cargo":
+      return shouldKeepNativeCargo(args);
+    case "npm":
+    case "pnpm":
+    case "yarn":
+    case "bun":
+    case "npx":
+      return shouldKeepNativeJsRunner(args);
+    case "python":
+    case "python3":
+      return shouldKeepNativePython(args);
+    case "node":
+      return shouldKeepNativeNode(args);
+    default:
+      return false;
+  }
+}
+
+function preferredSoShellArgv(command: string): string[] | null {
+  const parsed = parseSimpleShellCommand(command.trim());
+  if (!parsed) return null;
+
+  const argv = rewriteEnvPrefix(parsed);
+  const index = programIndex(argv);
+  if (index >= argv.length) return null;
+
+  const program = baseProgramName(argv[index]);
+  const args = argv.slice(index + 1);
+  return shouldKeepNativeShell(program, args) ? null : argv;
+}
+
 export const SoContextPlugin: Plugin = async ({ $ }) => {
   return {
     "tool.execute.before": async (input, output) => {
-      // Only intercept so-context MCP tools.
-      if (!input.tool.startsWith("so-context_")) return;
+      if (input.tool.startsWith(SO_CONTEXT_TOOL_PREFIX)) {
+        const sessionId: string = (input as any).sessionID ?? "";
+        if (!sessionId) return;
 
-      const sessionId: string = (input as any).sessionID ?? "";
-      if (!sessionId) return;
+        // Inject the context window session ID into the tool arguments.
+        output.args._so_session_id = sessionId;
+        return;
+      }
 
-      // Inject the context window session ID into the tool arguments.
-      output.args._so_session_id = sessionId;
+      if (!NATIVE_SHELL_TOOL_NAMES.has(input.tool ?? "")) return;
+
+      const command = String((output.args as any)?.command ?? (output.args as any)?.cmd ?? "").trim();
+      if (!command) return;
+
+      const argv = preferredSoShellArgv(command);
+      if (!argv) return;
+      throw new Error(
+        `This short shell command was automatically routed to mcp__so-context__so_shell. This is expected, not an error. Retry with argv: ${JSON.stringify(argv)}. Keep the native shell only for long-running, streaming, or interactive commands.`
+      );
     },
 
     "session.compacted": async (input) => {
@@ -38,7 +272,7 @@ export const SoContextPlugin: Plugin = async ({ $ }) => {
 
       const payload = JSON.stringify({ session_id: sessionId, connection_id: sessionId });
       try {
-        await $`echo ${payload} | so-context hook post-compact`.quiet();
+        await $`echo ${payload} | ${SO_CONTEXT_BINARY} hook post-compact`.quiet();
       } catch {
         // Non-fatal: daemon may not be running or binary not on PATH.
       }

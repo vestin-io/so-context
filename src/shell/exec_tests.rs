@@ -1,7 +1,6 @@
-use std::time::Duration;
-
 use super::*;
 use crate::shell::types::ShellInvocation;
+use std::time::Duration;
 
 #[test]
 fn truncates_large_stdout_and_marks_stderr() {
@@ -14,7 +13,7 @@ fn truncates_large_stdout_and_marks_stderr() {
         ExecLimits {
             max_stdout_bytes: 64,
             max_stderr_bytes: 64,
-            timeout: Duration::from_secs(2),
+            timeout: Duration::from_secs(1),
         },
     )
     .unwrap();
@@ -28,7 +27,23 @@ fn truncates_large_stdout_and_marks_stderr() {
 }
 
 #[test]
-fn times_out_long_running_command() {
+fn waits_for_long_running_command() {
+    let result = execute_with_limits(
+        ShellInvocation::new(vec!["sh".into(), "-c".into(), "sleep 0.2".into()]),
+        ExecLimits {
+            max_stdout_bytes: 64,
+            max_stderr_bytes: 64,
+            timeout: Duration::from_secs(1),
+        },
+    )
+    .unwrap();
+
+    assert_eq!(result.exit_code, 0);
+    assert!(!result.stderr.contains("timed out"));
+}
+
+#[test]
+fn kills_command_after_timeout() {
     let result = execute_with_limits(
         ShellInvocation::new(vec!["sh".into(), "-c".into(), "sleep 1".into()]),
         ExecLimits {
@@ -40,7 +55,11 @@ fn times_out_long_running_command() {
     .unwrap();
 
     assert_eq!(result.exit_code, 124);
-    assert!(result.stderr.contains("[shell] command timed out after 0s"));
+    assert!(
+        result
+            .stderr
+            .contains("[shell] command timed out after 50ms")
+    );
 }
 
 #[test]
@@ -50,10 +69,10 @@ fn decodes_non_utf8_output_lossily() {
         ExecLimits {
             max_stdout_bytes: 64,
             max_stderr_bytes: 64,
-            timeout: Duration::from_secs(2),
+            timeout: Duration::from_secs(1),
         },
     )
     .unwrap();
 
-    assert_eq!(result.stdout, "�");
+    assert_eq!(result.stdout, "\u{FFFD}");
 }

@@ -230,7 +230,10 @@ impl WatchManager {
 
         for root in empty_roots {
             inner.projects.remove(&root);
-            eprintln!("[watch] stopped (connection closed: {key}): {}", root.display());
+            eprintln!(
+                "[watch] stopped (connection closed: {key}): {}",
+                root.display()
+            );
         }
     }
 

@@ -3,6 +3,7 @@
 
 pub mod claude;
 pub mod codex;
+mod instructions;
 pub mod opencode;
 
 use anyhow::Result;
