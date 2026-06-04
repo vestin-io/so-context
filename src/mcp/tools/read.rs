@@ -1,4 +1,4 @@
-//! `so_read` tool — read a file or trigger a graph index.
+//! `so_read` tool — read a file or return a compact outline.
 
 use std::sync::Arc;
 
@@ -23,10 +23,10 @@ pub fn route() -> ToolRoute<BuiltinServer> {
 }
 
 fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rmcp::ErrorData> {
-    let client         = ctx.service.client();
+    let client = ctx.service.client();
     let client_version = ctx.service.client_version();
-    let connection_id  = ctx.service.connection_id();
-    let fvc            = &ctx.service.file_visit_cache;
+    let connection_id = ctx.service.connection_id();
+    let fvc = &ctx.service.file_visit_cache;
 
     let args = ctx
         .arguments
@@ -40,7 +40,7 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
         .filter(|s| !s.is_empty())
     {
         Some(sid) => (sid.to_string(), "hook"),
-        None      => (connection_id.clone(), "connection"),
+        None => (connection_id.clone(), "connection"),
     };
 
     let path = args
@@ -59,8 +59,9 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
     if mode == "full" {
         // Read file content upfront so we can hash it regardless of the cache
         // decision — we need the hash to detect modifications.
-        let raw_content = std::fs::read_to_string(path)
-            .map_err(|e| rmcp::ErrorData::internal_error(format!("failed to read file: {e}"), None))?;
+        let raw_content = std::fs::read_to_string(path).map_err(|e| {
+            rmcp::ErrorData::internal_error(format!("failed to read file: {e}"), None)
+        })?;
 
         let current_hash = hash_content(&raw_content);
 
@@ -78,17 +79,17 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
                 );
 
                 let mut ev = EventRecord::new(&session_id, "so_read");
-                ev.client         = client.clone();
+                ev.client = client.clone();
                 ev.client_version = client_version.clone();
-                ev.client_source  = "client_info".to_string();
+                ev.client_source = "client_info".to_string();
                 ev.session_source = session_source.to_string();
-                ev.project        = Some(path.to_string());
-                ev.params         = Some(serde_json::json!({ "path": path, "mode": mode }).to_string());
-                ev.duration_ms    = Some(0);
+                ev.project = Some(path.to_string());
+                ev.params = Some(serde_json::json!({ "path": path, "mode": mode }).to_string());
+                ev.duration_ms = Some(0);
                 ev.estimated_origin_tokens = Some(count_tokens(&raw_content));
-                ev.estimated_origin_size   = Some(raw_content.len() as i64);
-                ev.actual_tokens           = Some(count_tokens(&msg));
-                ev.actual_size             = Some(msg.len() as i64);
+                ev.estimated_origin_size = Some(raw_content.len() as i64);
+                ev.actual_tokens = Some(count_tokens(&msg));
+                ev.actual_size = Some(msg.len() as i64);
                 ev.result_ok = true;
                 enqueue(ev);
 
@@ -101,17 +102,17 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
         fvc.add_file(&connection_id, &session_id, path, token_count, current_hash);
 
         let mut ev = EventRecord::new(&session_id, "so_read");
-        ev.client         = client;
+        ev.client = client;
         ev.client_version = client_version;
-        ev.client_source  = "client_info".to_string();
+        ev.client_source = "client_info".to_string();
         ev.session_source = session_source.to_string();
-        ev.project        = Some(path.to_string());
-        ev.params         = Some(serde_json::json!({ "path": path, "mode": mode }).to_string());
-        ev.duration_ms    = Some(0);
-        ev.actual_tokens           = Some(token_count);
+        ev.project = Some(path.to_string());
+        ev.params = Some(serde_json::json!({ "path": path, "mode": mode }).to_string());
+        ev.duration_ms = Some(0);
+        ev.actual_tokens = Some(token_count);
         ev.estimated_origin_tokens = Some(token_count);
-        ev.actual_size             = Some(raw_content.len() as i64);
-        ev.estimated_origin_size   = Some(raw_content.len() as i64);
+        ev.actual_size = Some(raw_content.len() as i64);
+        ev.estimated_origin_size = Some(raw_content.len() as i64);
         ev.result_ok = true;
         enqueue(ev);
 
@@ -122,24 +123,25 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
     // Outline mode — query graph DB, fall back to regex scan.
     // -----------------------------------------------------------------------
     if mode == "outline" {
-        let raw_content = std::fs::read_to_string(path)
-            .map_err(|e| rmcp::ErrorData::internal_error(format!("failed to read file: {e}"), None))?;
+        let raw_content = std::fs::read_to_string(path).map_err(|e| {
+            rmcp::ErrorData::internal_error(format!("failed to read file: {e}"), None)
+        })?;
 
         let output = crate::core_read::build_outline_for_path(path, &raw_content);
         let token_count = count_tokens(&output);
 
         let mut ev = EventRecord::new(&session_id, "so_read");
-        ev.client         = client;
+        ev.client = client;
         ev.client_version = client_version;
-        ev.client_source  = "client_info".to_string();
+        ev.client_source = "client_info".to_string();
         ev.session_source = session_source.to_string();
-        ev.project        = Some(path.to_string());
-        ev.params         = Some(serde_json::json!({ "path": path, "mode": mode }).to_string());
-        ev.duration_ms    = Some(0);
-        ev.actual_tokens           = Some(token_count);
+        ev.project = Some(path.to_string());
+        ev.params = Some(serde_json::json!({ "path": path, "mode": mode }).to_string());
+        ev.duration_ms = Some(0);
+        ev.actual_tokens = Some(token_count);
         ev.estimated_origin_tokens = Some(count_tokens(&raw_content));
-        ev.actual_size             = Some(output.len() as i64);
-        ev.estimated_origin_size   = Some(raw_content.len() as i64);
+        ev.actual_size = Some(output.len() as i64);
+        ev.estimated_origin_size = Some(raw_content.len() as i64);
         ev.result_ok = true;
         enqueue(ev);
 

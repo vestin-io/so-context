@@ -64,13 +64,21 @@ fn format_db_outline(outline: &crate::core_graph::FileOutline, file_path: &str) 
 /// Recognises: `.git`, `Cargo.toml`, `package.json`, `go.mod`, `pyproject.toml`.
 fn infer_project_root(file_path: &str) -> Option<String> {
     const MARKERS: &[&str] = &[
-        ".git", "Cargo.toml", "package.json", "go.mod", "pyproject.toml",
+        ".git",
+        "Cargo.toml",
+        "package.json",
+        "go.mod",
+        "pyproject.toml",
     ];
     let p = PathBuf::from(file_path);
     let mut dir = if p.is_absolute() {
         p.parent()?.to_path_buf()
     } else {
-        std::env::current_dir().ok()?.join(p).parent()?.to_path_buf()
+        std::env::current_dir()
+            .ok()?
+            .join(p)
+            .parent()?
+            .to_path_buf()
     };
 
     loop {

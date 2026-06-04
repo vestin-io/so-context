@@ -6,6 +6,8 @@
 pub mod read;
 pub mod references;
 pub mod search;
+pub mod shell;
+pub mod shell_output;
 pub mod status;
 
 pub(crate) use super::BuiltinServer;

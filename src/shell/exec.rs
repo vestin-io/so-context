@@ -7,9 +7,11 @@ use anyhow::{Context, Result};
 
 use super::types::{ShellInvocation, ShellResult};
 
-const MAX_STDOUT_BYTES: usize = 256 * 1024;
-const MAX_STDERR_BYTES: usize = 64 * 1024;
-const COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
+/// Per-stream capture limit aligned with RTK `RAW_CAP` (10 MiB).
+const MAX_STDOUT_BYTES: usize = 10_485_760;
+const MAX_STDERR_BYTES: usize = 10_485_760;
+const DEFAULT_COMMAND_TIMEOUT_MS: u64 = 30_000;
+const COMMAND_TIMEOUT_ENV: &str = "SO_CONTEXT_SHELL_TIMEOUT_MS";
 
 #[derive(Debug, Clone, Copy)]
 struct ExecLimits {
@@ -23,7 +25,7 @@ impl Default for ExecLimits {
         Self {
             max_stdout_bytes: MAX_STDOUT_BYTES,
             max_stderr_bytes: MAX_STDERR_BYTES,
-            timeout: COMMAND_TIMEOUT,
+            timeout: command_timeout(),
         }
     }
 }
@@ -39,10 +41,16 @@ pub(super) fn execute(invocation: ShellInvocation) -> Result<ShellResult> {
 }
 
 fn execute_with_limits(invocation: ShellInvocation, limits: ExecLimits) -> Result<ShellResult> {
-    let mut child = Command::new(invocation.program())
-        .args(invocation.args())
+    let mut command = Command::new(invocation.execution_program());
+    command
+        .args(invocation.execution_args())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(cwd) = invocation.cwd() {
+        command.current_dir(cwd);
+    }
+
+    let mut child = command
         .spawn()
         .with_context(|| format!("failed to execute command: {}", invocation.command_line()))?;
 
@@ -67,9 +75,7 @@ fn execute_with_limits(invocation: ShellInvocation, limits: ExecLimits) -> Resul
         }
 
         if started.elapsed() >= limits.timeout {
-            child
-                .kill()
-                .context("failed to terminate timed out shell command")?;
+            let _ = child.kill();
             let status = child
                 .wait()
                 .context("failed to collect timed out shell command status")?;
@@ -151,12 +157,21 @@ fn execution_notes(
     }
     if timed_out {
         notes.push(format!(
-            "[shell] command timed out after {}s",
-            limits.timeout.as_secs()
+            "[shell] command timed out after {}ms",
+            limits.timeout.as_millis()
         ));
     }
 
     notes
+}
+
+fn command_timeout() -> Duration {
+    let timeout_ms = std::env::var(COMMAND_TIMEOUT_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_COMMAND_TIMEOUT_MS);
+    Duration::from_millis(timeout_ms)
 }
 
 fn prepend_notes(notes: Vec<String>, stderr: String) -> String {

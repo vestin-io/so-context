@@ -1,4 +1,6 @@
 use super::{CompressionSummary, ShellPattern};
+use std::path::PathBuf;
+
 use crate::shell::types::{ShellInvocation, ShellResult};
 
 fn sample_summary() -> CompressionSummary {
@@ -38,7 +40,33 @@ fn command_line_quotes_shell_sensitive_args() {
 }
 
 #[test]
-fn full_render_len_matches_rendered_output() {
+fn invocation_can_carry_working_directory() {
+    let invocation = ShellInvocation::with_cwd(
+        vec!["git".into(), "status".into()],
+        PathBuf::from("/tmp/demo"),
+    );
+
+    assert_eq!(invocation.cwd(), Some(PathBuf::from("/tmp/demo").as_path()));
+}
+
+#[test]
+fn shell_command_invocation_prefers_original_command_line() {
+    let invocation = ShellInvocation::shell_command(
+        vec!["ls".into(), "*.rs".into()],
+        "/bin/zsh".into(),
+        "ls *.rs".into(),
+    );
+
+    assert_eq!(invocation.command_line(), "ls *.rs");
+    assert_eq!(invocation.execution_program(), "/bin/zsh");
+    assert_eq!(
+        invocation.execution_args(),
+        vec!["-lc".to_string(), "ls *.rs".to_string()]
+    );
+}
+
+#[test]
+fn full_render_includes_newline_between_stdout_and_stderr() {
     let result = ShellResult {
         invocation: ShellInvocation::new(vec!["sh".into(), "-c".into(), "echo demo".into()]),
         stdout: "hello".into(),
@@ -46,5 +74,5 @@ fn full_render_len_matches_rendered_output() {
         exit_code: 7,
     };
 
-    assert_eq!(result.render_full().len(), result.render_full_len());
+    assert_eq!(result.render_full(), "hello\nwarn\n");
 }

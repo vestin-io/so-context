@@ -2,8 +2,13 @@
 name = "so-context"
 version = "0.1.0"
 edition = "2024"
-description = "A Rust project"
+description = "Context management layer for AI agents"
 license = "MIT"
+homepage = "https://github.com/vestin-io/so-context"
+repository = "https://github.com/vestin-io/so-context"
+readme = "README.md"
+keywords = ["mcp", "agent", "context", "cli"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 anyhow = "1.0"

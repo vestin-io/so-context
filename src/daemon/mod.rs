@@ -13,12 +13,17 @@ use anyhow::{Context, Result};
 use rmcp::ServiceExt;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
+use tokio::time::{self, Duration};
 
 pub use watch_manager::WatchManager;
 
+use crate::core_event_spool::{sync_global_event_spool, sync_project_event_spool};
+use crate::core_events::{EventRecord, enqueue, persist_now};
+use crate::file_visit_cache::FileVisitCache;
 use crate::mcp::BuiltinServer;
 use crate::socket::{ctrl_socket_path, socket_path};
-use crate::file_visit_cache::FileVisitCache;
+
+const EVENT_SPOOL_SWEEP_INTERVAL: Duration = Duration::from_secs(5 * 60);
 /// The daemon runtime.
 pub struct Daemon {
     pub watch_manager: Arc<WatchManager>,
@@ -72,6 +77,11 @@ impl Daemon {
             run_ctrl_listener(ctrl_listener, wm_ctrl, fvc_ctrl).await;
         });
 
+        let wm_spool = Arc::clone(&wm);
+        tokio::spawn(async move {
+            run_event_spool_sweeper(wm_spool).await;
+        });
+
         // --- MCP accept loop ---
         loop {
             let (stream, _addr) = mcp_listener.accept().await?;
@@ -101,6 +111,33 @@ impl Daemon {
     }
 }
 
+async fn run_event_spool_sweeper(wm: Arc<WatchManager>) {
+    sweep_event_spool(&wm);
+    let mut interval = time::interval(EVENT_SPOOL_SWEEP_INTERVAL);
+    loop {
+        interval.tick().await;
+        sweep_event_spool(&wm);
+    }
+}
+
+fn sweep_event_spool(wm: &WatchManager) {
+    for status in wm.status() {
+        match sync_project_event_spool(&status.path, persist_now) {
+            Ok(_count) => {}
+            Err(error) => {
+                eprintln!(
+                    "so-context daemon: event-spool sweep failed for {}: {error}",
+                    status.path.display()
+                );
+            }
+        }
+    }
+
+    if let Err(error) = sync_global_event_spool(persist_now) {
+        eprintln!("so-context daemon: global event-spool sweep failed: {error}");
+    }
+}
+
 // ctrl socket — newline-delimited JSON-RPC 2.0 (notifications only)
 
 async fn run_ctrl_listener(listener: UnixListener, wm: Arc<WatchManager>, fvc: FileVisitCache) {
@@ -122,7 +159,9 @@ async fn handle_ctrl_connection(stream: UnixStream, wm: Arc<WatchManager>, fvc: 
     let mut lines = BufReader::new(stream).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         let line = line.trim().to_string();
-        if line.is_empty() { continue; }
+        if line.is_empty() {
+            continue;
+        }
         if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&line) {
             dispatch_ctrl(&msg, &wm, &fvc);
         } else {
@@ -134,9 +173,16 @@ async fn handle_ctrl_connection(stream: UnixStream, wm: Arc<WatchManager>, fvc: 
 fn dispatch_ctrl(msg: &serde_json::Value, wm: &WatchManager, fvc: &FileVisitCache) {
     let method = msg.get("method").and_then(|v| v.as_str()).unwrap_or("");
     let params = msg.get("params");
-    let path = params.and_then(|p| p.get("path")).and_then(|v| v.as_str()).unwrap_or("");
-    let client     = params.and_then(|p| p.get("client")).and_then(|v| v.as_str());
-    let session_id = params.and_then(|p| p.get("session_id")).and_then(|v| v.as_str());
+    let path = params
+        .and_then(|p| p.get("path"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let client = params
+        .and_then(|p| p.get("client"))
+        .and_then(|v| v.as_str());
+    let session_id = params
+        .and_then(|p| p.get("session_id"))
+        .and_then(|v| v.as_str());
 
     match method {
         "watch" | "unwatch" => {
@@ -158,15 +204,32 @@ fn dispatch_ctrl(msg: &serde_json::Value, wm: &WatchManager, fvc: &FileVisitCach
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             if connection_id.is_empty() || session_id.unwrap_or("").is_empty() {
-                eprintln!("so-context daemon: ctrl compact_reset missing connection_id or session_id");
+                eprintln!(
+                    "so-context daemon: ctrl compact_reset missing connection_id or session_id"
+                );
                 return;
             }
             let deleted = fvc.delete_context_window(connection_id, session_id.unwrap());
             eprintln!(
                 "so-context daemon: compact_reset connection={connection_id} session={} deleted={}",
-                session_id.unwrap(), deleted
+                session_id.unwrap(),
+                deleted
             );
         }
-        other => { eprintln!("so-context daemon: ctrl unknown method: {other}"); }
+        "record_event" => {
+            let Some(event_value) = params.and_then(|p| p.get("event")).cloned() else {
+                eprintln!("so-context daemon: ctrl record_event missing event payload");
+                return;
+            };
+            match serde_json::from_value::<EventRecord>(event_value) {
+                Ok(event) => enqueue(event),
+                Err(error) => {
+                    eprintln!("so-context daemon: ctrl record_event invalid payload: {error}")
+                }
+            }
+        }
+        other => {
+            eprintln!("so-context daemon: ctrl unknown method: {other}");
+        }
     }
 }

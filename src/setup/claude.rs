@@ -5,18 +5,36 @@
 //! Writes:
 //!   - `mcpServers.so-context`          — MCP stdio bridge
 //!   - `hooks.PreToolUse[].hooks[]`     — injects `_so_session_id` into so-context tool calls
+//!                                        and rewrites short native shell commands through `so-context shell`
 //!   - `hooks.PostCompact[].hooks[]`    — resets file-visit cache after context compaction
+//!   - `~/.claude/CLAUDE.md` snippet    — prefer `so_shell` for one-shot shell commands
 //!
 //! Watch lifecycle is handled automatically by the daemon via the MCP connection:
 //! projects are registered on `initialize` and unwatched on connection close.
 //! No SessionStart/SessionEnd hooks are needed.
 
+use super::instructions;
 use anyhow::{Context, Result};
 use serde_json::{Map, Value, json};
 use std::fs;
 use std::path::PathBuf;
 
 const SERVER_NAME: &str = "so-context";
+const SO_CONTEXT_MCP_MATCHER: &str = "mcp__so-context__.*";
+const NATIVE_SHELL_MATCHERS: &[&str] = &[
+    "Bash",
+    "bash",
+    "Shell",
+    "shell",
+    "runTerminalCommand",
+    "runInTerminal",
+    "run_in_terminal",
+    "terminal",
+    "shell_command",
+    "exec_command",
+    "local_shell",
+    "run_shell_command",
+];
 
 pub fn config_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_default();
@@ -26,13 +44,11 @@ pub fn config_path() -> PathBuf {
 pub fn install(binary: &str) -> Result<()> {
     let path = config_path();
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("create dir {}", parent.display()))?;
+        fs::create_dir_all(parent).with_context(|| format!("create dir {}", parent.display()))?;
     }
 
     let mut root: Value = if path.exists() {
-        let text = fs::read_to_string(&path)
-            .with_context(|| format!("read {}", path.display()))?;
+        let text = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
         serde_json::from_str(&text).unwrap_or(Value::Object(Map::new()))
     } else {
         Value::Object(Map::new())
@@ -58,6 +74,7 @@ pub fn install(binary: &str) -> Result<()> {
 
     let text = serde_json::to_string_pretty(&root)?;
     fs::write(&path, text).with_context(|| format!("write {}", path.display()))?;
+    instructions::install_claude_instructions(&instructions::home_dir())?;
     println!("Claude: wrote MCP + hooks to {}", path.display());
     Ok(())
 }
@@ -69,8 +86,7 @@ pub fn uninstall(binary: &str) -> Result<()> {
         return Ok(());
     }
 
-    let text = fs::read_to_string(&path)
-        .with_context(|| format!("read {}", path.display()))?;
+    let text = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
     let mut root: Value = serde_json::from_str(&text).unwrap_or(Value::Object(Map::new()));
     let obj = root.as_object_mut().unwrap();
 
@@ -87,6 +103,7 @@ pub fn uninstall(binary: &str) -> Result<()> {
 
     let text = serde_json::to_string_pretty(&root)?;
     fs::write(&path, text).with_context(|| format!("write {}", path.display()))?;
+    instructions::uninstall_claude_instructions(&instructions::home_dir())?;
     println!("Claude: removed MCP + hooks from {}", path.display());
     Ok(())
 }
@@ -96,13 +113,6 @@ pub fn uninstall(binary: &str) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 fn install_pre_tool_use_hook(root: &mut Map<String, Value>, binary: &str) {
-    let new_hook = json!({
-        "type": "command",
-        "command": binary,
-        "args": ["hook", "pre-tool"],
-        "statusMessage": "Tagging so-context call with session ID"
-    });
-
     let hooks_obj = root
         .entry("hooks")
         .or_insert(json!({}))
@@ -115,32 +125,20 @@ fn install_pre_tool_use_hook(root: &mut Map<String, Value>, binary: &str) {
         .as_array_mut()
         .unwrap();
 
-    let pos = event_arr.iter().position(|g| {
-        g.get("matcher")
-            .and_then(|m| m.as_str())
-            .map(|m| m == "mcp__so-context__.*")
-            .unwrap_or(false)
-    });
-
-    if let Some(idx) = pos {
-        if let Some(inner) = event_arr[idx]
-            .as_object_mut()
-            .and_then(|g| g.get_mut("hooks"))
-            .and_then(|h| h.as_array_mut())
-        {
-            inner.retain(|h| {
-                h.get("args")
-                    .and_then(|a| a.as_array())
-                    .map(|a| a.iter().all(|v| v.as_str() != Some("pre-tool")))
-                    .unwrap_or(true)
-            });
-            inner.push(new_hook);
-        }
-    } else {
-        event_arr.push(json!({
-            "matcher": "mcp__so-context__.*",
-            "hooks": [new_hook]
-        }));
+    install_pre_tool_group(
+        event_arr,
+        SO_CONTEXT_MCP_MATCHER,
+        make_pre_tool_handler(binary, "Tagging so-context call with session ID"),
+    );
+    for matcher in NATIVE_SHELL_MATCHERS {
+        install_pre_tool_group(
+            event_arr,
+            matcher,
+            make_pre_tool_handler(
+                binary,
+                "Routing one-shot shell commands through so-context shell",
+            ),
+        );
     }
 }
 
@@ -159,7 +157,7 @@ fn remove_pre_tool_use_hook(root: &mut Map<String, Value>, binary: &str) {
         let is_so_context_matcher = group
             .get("matcher")
             .and_then(|m| m.as_str())
-            .map(|m| m == "mcp__so-context__.*")
+            .map(|m| m == SO_CONTEXT_MCP_MATCHER || NATIVE_SHELL_MATCHERS.contains(&m))
             .unwrap_or(false);
         let has_our_hook = group
             .get("hooks")
@@ -179,6 +177,45 @@ fn remove_pre_tool_use_hook(root: &mut Map<String, Value>, binary: &str) {
             .unwrap_or(false);
         !(is_so_context_matcher && has_our_hook)
     });
+}
+
+fn install_pre_tool_group(event_arr: &mut Vec<Value>, matcher: &str, new_hook: Value) {
+    let pos = event_arr.iter().position(|g| {
+        g.get("matcher")
+            .and_then(|m| m.as_str())
+            .map(|m| m == matcher)
+            .unwrap_or(false)
+    });
+
+    if let Some(idx) = pos {
+        if let Some(inner) = event_arr[idx]
+            .as_object_mut()
+            .and_then(|g| g.get_mut("hooks"))
+            .and_then(|h| h.as_array_mut())
+        {
+            inner.retain(|h| {
+                h.get("args")
+                    .and_then(|a| a.as_array())
+                    .map(|a| a.iter().all(|v| v.as_str() != Some("pre-tool")))
+                    .unwrap_or(true)
+            });
+            inner.push(new_hook);
+        }
+    } else {
+        event_arr.push(json!({
+            "matcher": matcher,
+            "hooks": [new_hook]
+        }));
+    }
+}
+
+fn make_pre_tool_handler(binary: &str, status_message: &str) -> Value {
+    json!({
+        "type": "command",
+        "command": binary,
+        "args": ["hook", "pre-tool"],
+        "statusMessage": status_message
+    })
 }
 
 // ---------------------------------------------------------------------------

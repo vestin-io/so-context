@@ -1,14 +1,16 @@
 use std::env;
+use std::path::PathBuf;
 use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Result, bail};
 
+use super::command_string::{current_shell_program, logical_argv_for_shell_command};
 use super::exec;
+use super::output_cache;
 use super::patterns;
-use super::record;
-use super::types::{RunOutput, ShellInvocation, ShellOutputMode, ShellPattern, ShellResult};
+use super::types::{RunOutput, ShellInvocation, ShellOutputMode, ShellResult};
 
 const RUN_ID_ENV: &str = "SO_CONTEXT_SHELL_RUN_ID";
 
@@ -36,64 +38,106 @@ impl ShellRunner {
     }
 
     pub fn run(&self, argv: &[String]) -> Result<RunOutput> {
+        self.run_in_dir(argv, None)
+    }
+
+    pub fn run_in_dir(&self, argv: &[String], cwd: Option<PathBuf>) -> Result<RunOutput> {
         if argv.is_empty() {
             bail!("shell command requires at least one argument");
         }
 
-        let invocation = ShellInvocation::new(argv.to_vec());
+        let invocation = match cwd {
+            Some(cwd) => ShellInvocation::with_cwd(argv.to_vec(), cwd),
+            None => ShellInvocation::new(argv.to_vec()),
+        };
+        self.run_invocation(invocation)
+    }
+
+    pub fn run_command_string(&self, command: &str, cwd: Option<PathBuf>) -> Result<RunOutput> {
+        let command = command.trim();
+        if command.is_empty() {
+            bail!("shell command string must not be empty");
+        }
+
+        let logical_argv = logical_argv_for_shell_command(command);
+        let shell_program = current_shell_program();
+        let invocation = match cwd {
+            Some(cwd) => ShellInvocation::shell_command_with_cwd(
+                logical_argv,
+                shell_program,
+                command.to_string(),
+                cwd,
+            ),
+            None => {
+                ShellInvocation::shell_command(logical_argv, shell_program, command.to_string())
+            }
+        };
+        self.run_invocation(invocation)
+    }
+
+    fn run_invocation(&self, invocation: ShellInvocation) -> Result<RunOutput> {
         let run_id = resolve_run_id();
         let result = exec::execute(invocation)?;
         if self.options.full {
             return self.render_full_output(&run_id, result);
         }
 
+        let full_output = result.render_full();
         let compressed = patterns::compress(&result);
         let compressed_rendered = compressed.render();
-        let (rendered, output_mode) = self.select_rendered_output(&result, compressed_rendered);
-        self.persist_result(&run_id, &result, compressed.pattern, &rendered, output_mode);
+        let (rendered, output_mode) =
+            self.select_rendered_output(&full_output, compressed_rendered);
 
-        Ok(RunOutput {
+        let output = RunOutput {
+            run_id: run_id.to_string(),
+            invocation: result.invocation.clone(),
+            pattern: compressed.pattern,
             rendered,
+            full_output,
             exit_code: result.exit_code,
-        })
+            output_mode,
+            requested_full: false,
+            stdout_bytes: result.stdout.len(),
+            stderr_bytes: result.stderr.len(),
+        };
+        output_cache::store_run_output(&output);
+        Ok(output)
     }
 
     fn render_full_output(&self, run_id: &str, result: ShellResult) -> Result<RunOutput> {
         let pattern = patterns::classify_only(&result);
-        let rendered = result.render_full();
-        self.persist_result(run_id, &result, pattern, &rendered, ShellOutputMode::Full);
+        let full_output = result.render_full();
 
-        Ok(RunOutput {
-            rendered,
+        let output = RunOutput {
+            run_id: run_id.to_string(),
+            invocation: result.invocation.clone(),
+            pattern,
+            rendered: full_output.clone(),
+            full_output,
             exit_code: result.exit_code,
-        })
+            output_mode: ShellOutputMode::Full,
+            requested_full: true,
+            stdout_bytes: result.stdout.len(),
+            stderr_bytes: result.stderr.len(),
+        };
+        output_cache::store_run_output(&output);
+        Ok(output)
     }
 
     fn select_rendered_output(
         &self,
-        result: &ShellResult,
+        full_output: &str,
         compressed_rendered: String,
     ) -> (String, ShellOutputMode) {
-        if compressed_rendered.len() >= result.render_full_len() {
-            return (result.render_full(), ShellOutputMode::RawFallback);
+        if compressed_rendered.len() >= full_output.len() {
+            return (full_output.to_string(), ShellOutputMode::RawFallback);
         }
 
         (compressed_rendered, ShellOutputMode::Compressed)
     }
-
-    fn persist_result(
-        &self,
-        run_id: &str,
-        result: &ShellResult,
-        pattern: ShellPattern,
-        rendered: &str,
-        output_mode: ShellOutputMode,
-    ) {
-        let _ = record::persist(run_id, result, pattern, rendered, output_mode);
-    }
 }
 
-fn resolve_run_id() -> String {
+pub fn resolve_run_id() -> String {
     if let Ok(run_id) = env::var(RUN_ID_ENV)
         && !run_id.trim().is_empty()
     {

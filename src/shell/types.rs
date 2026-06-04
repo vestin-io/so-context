@@ -1,11 +1,53 @@
+use std::path::{Path, PathBuf};
+
 #[derive(Debug, Clone)]
 pub struct ShellInvocation {
     pub argv: Vec<String>,
+    pub cwd: Option<PathBuf>,
+    pub command_string: Option<String>,
+    pub shell_program: Option<String>,
 }
 
 impl ShellInvocation {
     pub fn new(argv: Vec<String>) -> Self {
-        Self { argv }
+        Self {
+            argv,
+            cwd: None,
+            command_string: None,
+            shell_program: None,
+        }
+    }
+
+    pub fn with_cwd(argv: Vec<String>, cwd: PathBuf) -> Self {
+        Self {
+            argv,
+            cwd: Some(cwd),
+            command_string: None,
+            shell_program: None,
+        }
+    }
+
+    pub fn shell_command(argv: Vec<String>, shell_program: String, command_string: String) -> Self {
+        Self {
+            argv,
+            cwd: None,
+            command_string: Some(command_string),
+            shell_program: Some(shell_program),
+        }
+    }
+
+    pub fn shell_command_with_cwd(
+        argv: Vec<String>,
+        shell_program: String,
+        command_string: String,
+        cwd: PathBuf,
+    ) -> Self {
+        Self {
+            argv,
+            cwd: Some(cwd),
+            command_string: Some(command_string),
+            shell_program: Some(shell_program),
+        }
     }
 
     pub fn program(&self) -> &str {
@@ -16,8 +58,35 @@ impl ShellInvocation {
         &self.argv[1..]
     }
 
+    pub fn cwd(&self) -> Option<&Path> {
+        self.cwd.as_deref()
+    }
+
+    pub fn command_string(&self) -> Option<&str> {
+        self.command_string.as_deref()
+    }
+
+    pub fn execution_program(&self) -> &str {
+        self.shell_program
+            .as_deref()
+            .unwrap_or_else(|| self.program())
+    }
+
+    pub fn execution_args(&self) -> Vec<String> {
+        if let Some(command_string) = &self.command_string {
+            return vec![
+                crate::shell::shell_flag().to_string(),
+                command_string.clone(),
+            ];
+        }
+
+        self.args().to_vec()
+    }
+
     pub fn command_line(&self) -> String {
-        Self::render_argv(&self.argv)
+        self.command_string
+            .clone()
+            .unwrap_or_else(|| Self::render_argv(&self.argv))
     }
 
     pub(crate) fn render_argv(argv: &[String]) -> String {
@@ -45,14 +114,6 @@ impl ShellResult {
         }
     }
 
-    pub fn render_full_len(&self) -> usize {
-        match (self.stdout.is_empty(), self.stderr.is_empty()) {
-            (false, true) => self.stdout.len(),
-            (true, false) => with_trailing_newline_len(&self.stderr),
-            _ => self.render_full_body_len(),
-        }
-    }
-
     fn render_full_body(&self) -> String {
         let mut output = String::with_capacity(self.stdout.len() + self.stderr.len() + 1);
 
@@ -70,31 +131,20 @@ impl ShellResult {
         }
         output
     }
-
-    fn render_full_body_len(&self) -> usize {
-        let mut len = 0;
-
-        if !self.stdout.is_empty() {
-            len += self.stdout.len();
-            if !self.stdout.ends_with('\n') && !self.stderr.is_empty() {
-                len += 1;
-            }
-        }
-        if !self.stderr.is_empty() {
-            len += self.stderr.len();
-            if !self.stderr.ends_with('\n') {
-                len += 1;
-            }
-        }
-
-        len
-    }
 }
 
 #[derive(Debug, Clone)]
 pub struct RunOutput {
+    pub run_id: String,
+    pub invocation: ShellInvocation,
+    pub pattern: ShellPattern,
     pub rendered: String,
+    pub full_output: String,
     pub exit_code: i32,
+    pub output_mode: ShellOutputMode,
+    pub requested_full: bool,
+    pub stdout_bytes: usize,
+    pub stderr_bytes: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -331,10 +381,6 @@ fn with_trailing_newline(text: &str) -> String {
     } else {
         format!("{text}\n")
     }
-}
-
-fn with_trailing_newline_len(text: &str) -> usize {
-    text.len() + usize::from(!text.ends_with('\n'))
 }
 
 #[cfg(test)]

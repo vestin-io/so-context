@@ -16,7 +16,7 @@ pub fn route() -> ToolRoute<BuiltinServer> {
         Tool::new(
             "so_references",
             "Find all usages of a named symbol (callers, callees, imports, or all). \
-             Run so_read(mode=graph) or graph_watch first to build the index.",
+             Index the project first if the code graph is missing or stale.",
             schema(),
         ),
         |ctx| Box::pin(async move { handler(ctx) }),
@@ -24,9 +24,9 @@ pub fn route() -> ToolRoute<BuiltinServer> {
 }
 
 fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rmcp::ErrorData> {
-    let client         = ctx.service.client();
+    let client = ctx.service.client();
     let client_version = ctx.service.client_version();
-    let connection_id  = ctx.service.connection_id();
+    let connection_id = ctx.service.connection_id();
 
     let args = ctx
         .arguments
@@ -38,7 +38,7 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
         .filter(|s| !s.is_empty())
     {
         Some(sid) => (sid.to_string(), "hook"),
-        None      => (connection_id,   "connection"),
+        None => (connection_id, "connection"),
     };
 
     let symbol = args
@@ -66,23 +66,26 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
     let duration_ms = timer.elapsed_ms();
 
     let mut ev = EventRecord::new(&session_id, "so_references");
-    ev.client         = client;
+    ev.client = client;
     ev.client_version = client_version;
-    ev.client_source  = "client_info".to_string();
+    ev.client_source = "client_info".to_string();
     ev.session_source = session_source.to_string();
-    ev.project        = Some(path.to_string());
-    ev.params         = Some(serde_json::json!({
-        "symbol": symbol, "path": path, "kind": kind,
-        "include_declaration": include_declaration,
-    }).to_string());
-    ev.duration_ms    = Some(duration_ms);
+    ev.project = Some(path.to_string());
+    ev.params = Some(
+        serde_json::json!({
+            "symbol": symbol, "path": path, "kind": kind,
+            "include_declaration": include_declaration,
+        })
+        .to_string(),
+    );
+    ev.duration_ms = Some(duration_ms);
 
     match call_result {
         Ok(refs) => {
             let output = format_references(symbol, kind, &refs);
             ev.actual_tokens = Some(count_tokens(&output));
-            ev.actual_size   = Some(output.len() as i64);
-            ev.result_ok     = true;
+            ev.actual_size = Some(output.len() as i64);
+            ev.result_ok = true;
             enqueue(ev);
             Ok(CallToolResult::success(vec![Content::text(output)]))
         }
@@ -94,11 +97,7 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
     }
 }
 
-fn format_references(
-    symbol: &str,
-    kind: &str,
-    refs: &[core_graph::ReferenceEntry],
-) -> String {
+fn format_references(symbol: &str, kind: &str, refs: &[core_graph::ReferenceEntry]) -> String {
     if refs.is_empty() {
         return format!("No references found for `{symbol}` (kind={kind}).");
     }

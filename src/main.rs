@@ -1,3 +1,5 @@
+#[path = "core/event_spool.rs"]
+mod core_event_spool;
 #[path = "core/events.rs"]
 pub mod core_events;
 #[path = "core/graph/mod.rs"]
@@ -6,9 +8,9 @@ mod core_graph;
 mod core_read;
 #[path = "core/tokens.rs"]
 pub mod core_tokens;
+mod daemon;
 #[path = "core/file_visit_cache.rs"]
 pub mod file_visit_cache;
-mod daemon;
 mod hook;
 mod mcp;
 
@@ -21,8 +23,15 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::process;
 
+use crate::core_event_spool::{
+    EventSpoolTarget, resolve_reliable_project_root, spool_event_record,
+};
+use crate::core_events::Timer;
 use daemon::Daemon;
-use shell::{ShellRunOptions, ShellRunner};
+use shell::{
+    ShellEventContext, ShellRunOptions, ShellRunner, build_shell_error_event, build_shell_event,
+    resolve_run_id,
+};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -39,12 +48,14 @@ struct Cli {
 enum HookCommands {
     /// PreToolUse hook handler for agent CLIs (Claude Code, Codex).
     ///
-    /// Reads the hook JSON from stdin, injects _so_session_id into the
-    /// tool arguments for so-context MCP tool calls, and writes the
-    /// rewritten input to stdout. Exit 0 with no output for non-so-context
-    /// tools (agent continues normally).
+    /// Reads the hook JSON from stdin. For so-context MCP tools it injects
+    /// `_so_session_id`. For native shell calls it rewrites short,
+    /// one-shot commands through `so-context shell`.
+    /// Exit 0 with no output for everything else (agent continues normally).
     ///
-    /// Register as a PreToolUse hook with matcher "mcp__so-context__.*".
+    /// Register as a PreToolUse hook with matchers `"mcp__so-context__.*"`
+    /// plus the shell-tool aliases this agent exposes (for example `"Bash"`
+    /// or `"runTerminalCommand"`).
     PreTool,
     /// PostCompact hook handler for Claude Code.
     ///
@@ -87,8 +98,11 @@ enum Commands {
         /// Print raw command output instead of the compressed shell view.
         #[arg(long)]
         full: bool,
+        /// Execute the given command string through the current shell, preserving native shell semantics.
+        #[arg(short = 'c', long = "command", conflicts_with = "argv")]
+        command: Option<String>,
         /// Command and arguments to execute.
-        #[arg(required = true, num_args = 1.., trailing_var_arg = true, allow_hyphen_values = true)]
+        #[arg(required_unless_present = "command", num_args = 1.., trailing_var_arg = true, allow_hyphen_values = true)]
         argv: Vec<String>,
     },
     /// Tell the running daemon to start watching a project directory.
@@ -140,12 +154,14 @@ async fn main() -> Result<()> {
         Commands::Daemon => {
             // Ignore SIGHUP so the daemon survives terminal disconnects.
             #[cfg(unix)]
-            unsafe { libc::signal(libc::SIGHUP, libc::SIG_IGN); }
+            unsafe {
+                libc::signal(libc::SIGHUP, libc::SIG_IGN);
+            }
             Daemon::new().run().await
         }
         Commands::Mcp => mcp::run_mcp_bridge().await,
         Commands::Hook { event } => match event {
-            HookCommands::PreTool     => hook::run_pre_tool_use_hook(),
+            HookCommands::PreTool => hook::run_pre_tool_use_hook(),
             HookCommands::PostCompact => hook::run_post_compact_hook(),
         },
         Commands::Index { path, watch } => {
@@ -157,19 +173,66 @@ async fn main() -> Result<()> {
                 Ok(())
             }
         }
-        Commands::Shell { full, argv } => {
+        Commands::Shell {
+            full,
+            command,
+            argv,
+        } => {
+            let cwd = std::env::current_dir().ok();
+            let spool_project_hint = cwd.clone();
+            let timer = Timer::start();
             let runner = ShellRunner::new(ShellRunOptions::new(full));
-            let output = runner.run(&argv)?;
+            let output = match command.as_deref() {
+                Some(command) => runner.run_command_string(command, cwd.clone()),
+                None => runner.run(&argv),
+            };
+            let output = match output {
+                Ok(output) => output,
+                Err(error) => {
+                    let context = ShellEventContext::cli_shell(resolve_run_id(), cwd.clone());
+                    let error_argv = command
+                        .as_deref()
+                        .map(shell::logical_argv_for_shell_command)
+                        .unwrap_or_else(|| argv.clone());
+                    let event = build_shell_error_event(
+                        context,
+                        &error_argv,
+                        cwd.as_deref(),
+                        full,
+                        timer.elapsed_ms(),
+                        &error.to_string(),
+                    );
+                    if let Err(persist_error) = persist_shell_cli_event(cwd.as_deref(), &event) {
+                        eprintln!(
+                            "so-context shell: failed to record error event: {persist_error}"
+                        );
+                    }
+                    return Err(error);
+                }
+            };
+            let context = ShellEventContext::cli_shell(output.run_id.clone(), cwd);
+            let event = build_shell_event(context, &output, &output.rendered, timer.elapsed_ms());
+            if let Err(persist_error) =
+                persist_shell_cli_event(spool_project_hint.as_deref(), &event)
+            {
+                eprintln!("so-context shell: failed to record event: {persist_error}");
+            }
             print!("{}", output.rendered);
             if output.exit_code != 0 {
                 process::exit(output.exit_code);
             }
             Ok(())
         }
-        Commands::Watch { path, client, session_id } => {
-            mcp::send_ctrl_request("watch", &path, client.as_deref(), session_id.as_deref()).await
-        }
-        Commands::Unwatch { path, client, session_id } => {
+        Commands::Watch {
+            path,
+            client,
+            session_id,
+        } => mcp::send_ctrl_request("watch", &path, client.as_deref(), session_id.as_deref()).await,
+        Commands::Unwatch {
+            path,
+            client,
+            session_id,
+        } => {
             mcp::send_ctrl_request("unwatch", &path, client.as_deref(), session_id.as_deref()).await
         }
         Commands::Setup { binary } => {
@@ -189,4 +252,18 @@ fn resolve_binary(binary: Option<String>) -> String {
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|_| "so-context".to_string())
     })
+}
+
+fn persist_shell_cli_event(
+    project_hint: Option<&std::path::Path>,
+    event: &crate::core_events::EventRecord,
+) -> Result<()> {
+    match resolve_reliable_project_root(project_hint) {
+        Some(project_root) => {
+            spool_event_record(EventSpoolTarget::Project(project_root.as_path()), event)
+        }
+        None => spool_event_record(EventSpoolTarget::Global, event),
+    }
+    .map(|_| ())
+    .map_err(anyhow::Error::msg)
 }

@@ -114,12 +114,13 @@ fn uninstall_plugin() -> Result<()> {
     Ok(())
 }
 
-fn install_plugin(_binary: &str) -> Result<()> {
+fn install_plugin(binary: &str) -> Result<()> {
     let path = plugin_path();
     fs::create_dir_all(path.parent().unwrap())
         .with_context(|| format!("create dir {}", path.parent().unwrap().display()))?;
 
-    let source = include_str!("so-context.ts");
+    let escaped_binary = binary.replace('\\', "\\\\").replace('"', "\\\"");
+    let source = include_str!("so-context.ts").replace("__SO_CONTEXT_BINARY__", &escaped_binary);
     fs::write(&path, source).with_context(|| format!("write {}", path.display()))?;
     println!("OpenCode: wrote plugin to {}", path.display());
     Ok(())

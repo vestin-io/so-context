@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use super::index::index_files;
-use super::sync::{load_tracked_files, sync_files};
 use super::symbols::resolve_reference_edges;
+use super::sync::{load_tracked_files, sync_files};
 
 // ---------------------------------------------------------------------------
 // GraphDb — long-lived connection owner
@@ -34,10 +34,13 @@ impl GraphDb {
     pub fn open(project_root: PathBuf) -> Result<Self, String> {
         let db_path = graph_db_path(&project_root);
         ensure_parent_dir(&db_path)?;
-        let conn =
-            Connection::open(&db_path).map_err(|e| format!("failed to open db: {e}"))?;
+        let conn = Connection::open(&db_path).map_err(|e| format!("failed to open db: {e}"))?;
         init_schema(&conn)?;
-        Ok(Self { conn, project_root, db_path })
+        Ok(Self {
+            conn,
+            project_root,
+            db_path,
+        })
     }
 
     /// Returns the path to the database file.
@@ -118,7 +121,11 @@ impl GraphDb {
 
     /// FTS search over indexed symbols. Returns formatted results and total
     /// token count of matched files (used for token saving estimates).
-    pub fn search_with_stats(&self, query: &str, limit: usize) -> Result<(String, i64, i64), String> {
+    pub fn search_with_stats(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<(String, i64, i64), String> {
         let fts_query = build_fts_query(query);
         if fts_query.is_empty() {
             return Ok(("No results.".to_string(), 0, 0));
@@ -154,14 +161,19 @@ impl GraphDb {
         for row in rows {
             let (path, kind, name, line, score) =
                 row.map_err(|e| format!("failed to read row: {e}"))?;
-            out.push(format!("{path}:{line} [{kind}] {name} (score={:.4})", score.abs()));
+            out.push(format!(
+                "{path}:{line} [{kind}] {name} (score={:.4})",
+                score.abs()
+            ));
             matched_paths.insert(path);
         }
 
         let (matched_files_tokens, matched_files_size) = if matched_paths.is_empty() {
             (0i64, 0i64)
         } else {
-            let placeholders = std::iter::repeat_n("?", matched_paths.len()).collect::<Vec<_>>().join(",");
+            let placeholders = std::iter::repeat_n("?", matched_paths.len())
+                .collect::<Vec<_>>()
+                .join(",");
             let sql = format!(
                 "SELECT COALESCE(SUM(COALESCE(token_count, 0)), 0),
                         COALESCE(SUM(COALESCE(size_bytes, 0)), 0)
@@ -232,12 +244,12 @@ impl GraphDb {
         if include_declaration {
             for (_, path, sym_kind, line) in &target_nodes {
                 results.push(ReferenceEntry {
-                    file:     path.clone(),
-                    line:     *line,
+                    file: path.clone(),
+                    line: *line,
                     ref_kind: "declaration".to_string(),
-                    symbol:   symbol.to_string(),
+                    symbol: symbol.to_string(),
                     sym_kind: sym_kind.clone(),
-                    snippet:  None,
+                    snippet: None,
                 });
             }
         }
@@ -246,71 +258,109 @@ impl GraphDb {
             match kind {
                 "callers" => {
                     // Who calls this symbol?
-                    let mut stmt = self.conn.prepare(
-                        "SELECT f.path, caller.name, caller.kind, e.line
+                    let mut stmt = self
+                        .conn
+                        .prepare(
+                            "SELECT f.path, caller.name, caller.kind, e.line
                          FROM edges e
                          JOIN nodes caller ON caller.id = e.from_node_id
                          JOIN files  f     ON f.id = caller.file_id
                          WHERE e.to_node_id = ?1 AND e.kind = 'calls'",
-                    ).map_err(|e| format!("failed to prepare callers query: {e}"))?;
-                    let rows = stmt.query_map(params![node_id], |row| {
-                        Ok((row.get::<_,String>(0)?, row.get::<_,String>(1)?,
-                            row.get::<_,String>(2)?, row.get::<_,i64>(3)?))
-                    }).map_err(|e| format!("failed to query callers: {e}"))?;
+                        )
+                        .map_err(|e| format!("failed to prepare callers query: {e}"))?;
+                    let rows = stmt
+                        .query_map(params![node_id], |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, String>(1)?,
+                                row.get::<_, String>(2)?,
+                                row.get::<_, i64>(3)?,
+                            ))
+                        })
+                        .map_err(|e| format!("failed to query callers: {e}"))?;
                     for row in rows.filter_map(|r| r.ok()) {
                         results.push(ReferenceEntry {
-                            file: row.0, line: row.3,
+                            file: row.0,
+                            line: row.3,
                             ref_kind: "caller".to_string(),
-                            symbol: row.1, sym_kind: row.2, snippet: None,
+                            symbol: row.1,
+                            sym_kind: row.2,
+                            snippet: None,
                         });
                     }
                 }
                 "callees" => {
                     // What does this symbol call?
-                    let mut stmt = self.conn.prepare(
-                        "SELECT f.path, callee.name, callee.kind, e.line
+                    let mut stmt = self
+                        .conn
+                        .prepare(
+                            "SELECT f.path, callee.name, callee.kind, e.line
                          FROM edges e
                          JOIN nodes callee ON callee.id = e.to_node_id
                          JOIN files  f     ON f.id = callee.file_id
                          WHERE e.from_node_id = ?1 AND e.kind = 'calls'",
-                    ).map_err(|e| format!("failed to prepare callees query: {e}"))?;
-                    let rows = stmt.query_map(params![node_id], |row| {
-                        Ok((row.get::<_,String>(0)?, row.get::<_,String>(1)?,
-                            row.get::<_,String>(2)?, row.get::<_,i64>(3)?))
-                    }).map_err(|e| format!("failed to query callees: {e}"))?;
+                        )
+                        .map_err(|e| format!("failed to prepare callees query: {e}"))?;
+                    let rows = stmt
+                        .query_map(params![node_id], |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, String>(1)?,
+                                row.get::<_, String>(2)?,
+                                row.get::<_, i64>(3)?,
+                            ))
+                        })
+                        .map_err(|e| format!("failed to query callees: {e}"))?;
                     for row in rows.filter_map(|r| r.ok()) {
                         results.push(ReferenceEntry {
-                            file: row.0, line: row.3,
+                            file: row.0,
+                            line: row.3,
                             ref_kind: "callee".to_string(),
-                            symbol: row.1, sym_kind: row.2, snippet: None,
+                            symbol: row.1,
+                            sym_kind: row.2,
+                            snippet: None,
                         });
                     }
                 }
                 "imports" => {
                     // Import edges where symbol is the target.
-                    let mut stmt = self.conn.prepare(
-                        "SELECT f.path, importer.name, importer.kind, e.line
+                    let mut stmt = self
+                        .conn
+                        .prepare(
+                            "SELECT f.path, importer.name, importer.kind, e.line
                          FROM edges e
                          JOIN nodes importer ON importer.id = e.from_node_id
                          JOIN files  f       ON f.id = importer.file_id
                          WHERE e.to_node_id = ?1 AND e.kind = 'imports'",
-                    ).map_err(|e| format!("failed to prepare imports query: {e}"))?;
-                    let rows = stmt.query_map(params![node_id], |row| {
-                        Ok((row.get::<_,String>(0)?, row.get::<_,String>(1)?,
-                            row.get::<_,String>(2)?, row.get::<_,i64>(3)?))
-                    }).map_err(|e| format!("failed to query imports: {e}"))?;
+                        )
+                        .map_err(|e| format!("failed to prepare imports query: {e}"))?;
+                    let rows = stmt
+                        .query_map(params![node_id], |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, String>(1)?,
+                                row.get::<_, String>(2)?,
+                                row.get::<_, i64>(3)?,
+                            ))
+                        })
+                        .map_err(|e| format!("failed to query imports: {e}"))?;
                     for row in rows.filter_map(|r| r.ok()) {
                         results.push(ReferenceEntry {
-                            file: row.0, line: row.3,
+                            file: row.0,
+                            line: row.3,
                             ref_kind: "import".to_string(),
-                            symbol: row.1, sym_kind: row.2, snippet: None,
+                            symbol: row.1,
+                            sym_kind: row.2,
+                            snippet: None,
                         });
                     }
                 }
                 _ => {
                     // "all" — callers + callees + imports
-                    let mut stmt = self.conn.prepare(
-                        "SELECT f.path, other.name, other.kind, e.line, e.kind,
+                    let mut stmt = self
+                        .conn
+                        .prepare(
+                            "SELECT f.path, other.name, other.kind, e.line, e.kind,
                                 CASE WHEN e.to_node_id = ?1 THEN 'inbound' ELSE 'outbound' END
                          FROM edges e
                          JOIN nodes other ON other.id = CASE
@@ -319,18 +369,29 @@ impl GraphDb {
                          JOIN files f ON f.id = other.file_id
                          WHERE (e.from_node_id = ?1 OR e.to_node_id = ?1)
                            AND e.kind IN ('calls', 'imports')",
-                    ).map_err(|e| format!("failed to prepare all-refs query: {e}"))?;
-                    let rows = stmt.query_map(params![node_id], |row| {
-                        Ok((row.get::<_,String>(0)?, row.get::<_,String>(1)?,
-                            row.get::<_,String>(2)?, row.get::<_,i64>(3)?,
-                            row.get::<_,String>(4)?, row.get::<_,String>(5)?))
-                    }).map_err(|e| format!("failed to query all refs: {e}"))?;
+                        )
+                        .map_err(|e| format!("failed to prepare all-refs query: {e}"))?;
+                    let rows = stmt
+                        .query_map(params![node_id], |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, String>(1)?,
+                                row.get::<_, String>(2)?,
+                                row.get::<_, i64>(3)?,
+                                row.get::<_, String>(4)?,
+                                row.get::<_, String>(5)?,
+                            ))
+                        })
+                        .map_err(|e| format!("failed to query all refs: {e}"))?;
                     for row in rows.filter_map(|r| r.ok()) {
                         let ref_kind = format!("{}:{}", row.4, row.5); // e.g. "calls:inbound"
                         results.push(ReferenceEntry {
-                            file: row.0, line: row.3,
+                            file: row.0,
+                            line: row.3,
                             ref_kind,
-                            symbol: row.1, sym_kind: row.2, snippet: None,
+                            symbol: row.1,
+                            sym_kind: row.2,
+                            snippet: None,
                         });
                     }
                 }
@@ -404,9 +465,7 @@ impl GraphDb {
             .map_err(|e| format!("failed to prepare import query: {e}"))?;
 
         let imports: Vec<String> = stmt
-            .query_map(params![file_id, project_id], |row| {
-                row.get::<_, String>(0)
-            })
+            .query_map(params![file_id, project_id], |row| row.get::<_, String>(0))
             .map_err(|e| format!("failed to query imports: {e}"))?
             .filter_map(|r| r.ok())
             .collect();
@@ -426,20 +485,24 @@ impl GraphDb {
         let symbols: Vec<SymbolEntry> = stmt
             .query_map(params![file_id, project_id], |row| {
                 Ok(SymbolEntry {
-                    kind:       row.get(0)?,
-                    name:       row.get(1)?,
-                    signature:  row.get(2)?,
+                    kind: row.get(0)?,
+                    name: row.get(1)?,
+                    signature: row.get(2)?,
                     visibility: row.get(3)?,
-                    line:       row.get(4)?,
-                    is_async:   row.get::<_, i64>(5)? != 0,
-                    is_static:  row.get::<_, i64>(6)? != 0,
+                    line: row.get(4)?,
+                    is_async: row.get::<_, i64>(5)? != 0,
+                    is_static: row.get::<_, i64>(6)? != 0,
                 })
             })
             .map_err(|e| format!("failed to query symbols: {e}"))?
             .filter_map(|r| r.ok())
             .collect();
 
-        Ok(Some(FileOutline { language, imports, symbols }))
+        Ok(Some(FileOutline {
+            language,
+            imports,
+            symbols,
+        }))
     }
 }
 
@@ -451,38 +514,38 @@ impl GraphDb {
 #[derive(Debug)]
 pub struct FileOutline {
     pub language: String,
-    pub imports:  Vec<String>,
-    pub symbols:  Vec<SymbolEntry>,
+    pub imports: Vec<String>,
+    pub symbols: Vec<SymbolEntry>,
 }
 
 /// A single symbol (function, struct, class, …) extracted from a file.
 #[derive(Debug)]
 pub struct SymbolEntry {
-    pub kind:       String,
-    pub name:       String,
-    pub signature:  String,
+    pub kind: String,
+    pub name: String,
+    pub signature: String,
     pub visibility: String,
-    pub line:       i64,
-    pub is_async:   bool,
-    pub is_static:  bool,
+    pub line: i64,
+    pub is_async: bool,
+    pub is_static: bool,
 }
 /// A single reference entry returned by [`GraphDb::query_references`].
 #[derive(Debug)]
 pub struct ReferenceEntry {
     /// Project-relative file path where the reference appears.
-    pub file:     String,
+    pub file: String,
     /// Line number of the reference.
-    pub line:     i64,
+    pub line: i64,
     /// Kind of reference: `caller`, `callee`, `import`, `declaration`,
     /// or `calls:inbound` / `calls:outbound` in `all` mode.
     pub ref_kind: String,
     /// Name of the referencing (or referenced) symbol.
-    pub symbol:   String,
+    pub symbol: String,
     /// Tree-sitter kind of the referencing symbol.
     pub sym_kind: String,
     /// Optional surrounding code snippet (not populated by default; reserved for future use).
     #[allow(dead_code)]
-    pub snippet:  Option<String>,
+    pub snippet: Option<String>,
 }
 
 ///
