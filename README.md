@@ -94,8 +94,6 @@ so-context shell -- git diff
 so-context shell --full -- git diff
 ```
 
-Shell docs live under [docs/shell/](docs/shell/README.md) (architecture, [support matrix](docs/shell/support.md), [audit](docs/shell/audit.md)).
-
 ---
 
 ## MCP tools
