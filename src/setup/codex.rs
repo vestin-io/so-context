@@ -16,6 +16,7 @@
 use super::instructions;
 use anyhow::{Context, Result};
 use std::fs;
+use std::path::Path;
 use std::path::PathBuf;
 use toml_edit::{Array, DocumentMut, Item, Table, value};
 
@@ -164,7 +165,7 @@ fn install_pre_tool_group(event_aot: &mut toml_edit::ArrayOfTables, matcher: &st
             let to_remove: Vec<usize> = inner
                 .iter()
                 .enumerate()
-                .filter(|(_, h)| is_pre_tool_handler(h))
+                .filter(|(_, h)| is_so_context_pre_tool_handler(h))
                 .map(|(i, _)| i)
                 .collect();
             for i in to_remove.into_iter().rev() {
@@ -192,23 +193,48 @@ fn make_pre_tool_handler(binary: &str, status_message: &str) -> Table {
     handler
 }
 
-fn is_pre_tool_handler(hook: &Table) -> bool {
+fn command_invokes_so_context_hook(command: &str, suffix: &str) -> bool {
+    let Some(binary) = command.strip_suffix(suffix) else {
+        return false;
+    };
+    Path::new(binary.trim_end())
+        .file_name()
+        .and_then(|name| name.to_str())
+        == Some("so-context")
+}
+
+fn is_legacy_so_context_hook(hook: &Table, hook_name: &str) -> bool {
     let command_matches = hook
         .get("command")
         .and_then(|c| c.as_str())
-        .map(|command| command.contains(" hook pre-tool"))
+        .map(|command| {
+            Path::new(command)
+                .file_name()
+                .and_then(|name| name.to_str())
+                == Some("so-context")
+        })
         .unwrap_or(false);
-    let legacy_args_match = hook
+    let args_match = hook
         .get("args")
         .and_then(|a| a.as_array())
         .map(|args| {
             args.len() == 2
                 && args.get(0).and_then(|v| v.as_str()) == Some("hook")
-                && args.get(1).and_then(|v| v.as_str()) == Some("pre-tool")
+                && args.get(1).and_then(|v| v.as_str()) == Some(hook_name)
         })
         .unwrap_or(false);
 
-    command_matches || legacy_args_match
+    command_matches && args_match
+}
+
+fn is_so_context_pre_tool_handler(hook: &Table) -> bool {
+    let command_matches = hook
+        .get("command")
+        .and_then(|c| c.as_str())
+        .map(|command| command_invokes_so_context_hook(command, " hook pre-tool"))
+        .unwrap_or(false);
+
+    command_matches || is_legacy_so_context_hook(hook, "pre-tool")
 }
 
 fn remove_pre_tool_use_hook(doc: &mut DocumentMut) {
@@ -225,20 +251,34 @@ fn remove_pre_tool_use_hook(doc: &mut DocumentMut) {
         None => return,
     };
 
-    let to_remove: Vec<usize> = aot
-        .iter()
-        .enumerate()
-        .filter(|(_, group)| {
-            group
-                .get("matcher")
-                .and_then(|m| m.as_str())
-                .map(|m| m == SO_CONTEXT_MCP_MATCHER || NATIVE_SHELL_MATCHERS.contains(&m))
-                .unwrap_or(false)
-        })
-        .map(|(i, _)| i)
-        .collect();
+    let mut groups_to_remove = Vec::new();
+    for (idx, group) in aot.iter_mut().enumerate() {
+        let matches_group = group
+            .get("matcher")
+            .and_then(|m| m.as_str())
+            .map(|m| m == SO_CONTEXT_MCP_MATCHER || NATIVE_SHELL_MATCHERS.contains(&m))
+            .unwrap_or(false);
+        if !matches_group {
+            continue;
+        }
 
-    for idx in to_remove.into_iter().rev() {
+        if let Some(inner) = group["hooks"].as_array_of_tables_mut() {
+            let to_remove: Vec<usize> = inner
+                .iter()
+                .enumerate()
+                .filter(|(_, hook)| is_so_context_pre_tool_handler(hook))
+                .map(|(i, _)| i)
+                .collect();
+            for hook_idx in to_remove.into_iter().rev() {
+                inner.remove(hook_idx);
+            }
+            if inner.is_empty() {
+                groups_to_remove.push(idx);
+            }
+        }
+    }
+
+    for idx in groups_to_remove.into_iter().rev() {
         aot.remove(idx);
     }
 }
@@ -269,7 +309,7 @@ fn install_post_compact_hook(doc: &mut DocumentMut, binary: &str) {
             group
                 .get("hooks")
                 .and_then(|h| h.as_array_of_tables())
-                .map(|inner| inner.iter().any(is_post_compact_handler))
+                .map(|inner| inner.iter().any(is_so_context_post_compact_handler))
                 .unwrap_or(false)
         })
         .map(|(i, _)| i)
@@ -295,23 +335,14 @@ fn make_post_compact_handler(binary: &str) -> Table {
     handler
 }
 
-fn is_post_compact_handler(hook: &Table) -> bool {
+fn is_so_context_post_compact_handler(hook: &Table) -> bool {
     let command_matches = hook
         .get("command")
         .and_then(|c| c.as_str())
-        .map(|command| command.contains(" hook post-compact"))
-        .unwrap_or(false);
-    let legacy_args_match = hook
-        .get("args")
-        .and_then(|a| a.as_array())
-        .map(|args| {
-            args.len() == 2
-                && args.get(0).and_then(|v| v.as_str()) == Some("hook")
-                && args.get(1).and_then(|v| v.as_str()) == Some("post-compact")
-        })
+        .map(|command| command_invokes_so_context_hook(command, " hook post-compact"))
         .unwrap_or(false);
 
-    command_matches || legacy_args_match
+    command_matches || is_legacy_so_context_hook(hook, "post-compact")
 }
 
 fn remove_post_compact_hook(doc: &mut DocumentMut) {
@@ -328,21 +359,29 @@ fn remove_post_compact_hook(doc: &mut DocumentMut) {
         None => return,
     };
 
-    // Remove any group containing our post-compact handler command.
-    let to_remove: Vec<usize> = aot
-        .iter()
-        .enumerate()
-        .filter(|(_, group)| {
-            group
-                .get("hooks")
-                .and_then(|h| h.as_array_of_tables())
-                .map(|inner| inner.iter().any(is_post_compact_handler))
-                .unwrap_or(false)
-        })
-        .map(|(i, _)| i)
-        .collect();
+    let mut groups_to_remove = Vec::new();
+    for (idx, group) in aot.iter_mut().enumerate() {
+        if let Some(inner) = group["hooks"].as_array_of_tables_mut() {
+            let to_remove: Vec<usize> = inner
+                .iter()
+                .enumerate()
+                .filter(|(_, hook)| is_so_context_post_compact_handler(hook))
+                .map(|(i, _)| i)
+                .collect();
+            for hook_idx in to_remove.into_iter().rev() {
+                inner.remove(hook_idx);
+            }
+            if inner.is_empty() {
+                groups_to_remove.push(idx);
+            }
+        }
+    }
 
-    for idx in to_remove.into_iter().rev() {
+    for idx in groups_to_remove.into_iter().rev() {
         aot.remove(idx);
     }
 }
+
+#[cfg(test)]
+#[path = "codex_tests.rs"]
+mod tests;

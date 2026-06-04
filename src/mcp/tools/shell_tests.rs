@@ -2,8 +2,9 @@ use std::path::PathBuf;
 
 use rmcp::model::JsonObject;
 
-use super::{infer_connection_cwd, parse_full_request, render_tool_text, resolve_cwd};
+use super::{parse_full_request, render_tool_text, resolve_cwd};
 use crate::daemon::watch_manager::{Consumer, ProjectStatus, WatchState};
+use crate::mcp::tools::infer_connection_project_root;
 
 #[test]
 fn infers_cwd_from_single_matching_project() {
@@ -28,7 +29,7 @@ fn infers_cwd_from_single_matching_project() {
         },
     ];
 
-    let cwd = infer_connection_cwd(&statuses, "codex", "conn-1").unwrap();
+    let cwd = infer_connection_project_root(&statuses, "codex", "conn-1").unwrap();
     assert_eq!(cwd, PathBuf::from("/tmp/alpha"));
 }
 
@@ -55,7 +56,7 @@ fn errors_when_multiple_projects_match_connection() {
         },
     ];
 
-    assert!(infer_connection_cwd(&statuses, "codex", "conn-1").is_err());
+    assert!(infer_connection_project_root(&statuses, "codex", "conn-1").is_err());
 }
 
 #[test]

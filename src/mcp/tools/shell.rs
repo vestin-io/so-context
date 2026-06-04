@@ -8,12 +8,13 @@ use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::model::{CallToolResult, Content, JsonObject, Tool};
 
 use super::BuiltinServer;
+use super::infer_connection_project_root;
 use crate::core_events::{Timer, enqueue};
 use crate::daemon::WatchManager;
 use crate::daemon::watch_manager::ProjectStatus;
 use crate::shell::{
-    ShellEventContext, ShellOutputMode, ShellRunOptions, ShellRunner, build_shell_error_event,
-    build_shell_event,
+    ShellEventContext, ShellOutputMode, ShellRunOptions, ShellRunner, SpoolOwner,
+    build_shell_error_event, build_shell_event,
 };
 
 const FULL_REASON_TEE_MISSING_OR_EXPIRED: &str = "tee_missing_or_expired";
@@ -58,7 +59,10 @@ fn handler(
     let cwd = resolve_cwd(&args, &client, &connection_id, &wm.status())?;
     let cwd_display = cwd.display().to_string();
     let timer = Timer::start();
-    let runner = ShellRunner::new(ShellRunOptions::new(full));
+    let runner = ShellRunner::new(ShellRunOptions::new(full).with_spool_owner(SpoolOwner {
+        client: client.clone(),
+        session_id: session_id.clone(),
+    }));
     let result = runner.run_in_dir(&argv, Some(cwd.clone()));
     let duration_ms = timer.elapsed_ms();
 
@@ -200,7 +204,7 @@ fn resolve_cwd(
             return Ok(cwd_path);
         }
 
-        let project_root = infer_connection_cwd(
+        let project_root = infer_connection_project_root(
             statuses,
             client.as_deref().unwrap_or("unknown"),
             connection_id,
@@ -208,40 +212,11 @@ fn resolve_cwd(
         return Ok(project_root.join(cwd_path));
     }
 
-    infer_connection_cwd(
+    infer_connection_project_root(
         statuses,
         client.as_deref().unwrap_or("unknown"),
         connection_id,
     )
-}
-
-fn infer_connection_cwd(
-    statuses: &[ProjectStatus],
-    client: &str,
-    connection_id: &str,
-) -> Result<PathBuf, rmcp::ErrorData> {
-    let mut matches: Vec<PathBuf> = statuses
-        .iter()
-        .filter(|status| {
-            status
-                .consumers
-                .iter()
-                .any(|consumer| consumer.client == client && consumer.session_id == connection_id)
-        })
-        .map(|status| status.path.clone())
-        .collect();
-
-    match matches.len() {
-        1 => Ok(matches.remove(0)),
-        0 => Err(rmcp::ErrorData::invalid_params(
-            "could not infer cwd from watched projects for this MCP connection; pass cwd explicitly",
-            None,
-        )),
-        _ => Err(rmcp::ErrorData::invalid_params(
-            "multiple watched projects are active for this MCP connection; pass cwd explicitly",
-            None,
-        )),
-    }
 }
 
 fn render_tool_text(rendered: &str, exit_code: i32) -> String {

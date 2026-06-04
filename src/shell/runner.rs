@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Result, bail};
 
 use super::exec;
-use super::output_spool;
+use super::output_spool::{self, SpoolOwner};
 use super::patterns;
 use super::types::{RunOutput, ShellInvocation, ShellOutputMode, ShellResult};
 
@@ -15,18 +15,27 @@ const RUN_ID_ENV: &str = "SO_CONTEXT_SHELL_RUN_ID";
 
 static RUN_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct ShellRunOptions {
     pub full: bool,
+    pub spool_owner: Option<SpoolOwner>,
 }
 
 impl ShellRunOptions {
     pub fn new(full: bool) -> Self {
-        Self { full }
+        Self {
+            full,
+            spool_owner: None,
+        }
+    }
+
+    pub fn with_spool_owner(mut self, owner: SpoolOwner) -> Self {
+        self.spool_owner = Some(owner);
+        self
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct ShellRunner {
     options: ShellRunOptions,
 }
@@ -73,7 +82,7 @@ impl ShellRunner {
             stdout_bytes: result.stdout.len(),
             stderr_bytes: result.stderr.len(),
         };
-        output_spool::store_run_output(&output);
+        output_spool::store_run_output(&output, self.options.spool_owner.as_ref());
         Ok(output)
     }
 
@@ -93,7 +102,7 @@ impl ShellRunner {
             stdout_bytes: result.stdout.len(),
             stderr_bytes: result.stderr.len(),
         };
-        output_spool::store_run_output(&output);
+        output_spool::store_run_output(&output, self.options.spool_owner.as_ref());
         Ok(output)
     }
 

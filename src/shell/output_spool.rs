@@ -13,15 +13,27 @@ const TEE_DIR_ENV: &str = "SO_CONTEXT_SHELL_TEE_DIR";
 #[derive(Debug, Clone)]
 pub struct SpooledShellOutput {
     pub run_id: String,
+    pub client: Option<String>,
+    pub session_id: Option<String>,
     pub argv: Vec<String>,
     pub cwd: Option<PathBuf>,
     pub full_output: String,
     pub exit_code: i32,
 }
 
+#[derive(Debug, Clone)]
+pub struct SpoolOwner {
+    pub client: Option<String>,
+    pub session_id: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SpooledShellOutputMeta {
     run_id: String,
+    #[serde(default)]
+    client: Option<String>,
+    #[serde(default)]
+    session_id: Option<String>,
     argv: Vec<String>,
     cwd: Option<PathBuf>,
     exit_code: i32,
@@ -36,12 +48,16 @@ struct SpoolEntry {
     total_bytes: u64,
 }
 
-pub fn store_run_output(output: &RunOutput) {
-    store_run_output_in_dir(&tee_dir(), output);
+pub fn store_run_output(output: &RunOutput, owner: Option<&SpoolOwner>) {
+    store_run_output_in_dir(&tee_dir(), output, owner);
 }
 
-pub fn get_spooled_output(run_id: &str) -> Option<SpooledShellOutput> {
-    get_spooled_output_in_dir(&tee_dir(), run_id)
+pub fn get_spooled_output(
+    run_id: &str,
+    requester_session_id: &str,
+    requester_client: Option<&str>,
+) -> Option<SpooledShellOutput> {
+    get_spooled_output_in_dir(&tee_dir(), run_id, requester_session_id, requester_client)
 }
 
 fn read_spooled_output(tee_dir: &Path, run_id: &str) -> Option<SpooledShellOutput> {
@@ -52,6 +68,8 @@ fn read_spooled_output(tee_dir: &Path, run_id: &str) -> Option<SpooledShellOutpu
     let meta: SpooledShellOutputMeta = serde_json::from_str(&meta).ok()?;
     Some(SpooledShellOutput {
         run_id: meta.run_id,
+        client: meta.client,
+        session_id: meta.session_id,
         argv: meta.argv,
         cwd: meta.cwd,
         full_output,
@@ -79,7 +97,7 @@ fn tee_dir() -> PathBuf {
     PathBuf::from(".so-context").join("shell-tee")
 }
 
-fn store_run_output_in_dir(tee_dir: &Path, output: &RunOutput) {
+fn store_run_output_in_dir(tee_dir: &Path, output: &RunOutput, owner: Option<&SpoolOwner>) {
     if fs::create_dir_all(tee_dir).is_err() {
         return;
     }
@@ -93,6 +111,8 @@ fn store_run_output_in_dir(tee_dir: &Path, output: &RunOutput) {
     let meta_path = tee_dir.join(format!("{}.json", output.run_id));
     let meta = SpooledShellOutputMeta {
         run_id: output.run_id.clone(),
+        client: owner.and_then(|owner| owner.client.clone()),
+        session_id: owner.map(|owner| owner.session_id.clone()),
         argv: output.invocation.argv.clone(),
         cwd: output.invocation.cwd().map(PathBuf::from),
         exit_code: output.exit_code,
@@ -118,13 +138,38 @@ fn store_run_output_in_dir(tee_dir: &Path, output: &RunOutput) {
     );
 }
 
-fn get_spooled_output_in_dir(tee_dir: &Path, run_id: &str) -> Option<SpooledShellOutput> {
+fn get_spooled_output_in_dir(
+    tee_dir: &Path,
+    run_id: &str,
+    requester_session_id: &str,
+    requester_client: Option<&str>,
+) -> Option<SpooledShellOutput> {
     rotate_spool(
         tee_dir,
         Duration::from_secs(SPOOL_TTL_SECS),
         MAX_SPOOL_BYTES,
     );
-    read_spooled_output(tee_dir, run_id)
+    let output = read_spooled_output(tee_dir, run_id)?;
+    if is_spool_access_allowed(&output, requester_session_id, requester_client) {
+        Some(output)
+    } else {
+        None
+    }
+}
+
+fn is_spool_access_allowed(
+    output: &SpooledShellOutput,
+    requester_session_id: &str,
+    requester_client: Option<&str>,
+) -> bool {
+    if output.session_id.as_deref() != Some(requester_session_id) {
+        return false;
+    }
+
+    match (output.client.as_deref(), requester_client) {
+        (Some(owner_client), Some(requester_client)) => owner_client == requester_client,
+        _ => true,
+    }
 }
 
 fn rotate_spool(tee_dir: &Path, ttl: Duration, max_bytes: u64) {
@@ -208,7 +253,7 @@ fn now_epoch_secs() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        SPOOL_TTL_SECS, collect_entries, get_spooled_output_in_dir, rotate_spool,
+        SPOOL_TTL_SECS, SpoolOwner, collect_entries, get_spooled_output_in_dir, rotate_spool,
         store_run_output_in_dir,
     };
     use crate::shell::types::{RunOutput, ShellInvocation, ShellOutputMode, ShellPattern};
@@ -247,8 +292,13 @@ mod tests {
     #[test]
     fn stores_and_reads_spooled_output() {
         let dir = temp_dir("so-context-shell-tee");
-        store_run_output_in_dir(&dir, &sample_output("run-1", "hello world"));
-        let cached = get_spooled_output_in_dir(&dir, "run-1").expect("spooled output");
+        let owner = SpoolOwner {
+            client: Some("codex".into()),
+            session_id: "session-1".into(),
+        };
+        store_run_output_in_dir(&dir, &sample_output("run-1", "hello world"), Some(&owner));
+        let cached = get_spooled_output_in_dir(&dir, "run-1", "session-1", Some("codex"))
+            .expect("spooled output");
         assert_eq!(cached.full_output, "hello world");
         assert_eq!(cached.argv, vec!["echo".to_string(), "hello".to_string()]);
 
@@ -275,13 +325,13 @@ mod tests {
     fn rotates_oldest_entries_when_total_size_exceeds_limit() {
         let dir = temp_dir("so-context-shell-tee-rotate");
 
-        store_run_output_in_dir(&dir, &sample_output("run-1", &"a".repeat(80)));
+        store_run_output_in_dir(&dir, &sample_output("run-1", &"a".repeat(80)), None);
         std::thread::sleep(Duration::from_millis(10));
-        store_run_output_in_dir(&dir, &sample_output("run-2", &"b".repeat(80)));
+        store_run_output_in_dir(&dir, &sample_output("run-2", &"b".repeat(80)), None);
         std::thread::sleep(Duration::from_millis(10));
-        store_run_output_in_dir(&dir, &sample_output("run-3", &"c".repeat(80)));
+        store_run_output_in_dir(&dir, &sample_output("run-3", &"c".repeat(80)), None);
 
-        rotate_spool(&dir, Duration::from_secs(SPOOL_TTL_SECS), 220);
+        rotate_spool(&dir, Duration::from_secs(SPOOL_TTL_SECS), 400);
         let entries = collect_entries(&dir).unwrap();
         let remaining_logs: Vec<String> = entries
             .into_iter()
@@ -294,7 +344,24 @@ mod tests {
             })
             .collect();
         assert!(!remaining_logs.contains(&"run-1".to_string()));
+        assert!(!remaining_logs.is_empty());
         assert!(remaining_logs.contains(&"run-3".to_string()));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn denies_spooled_output_to_other_sessions() {
+        let dir = temp_dir("so-context-shell-tee-access");
+        let owner = SpoolOwner {
+            client: Some("codex".into()),
+            session_id: "session-1".into(),
+        };
+        store_run_output_in_dir(&dir, &sample_output("run-1", "secret"), Some(&owner));
+
+        assert!(get_spooled_output_in_dir(&dir, "run-1", "session-2", Some("codex")).is_none());
+        assert!(get_spooled_output_in_dir(&dir, "run-1", "session-1", Some("claude")).is_none());
+        assert!(get_spooled_output_in_dir(&dir, "run-1", "session-1", Some("codex")).is_some());
 
         let _ = fs::remove_dir_all(dir);
     }

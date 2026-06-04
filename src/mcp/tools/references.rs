@@ -7,11 +7,13 @@ use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::model::{CallToolResult, Content, JsonObject, Tool};
 
 use super::BuiltinServer;
+use super::resolve_project_path_arg;
 use crate::core_events::{EventRecord, Timer, enqueue};
 use crate::core_graph;
 use crate::core_tokens::count_tokens;
+use crate::daemon::WatchManager;
 
-pub fn route() -> ToolRoute<BuiltinServer> {
+pub fn route(wm: Arc<WatchManager>) -> ToolRoute<BuiltinServer> {
     ToolRoute::new_dyn(
         Tool::new(
             "so_references",
@@ -19,11 +21,17 @@ pub fn route() -> ToolRoute<BuiltinServer> {
              Index the project first if the code graph is missing or stale.",
             schema(),
         ),
-        |ctx| Box::pin(async move { handler(ctx) }),
+        move |ctx| {
+            let wm = Arc::clone(&wm);
+            Box::pin(async move { handler(ctx, &wm) })
+        },
     )
 }
 
-fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rmcp::ErrorData> {
+fn handler(
+    ctx: ToolCallContext<'_, BuiltinServer>,
+    wm: &WatchManager,
+) -> Result<CallToolResult, rmcp::ErrorData> {
     let client = ctx.service.client();
     let client_version = ctx.service.client_version();
     let connection_id = ctx.service.connection_id();
@@ -38,7 +46,7 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
         .filter(|s| !s.is_empty())
     {
         Some(sid) => (sid.to_string(), "hook"),
-        None => (connection_id, "connection"),
+        None => (connection_id.clone(), "connection"),
     };
 
     let symbol = args
@@ -46,10 +54,8 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| rmcp::ErrorData::invalid_params("missing string argument: symbol", None))?;
 
-    let path = args
-        .get("path")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or(".");
+    let path = resolve_project_path_arg(&args, "path", &client, &connection_id, &wm.status())?;
+    let path_display = path.display().to_string();
 
     let kind = args
         .get("kind")
@@ -62,7 +68,8 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
         .unwrap_or(false);
 
     let timer = Timer::start();
-    let call_result = core_graph::references_project(path, symbol, kind, include_declaration);
+    let call_result =
+        core_graph::references_project(&path_display, symbol, kind, include_declaration);
     let duration_ms = timer.elapsed_ms();
 
     let mut ev = EventRecord::new(&session_id, "so_references");
@@ -70,10 +77,10 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
     ev.client_version = client_version;
     ev.client_source = "client_info".to_string();
     ev.session_source = session_source.to_string();
-    ev.project = Some(path.to_string());
+    ev.project = Some(path_display.clone());
     ev.params = Some(
         serde_json::json!({
-            "symbol": symbol, "path": path, "kind": kind,
+            "symbol": symbol, "path": path_display, "kind": kind,
             "include_declaration": include_declaration,
         })
         .to_string(),
@@ -129,8 +136,7 @@ fn schema() -> Arc<JsonObject> {
                 },
                 "path": {
                     "type": "string",
-                    "default": ".",
-                    "description": "Project root path. Defaults to current directory."
+                    "description": "Project root path. Defaults to the sole watched project for the current MCP connection."
                 },
                 "kind": {
                     "type": "string",

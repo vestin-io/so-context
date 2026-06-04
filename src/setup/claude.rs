@@ -17,6 +17,7 @@ use super::instructions;
 use anyhow::{Context, Result};
 use serde_json::{Map, Value, json};
 use std::fs;
+use std::path::Path;
 use std::path::PathBuf;
 
 const SERVER_NAME: &str = "so-context";
@@ -142,7 +143,7 @@ fn install_pre_tool_use_hook(root: &mut Map<String, Value>, binary: &str) {
     }
 }
 
-fn remove_pre_tool_use_hook(root: &mut Map<String, Value>, binary: &str) {
+fn remove_pre_tool_use_hook(root: &mut Map<String, Value>, _binary: &str) {
     let arr = match root
         .get_mut("hooks")
         .and_then(|h| h.as_object_mut())
@@ -153,30 +154,28 @@ fn remove_pre_tool_use_hook(root: &mut Map<String, Value>, binary: &str) {
         None => return,
     };
 
-    arr.retain(|group| {
+    let mut empty_groups = Vec::new();
+    for (idx, group) in arr.iter_mut().enumerate() {
         let is_so_context_matcher = group
             .get("matcher")
             .and_then(|m| m.as_str())
             .map(|m| m == SO_CONTEXT_MCP_MATCHER || NATIVE_SHELL_MATCHERS.contains(&m))
             .unwrap_or(false);
-        let has_our_hook = group
-            .get("hooks")
-            .and_then(|h| h.as_array())
-            .map(|hooks| {
-                hooks.iter().any(|h| {
-                    h.get("command")
-                        .and_then(|c| c.as_str())
-                        .map(|c| c == binary)
-                        .unwrap_or(false)
-                        && h.get("args")
-                            .and_then(|a| a.as_array())
-                            .map(|a| a.iter().any(|v| v.as_str() == Some("pre-tool")))
-                            .unwrap_or(false)
-                })
-            })
-            .unwrap_or(false);
-        !(is_so_context_matcher && has_our_hook)
-    });
+        if !is_so_context_matcher {
+            continue;
+        }
+
+        if let Some(hooks) = group.get_mut("hooks").and_then(|h| h.as_array_mut()) {
+            hooks.retain(|hook| !is_so_context_hook_value(hook, "pre-tool"));
+            if hooks.is_empty() {
+                empty_groups.push(idx);
+            }
+        }
+    }
+
+    for idx in empty_groups.into_iter().rev() {
+        arr.remove(idx);
+    }
 }
 
 fn install_pre_tool_group(event_arr: &mut Vec<Value>, matcher: &str, new_hook: Value) {
@@ -193,12 +192,7 @@ fn install_pre_tool_group(event_arr: &mut Vec<Value>, matcher: &str, new_hook: V
             .and_then(|g| g.get_mut("hooks"))
             .and_then(|h| h.as_array_mut())
         {
-            inner.retain(|h| {
-                h.get("args")
-                    .and_then(|a| a.as_array())
-                    .map(|a| a.iter().all(|v| v.as_str() != Some("pre-tool")))
-                    .unwrap_or(true)
-            });
+            inner.retain(|h| !is_so_context_hook_value(h, "pre-tool"));
             inner.push(new_hook);
         }
     } else {
@@ -207,6 +201,30 @@ fn install_pre_tool_group(event_arr: &mut Vec<Value>, matcher: &str, new_hook: V
             "hooks": [new_hook]
         }));
     }
+}
+
+fn is_so_context_hook_value(hook: &Value, hook_name: &str) -> bool {
+    let command_matches = hook
+        .get("command")
+        .and_then(|c| c.as_str())
+        .map(|command| {
+            Path::new(command)
+                .file_name()
+                .and_then(|name| name.to_str())
+                == Some("so-context")
+        })
+        .unwrap_or(false);
+    let args_match = hook
+        .get("args")
+        .and_then(|a| a.as_array())
+        .map(|args| {
+            args.len() == 2
+                && args.get(0).and_then(|v| v.as_str()) == Some("hook")
+                && args.get(1).and_then(|v| v.as_str()) == Some(hook_name)
+        })
+        .unwrap_or(false);
+
+    command_matches && args_match
 }
 
 fn make_pre_tool_handler(binary: &str, status_message: &str) -> Value {
@@ -286,7 +304,7 @@ fn install_post_compact_hook(root: &mut Map<String, Value>, binary: &str) {
     }
 }
 
-fn remove_post_compact_hook(root: &mut Map<String, Value>, binary: &str) {
+fn remove_post_compact_hook(root: &mut Map<String, Value>, _binary: &str) {
     let arr = match root
         .get_mut("hooks")
         .and_then(|h| h.as_object_mut())
@@ -297,23 +315,21 @@ fn remove_post_compact_hook(root: &mut Map<String, Value>, binary: &str) {
         None => return,
     };
 
-    arr.retain(|group| {
-        let has_our_hook = group
-            .get("hooks")
-            .and_then(|h| h.as_array())
-            .map(|hooks| {
-                hooks.iter().any(|h| {
-                    h.get("command")
-                        .and_then(|c| c.as_str())
-                        .map(|c| c == binary)
-                        .unwrap_or(false)
-                        && h.get("args")
-                            .and_then(|a| a.as_array())
-                            .map(|a| a.iter().any(|v| v.as_str() == Some("post-compact")))
-                            .unwrap_or(false)
-                })
-            })
-            .unwrap_or(false);
-        !has_our_hook
-    });
+    let mut empty_groups = Vec::new();
+    for (idx, group) in arr.iter_mut().enumerate() {
+        if let Some(hooks) = group.get_mut("hooks").and_then(|h| h.as_array_mut()) {
+            hooks.retain(|hook| !is_so_context_hook_value(hook, "post-compact"));
+            if hooks.is_empty() {
+                empty_groups.push(idx);
+            }
+        }
+    }
+
+    for idx in empty_groups.into_iter().rev() {
+        arr.remove(idx);
+    }
 }
+
+#[cfg(test)]
+#[path = "claude_tests.rs"]
+mod tests;

@@ -60,7 +60,7 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
     }
 
     let timer = Timer::start();
-    let result = match get_spooled_output(&run_id) {
+    let result = match get_spooled_output(&run_id, &session_id, client.as_deref()) {
         Some(output) => {
             let text = render_cached_output(&output.full_output, output.exit_code);
             let mut tool_result = if output.exit_code == 0 {
