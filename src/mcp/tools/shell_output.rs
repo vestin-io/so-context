@@ -15,7 +15,7 @@ pub fn route() -> ToolRoute<BuiltinServer> {
     ToolRoute::new_dyn(
         Tool::new(
             "so_shell_output",
-            "Fetch raw output cached from an earlier so_shell call by run_id. The returned text content is the actual cached command output to use directly. Use this only when the user explicitly asks for verbatim raw output or the compressed shell result is missing required detail. Do not use this tool just to double-check or confirm a compressed result that already answers the request.",
+            "Fetch raw output cached from an earlier so_shell call by run_id. The returned text content is the actual cached command output to use directly. This raw output may still reflect bounded capture limits, so check the structured truncation metadata before assuming it is complete. Use this only when the user explicitly asks for verbatim raw output or the compressed shell result is missing required detail. Do not use this tool just to double-check or confirm a compressed result that already answers the request.",
             schema(),
         ),
         |ctx| Box::pin(async move { handler(ctx) }),
@@ -76,6 +76,12 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
                 "content_kind": "raw_output",
                 "source": "spool",
                 "reason": reason,
+                "stdout_truncated": output.stdout_truncated,
+                "stderr_truncated": output.stderr_truncated,
+                "capture_stdout_limit_bytes": output.capture_stdout_limit_bytes,
+                "capture_stderr_limit_bytes": output.capture_stderr_limit_bytes,
+                "raw_output_complete": output.raw_output_complete,
+                "capture_strategy": "bounded",
                 "use_policy": "only_for_verbatim_user_request_or_missing_required_detail",
                 "output_is_in_text": true,
                 "rerun_not_needed_if_text_sufficient": true,
@@ -84,7 +90,7 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
         }
         None => {
             let message = format!(
-                "no cached raw shell output found for run_id `{run_id}`; rerun so_shell with `full: true` and `full_reason: \"tee_missing_or_expired\"` if you still need the original output"
+                "no cached raw shell output found for run_id `{run_id}`; rerun so_shell with `full: true` and `full_reason: \"tee_missing_or_expired\"` if you still need a larger bounded raw capture"
             );
             let mut tool_result = CallToolResult::error(vec![Content::text(message.clone())]);
             tool_result.structured_content = Some(serde_json::json!({

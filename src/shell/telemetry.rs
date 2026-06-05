@@ -107,6 +107,12 @@ fn shell_params(output: &RunOutput, displayed_output: &str) -> serde_json::Value
         "render_mode": output.output_mode.label(),
         "raw_stdout_bytes": output.stdout_bytes,
         "raw_stderr_bytes": output.stderr_bytes,
+        "stdout_truncated": output.stdout_truncated,
+        "stderr_truncated": output.stderr_truncated,
+        "capture_stdout_limit_bytes": output.capture_stdout_limit_bytes,
+        "capture_stderr_limit_bytes": output.capture_stderr_limit_bytes,
+        "raw_output_complete": output.raw_output_complete,
+        "capture_strategy": "bounded",
         "full_output_bytes": output.full_output.len(),
         "displayed_output_bytes": displayed_output.len(),
     })

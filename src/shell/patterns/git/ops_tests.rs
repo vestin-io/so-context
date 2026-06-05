@@ -13,6 +13,12 @@ fn summarizes_add_result() {
         stdout: String::new(),
         stderr: String::new(),
         exit_code: 0,
+        stdout_total_bytes: 0,
+        stderr_total_bytes: 0,
+        stdout_truncated: false,
+        stderr_truncated: false,
+        capture_stdout_limit_bytes: 1024,
+        capture_stderr_limit_bytes: 1024,
     };
 
     let summary = summarize_add(&result);
@@ -27,6 +33,12 @@ fn summarizes_clone_result() {
         stdout: String::new(),
         stderr: "Cloning into 'repo'...\nremote: Enumerating objects: 5, done.\n".into(),
         exit_code: 0,
+        stdout_total_bytes: 0,
+        stderr_total_bytes: 59,
+        stdout_truncated: false,
+        stderr_truncated: false,
+        capture_stdout_limit_bytes: 1024,
+        capture_stderr_limit_bytes: 1024,
     };
 
     let summary = summarize_clone(&result);
@@ -43,6 +55,12 @@ fn summarizes_merge_with_stats() {
                 .into(),
         stderr: String::new(),
         exit_code: 0,
+        stdout_total_bytes: 80,
+        stderr_total_bytes: 0,
+        stdout_truncated: false,
+        stderr_truncated: false,
+        capture_stdout_limit_bytes: 1024,
+        capture_stderr_limit_bytes: 1024,
     };
 
     let summary = summarize_merge(&result);
@@ -56,6 +74,12 @@ fn summarizes_merge_conflicts() {
         stdout: "Auto-merging src/main.rs\nCONFLICT (content): Merge conflict in src/main.rs\nAutomatic merge failed; fix conflicts and then commit.\n".into(),
         stderr: String::new(),
         exit_code: 1,
+        stdout_total_bytes: 124,
+        stderr_total_bytes: 0,
+        stdout_truncated: false,
+        stderr_truncated: false,
+        capture_stdout_limit_bytes: 1024,
+        capture_stderr_limit_bytes: 1024,
     };
 
     let summary = summarize_merge(&result);
@@ -69,6 +93,12 @@ fn summarizes_tag_list() {
         stdout: "v1.0.0\nv1.1.0\nv2.0.0\n".into(),
         stderr: String::new(),
         exit_code: 0,
+        stdout_total_bytes: 21,
+        stderr_total_bytes: 0,
+        stdout_truncated: false,
+        stderr_truncated: false,
+        capture_stdout_limit_bytes: 1024,
+        capture_stderr_limit_bytes: 1024,
     };
 
     let summary = summarize_tag(&result);
@@ -82,6 +112,12 @@ fn summarizes_reset_result() {
         stdout: "Unstaged changes after reset:\nM\tsrc/main.rs\nD\tsrc/old.rs\n".into(),
         stderr: String::new(),
         exit_code: 0,
+        stdout_total_bytes: 58,
+        stderr_total_bytes: 0,
+        stdout_truncated: false,
+        stderr_truncated: false,
+        capture_stdout_limit_bytes: 1024,
+        capture_stderr_limit_bytes: 1024,
     };
 
     let summary = summarize_reset(&result);
@@ -96,6 +132,12 @@ fn summarizes_stash_save() {
         stdout: "Saved working directory and index state WIP on main: abc1234 fix\n".into(),
         stderr: String::new(),
         exit_code: 0,
+        stdout_total_bytes: 63,
+        stderr_total_bytes: 0,
+        stdout_truncated: false,
+        stderr_truncated: false,
+        capture_stdout_limit_bytes: 1024,
+        capture_stderr_limit_bytes: 1024,
     };
 
     let summary = summarize_stash(&result);
@@ -110,6 +152,12 @@ fn summarizes_stash_list() {
             .into(),
         stderr: String::new(),
         exit_code: 0,
+        stdout_total_bytes: 76,
+        stderr_total_bytes: 0,
+        stdout_truncated: false,
+        stderr_truncated: false,
+        capture_stdout_limit_bytes: 1024,
+        capture_stderr_limit_bytes: 1024,
     };
 
     let summary = summarize_stash(&result);

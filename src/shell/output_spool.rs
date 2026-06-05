@@ -19,6 +19,11 @@ pub struct SpooledShellOutput {
     pub cwd: Option<PathBuf>,
     pub full_output: String,
     pub exit_code: i32,
+    pub stdout_truncated: bool,
+    pub stderr_truncated: bool,
+    pub capture_stdout_limit_bytes: usize,
+    pub capture_stderr_limit_bytes: usize,
+    pub raw_output_complete: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -37,6 +42,11 @@ struct SpooledShellOutputMeta {
     argv: Vec<String>,
     cwd: Option<PathBuf>,
     exit_code: i32,
+    stdout_truncated: bool,
+    stderr_truncated: bool,
+    capture_stdout_limit_bytes: usize,
+    capture_stderr_limit_bytes: usize,
+    raw_output_complete: bool,
     created_at_epoch_secs: u64,
 }
 
@@ -74,6 +84,11 @@ fn read_spooled_output(tee_dir: &Path, run_id: &str) -> Option<SpooledShellOutpu
         cwd: meta.cwd,
         full_output,
         exit_code: meta.exit_code,
+        stdout_truncated: meta.stdout_truncated,
+        stderr_truncated: meta.stderr_truncated,
+        capture_stdout_limit_bytes: meta.capture_stdout_limit_bytes,
+        capture_stderr_limit_bytes: meta.capture_stderr_limit_bytes,
+        raw_output_complete: meta.raw_output_complete,
     })
 }
 
@@ -116,6 +131,11 @@ fn store_run_output_in_dir(tee_dir: &Path, output: &RunOutput, owner: Option<&Sp
         argv: output.invocation.argv.clone(),
         cwd: output.invocation.cwd().map(PathBuf::from),
         exit_code: output.exit_code,
+        stdout_truncated: output.stdout_truncated,
+        stderr_truncated: output.stderr_truncated,
+        capture_stdout_limit_bytes: output.capture_stdout_limit_bytes,
+        capture_stderr_limit_bytes: output.capture_stderr_limit_bytes,
+        raw_output_complete: output.raw_output_complete,
         created_at_epoch_secs: now_epoch_secs(),
     };
 
@@ -279,13 +299,18 @@ mod tests {
                 PathBuf::from("/tmp/project"),
             ),
             pattern: ShellPattern::Unknown,
-            rendered: "compressed".into(),
+            rendered: Some("compressed".into()),
             full_output: full_output.to_string(),
             exit_code: 0,
             output_mode: ShellOutputMode::Compressed,
             requested_full: false,
             stdout_bytes: full_output.len(),
             stderr_bytes: 0,
+            stdout_truncated: false,
+            stderr_truncated: false,
+            capture_stdout_limit_bytes: full_output.len(),
+            capture_stderr_limit_bytes: 0,
+            raw_output_complete: true,
         }
     }
 
@@ -301,6 +326,7 @@ mod tests {
             .expect("spooled output");
         assert_eq!(cached.full_output, "hello world");
         assert_eq!(cached.argv, vec!["echo".to_string(), "hello".to_string()]);
+        assert!(cached.raw_output_complete);
 
         let _ = fs::remove_dir_all(dir);
     }

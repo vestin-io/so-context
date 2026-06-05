@@ -10,6 +10,8 @@ use super::types::{ShellInvocation, ShellResult};
 /// Per-stream capture limit for raw command output capture (10 MiB).
 const MAX_STDOUT_BYTES: usize = 10_485_760;
 const MAX_STDERR_BYTES: usize = 10_485_760;
+const MAX_FULL_STDOUT_BYTES: usize = 52_428_800;
+const MAX_FULL_STDERR_BYTES: usize = 52_428_800;
 const DEFAULT_COMMAND_TIMEOUT_MS: u64 = 120_000;
 const COMMAND_TIMEOUT_ENV: &str = "SO_CONTEXT_SHELL_TIMEOUT_MS";
 
@@ -34,10 +36,22 @@ impl Default for ExecLimits {
 struct StreamCapture {
     text: String,
     truncated: bool,
+    total_bytes: usize,
 }
 
 pub(super) fn execute(invocation: ShellInvocation) -> Result<ShellResult> {
     execute_with_limits(invocation, ExecLimits::default())
+}
+
+pub(super) fn execute_full(invocation: ShellInvocation) -> Result<ShellResult> {
+    execute_with_limits(
+        invocation,
+        ExecLimits {
+            max_stdout_bytes: MAX_FULL_STDOUT_BYTES,
+            max_stderr_bytes: MAX_FULL_STDERR_BYTES,
+            timeout: command_timeout(),
+        },
+    )
 }
 
 fn execute_with_limits(invocation: ShellInvocation, limits: ExecLimits) -> Result<ShellResult> {
@@ -105,14 +119,19 @@ fn execute_with_limits(invocation: ShellInvocation, limits: ExecLimits) -> Resul
         } else {
             status.code().unwrap_or(1)
         },
+        stdout_total_bytes: stdout.total_bytes,
+        stderr_total_bytes: stderr.total_bytes,
+        stdout_truncated: stdout.truncated,
+        stderr_truncated: stderr.truncated,
+        capture_stdout_limit_bytes: limits.max_stdout_bytes,
+        capture_stderr_limit_bytes: limits.max_stderr_bytes,
     })
 }
 
 fn capture_stream(mut reader: impl Read, max_bytes: usize) -> Result<StreamCapture> {
     let mut buf = [0_u8; 8192];
-    let mut captured = Vec::new();
+    let mut captured = Vec::with_capacity(max_bytes.min(8192));
     let mut total = 0usize;
-
     loop {
         let read = reader
             .read(&mut buf)
@@ -132,6 +151,7 @@ fn capture_stream(mut reader: impl Read, max_bytes: usize) -> Result<StreamCaptu
     Ok(StreamCapture {
         text: String::from_utf8_lossy(&captured).into_owned(),
         truncated: total > captured.len(),
+        total_bytes: total,
     })
 }
 

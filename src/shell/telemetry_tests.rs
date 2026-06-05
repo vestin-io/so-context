@@ -16,13 +16,18 @@ fn sample_output() -> RunOutput {
             PathBuf::from("/tmp/demo"),
         ),
         pattern: ShellPattern::Curl,
-        rendered: "compressed output".into(),
+        rendered: Some("compressed output".into()),
         full_output: "full output".into(),
         exit_code: 0,
         output_mode: ShellOutputMode::Compressed,
         requested_full: false,
         stdout_bytes: 128,
         stderr_bytes: 8,
+        stdout_truncated: false,
+        stderr_truncated: false,
+        capture_stdout_limit_bytes: 1024,
+        capture_stderr_limit_bytes: 1024,
+        raw_output_complete: true,
     }
 }
 

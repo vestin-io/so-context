@@ -12,6 +12,12 @@ fn summarizes_gh_pr_list() {
         stdout: "123\tRefine shell compression\tmain\tOPEN\t2026-05-29\n124\tFix docker summaries\tmain\tOPEN\t2026-05-29\n".into(),
         stderr: String::new(),
         exit_code: 0,
+    stdout_total_bytes: 0,
+    stderr_total_bytes: 0,
+    stdout_truncated: false,
+    stderr_truncated: false,
+    capture_stdout_limit_bytes: 1024,
+    capture_stderr_limit_bytes: 1024,
     };
 
     let summary = summarize_case(&result);
@@ -27,6 +33,12 @@ fn summarizes_gh_issue_list() {
         stdout: "456\tOPEN\tTrack shell metrics\tneeds-triage\t2026-05-29\n".into(),
         stderr: String::new(),
         exit_code: 0,
+        stdout_total_bytes: 0,
+        stderr_total_bytes: 0,
+        stdout_truncated: false,
+        stderr_truncated: false,
+        capture_stdout_limit_bytes: 1024,
+        capture_stderr_limit_bytes: 1024,
     };
 
     let summary = summarize_case(&result);
@@ -43,6 +55,12 @@ fn summarizes_gh_run_list() {
             .into(),
         stderr: String::new(),
         exit_code: 0,
+        stdout_total_bytes: 0,
+        stderr_total_bytes: 0,
+        stdout_truncated: false,
+        stderr_truncated: false,
+        capture_stdout_limit_bytes: 1024,
+        capture_stderr_limit_bytes: 1024,
     };
 
     let summary = summarize_case(&result);

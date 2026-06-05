@@ -56,6 +56,12 @@ fn full_render_includes_newline_between_stdout_and_stderr() {
         stdout: "hello".into(),
         stderr: "warn".into(),
         exit_code: 7,
+        stdout_total_bytes: 5,
+        stderr_total_bytes: 4,
+        stdout_truncated: false,
+        stderr_truncated: false,
+        capture_stdout_limit_bytes: 1024,
+        capture_stderr_limit_bytes: 1024,
     };
 
     assert_eq!(result.render_full(), "hello\nwarn\n");

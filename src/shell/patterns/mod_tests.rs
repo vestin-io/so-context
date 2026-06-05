@@ -7,6 +7,12 @@ fn result(argv: &[&str]) -> ShellResult {
         stdout: String::new(),
         stderr: String::new(),
         exit_code: 0,
+        stdout_total_bytes: 0,
+        stderr_total_bytes: 0,
+        stdout_truncated: false,
+        stderr_truncated: false,
+        capture_stdout_limit_bytes: 1024,
+        capture_stderr_limit_bytes: 1024,
     }
 }
 

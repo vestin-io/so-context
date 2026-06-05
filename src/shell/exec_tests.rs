@@ -24,6 +24,12 @@ fn truncates_large_stdout_and_marks_stderr() {
             .stderr
             .contains("[shell] stdout truncated after 64 bytes")
     );
+    assert_eq!(result.stdout_total_bytes, 1024);
+    assert_eq!(result.stderr_total_bytes, 0);
+    assert!(result.stdout_truncated);
+    assert!(!result.stderr_truncated);
+    assert_eq!(result.capture_stdout_limit_bytes, 64);
+    assert_eq!(result.capture_stderr_limit_bytes, 64);
 }
 
 #[test]
@@ -75,4 +81,18 @@ fn decodes_non_utf8_output_lossily() {
     .unwrap();
 
     assert_eq!(result.stdout, "\u{FFFD}");
+}
+
+#[test]
+fn full_execution_uses_larger_capture_budget() {
+    let result = execute_full(ShellInvocation::new(vec![
+        "sh".into(),
+        "-c".into(),
+        "yes a | head -c 11534336".into(),
+    ]))
+    .unwrap();
+
+    assert_eq!(result.exit_code, 0);
+    assert!(!result.stderr.contains("stdout truncated"));
+    assert_eq!(result.stdout.len(), 11_534_336);
 }

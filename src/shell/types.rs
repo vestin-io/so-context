@@ -48,6 +48,12 @@ pub struct ShellResult {
     pub stdout: String,
     pub stderr: String,
     pub exit_code: i32,
+    pub stdout_total_bytes: usize,
+    pub stderr_total_bytes: usize,
+    pub stdout_truncated: bool,
+    pub stderr_truncated: bool,
+    pub capture_stdout_limit_bytes: usize,
+    pub capture_stderr_limit_bytes: usize,
 }
 
 impl ShellResult {
@@ -83,13 +89,24 @@ pub struct RunOutput {
     pub run_id: String,
     pub invocation: ShellInvocation,
     pub pattern: ShellPattern,
-    pub rendered: String,
+    pub rendered: Option<String>,
     pub full_output: String,
     pub exit_code: i32,
     pub output_mode: ShellOutputMode,
     pub requested_full: bool,
     pub stdout_bytes: usize,
     pub stderr_bytes: usize,
+    pub stdout_truncated: bool,
+    pub stderr_truncated: bool,
+    pub capture_stdout_limit_bytes: usize,
+    pub capture_stderr_limit_bytes: usize,
+    pub raw_output_complete: bool,
+}
+
+impl RunOutput {
+    pub fn displayed_output(&self) -> &str {
+        self.rendered.as_deref().unwrap_or(&self.full_output)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

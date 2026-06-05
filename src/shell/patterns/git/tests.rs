@@ -8,6 +8,12 @@ fn summarizes_porcelain_status() {
         stdout: "## main\nM  src/main.rs\n M README.md\n?? src/shell/mod.rs\n".into(),
         stderr: String::new(),
         exit_code: 0,
+        stdout_total_bytes: 0,
+        stderr_total_bytes: 0,
+        stdout_truncated: false,
+        stderr_truncated: false,
+        capture_stdout_limit_bytes: 1024,
+        capture_stderr_limit_bytes: 1024,
     };
 
     let summary = status::summarize(&result);
@@ -26,6 +32,12 @@ fn summarizes_human_status() {
                 .into(),
         stderr: String::new(),
         exit_code: 0,
+    stdout_total_bytes: 0,
+    stderr_total_bytes: 0,
+    stdout_truncated: false,
+    stderr_truncated: false,
+    capture_stdout_limit_bytes: 1024,
+    capture_stderr_limit_bytes: 1024,
     };
 
     let summary = status::summarize(&result);
@@ -44,6 +56,12 @@ fn summarizes_diff_stats() {
             .into(),
         stderr: String::new(),
         exit_code: 0,
+        stdout_total_bytes: 0,
+        stderr_total_bytes: 0,
+        stdout_truncated: false,
+        stderr_truncated: false,
+        capture_stdout_limit_bytes: 1024,
+        capture_stderr_limit_bytes: 1024,
     };
 
     let summary = diff::summarize(&result);
@@ -73,6 +91,12 @@ fn keeps_all_changed_files_in_diff_details() {
         .into(),
         stderr: String::new(),
         exit_code: 0,
+        stdout_total_bytes: 0,
+        stderr_total_bytes: 0,
+        stdout_truncated: false,
+        stderr_truncated: false,
+        capture_stdout_limit_bytes: 1024,
+        capture_stderr_limit_bytes: 1024,
     };
 
     let summary = diff::summarize(&result);
