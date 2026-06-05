@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 
-use super::types::{ShellInvocation, ShellResult};
+use super::types::{CaptureMetadata, ShellInvocation, ShellResult};
 
 /// Per-stream capture limit for raw command output capture (10 MiB).
 const MAX_STDOUT_BYTES: usize = 10_485_760;
@@ -119,12 +119,15 @@ fn execute_with_limits(invocation: ShellInvocation, limits: ExecLimits) -> Resul
         } else {
             status.code().unwrap_or(1)
         },
-        stdout_total_bytes: stdout.total_bytes,
-        stderr_total_bytes: stderr.total_bytes,
-        stdout_truncated: stdout.truncated,
-        stderr_truncated: stderr.truncated,
-        capture_stdout_limit_bytes: limits.max_stdout_bytes,
-        capture_stderr_limit_bytes: limits.max_stderr_bytes,
+        capture: CaptureMetadata {
+            stdout_bytes: stdout.total_bytes,
+            stderr_bytes: stderr.total_bytes,
+            stdout_truncated: stdout.truncated,
+            stderr_truncated: stderr.truncated,
+            timed_out,
+            capture_stdout_limit_bytes: limits.max_stdout_bytes,
+            capture_stderr_limit_bytes: limits.max_stderr_bytes,
+        },
     })
 }
 

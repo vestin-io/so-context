@@ -8,6 +8,7 @@ pub mod read;
 pub mod references;
 pub mod search;
 pub mod shell;
+mod shell_contract;
 pub mod shell_output;
 pub mod status;
 

@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 
 use super::{ShellEventContext, build_shell_error_event, build_shell_event};
-use crate::shell::types::{RunOutput, ShellInvocation, ShellOutputMode, ShellPattern};
+use crate::shell::types::{
+    CaptureMetadata, RunOutput, ShellInvocation, ShellOutputMode, ShellPattern,
+};
 
 fn sample_output() -> RunOutput {
     RunOutput {
@@ -21,13 +23,13 @@ fn sample_output() -> RunOutput {
         exit_code: 0,
         output_mode: ShellOutputMode::Compressed,
         requested_full: false,
-        stdout_bytes: 128,
-        stderr_bytes: 8,
-        stdout_truncated: false,
-        stderr_truncated: false,
-        capture_stdout_limit_bytes: 1024,
-        capture_stderr_limit_bytes: 1024,
-        raw_output_complete: true,
+        capture: CaptureMetadata {
+            stdout_bytes: 128,
+            stderr_bytes: 8,
+            capture_stdout_limit_bytes: 1024,
+            capture_stderr_limit_bytes: 1024,
+            ..CaptureMetadata::default()
+        },
     }
 }
 

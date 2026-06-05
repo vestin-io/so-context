@@ -1,5 +1,5 @@
 use super::*;
-use crate::shell::types::ShellInvocation;
+use crate::shell::types::{CaptureMetadata, ShellInvocation};
 
 fn summarize_case(result: &ShellResult) -> CompressionSummary {
     summarize(result, super::super::classify_only(result))
@@ -12,12 +12,7 @@ fn summarizes_tsc() {
         stdout: String::new(),
         stderr: "src/main.ts(12,4): error TS2322: Type 'number' is not assignable to type 'string'.\nsrc/app.ts(4,1): error TS2304: Cannot find name 'windowish'.\n".into(),
         exit_code: 2,
-    stdout_total_bytes: 0,
-    stderr_total_bytes: 0,
-    stdout_truncated: false,
-    stderr_truncated: false,
-    capture_stdout_limit_bytes: 1024,
-    capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_case(&result);
@@ -32,12 +27,7 @@ fn summarizes_next_build() {
         stdout: "✓ Compiled successfully\nRoute (app)                                Size\n├ ○ /                                       1.2 kB\n".into(),
         stderr: String::new(),
         exit_code: 0,
-    stdout_total_bytes: 0,
-    stderr_total_bytes: 0,
-    stdout_truncated: false,
-    stderr_truncated: false,
-    capture_stdout_limit_bytes: 1024,
-    capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_case(&result);
@@ -54,12 +44,7 @@ fn summarizes_vite_build() {
                 .into(),
         stderr: String::new(),
         exit_code: 0,
-        stdout_total_bytes: 0,
-        stderr_total_bytes: 0,
-        stdout_truncated: false,
-        stderr_truncated: false,
-        capture_stdout_limit_bytes: 1024,
-        capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_case(&result);
@@ -74,12 +59,7 @@ fn summarizes_make() {
         stdout: "Nothing to be done for `test'.\n".into(),
         stderr: String::new(),
         exit_code: 0,
-        stdout_total_bytes: 0,
-        stderr_total_bytes: 0,
-        stdout_truncated: false,
-        stderr_truncated: false,
-        capture_stdout_limit_bytes: 1024,
-        capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_case(&result);
@@ -94,12 +74,7 @@ fn summarizes_gradle() {
         stdout: "> Task :app:compileJava\nBUILD SUCCESSFUL in 4s\n".into(),
         stderr: String::new(),
         exit_code: 0,
-        stdout_total_bytes: 0,
-        stderr_total_bytes: 0,
-        stdout_truncated: false,
-        stderr_truncated: false,
-        capture_stdout_limit_bytes: 1024,
-        capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_case(&result);
@@ -114,12 +89,7 @@ fn summarizes_maven() {
         stdout: "[INFO] BUILD SUCCESS\n".into(),
         stderr: String::new(),
         exit_code: 0,
-        stdout_total_bytes: 0,
-        stderr_total_bytes: 0,
-        stdout_truncated: false,
-        stderr_truncated: false,
-        capture_stdout_limit_bytes: 1024,
-        capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_case(&result);
@@ -134,12 +104,7 @@ fn summarizes_dotnet_build() {
         stdout: "Build succeeded.\n    0 Warning(s)\n    0 Error(s)\n".into(),
         stderr: String::new(),
         exit_code: 0,
-        stdout_total_bytes: 0,
-        stderr_total_bytes: 0,
-        stdout_truncated: false,
-        stderr_truncated: false,
-        capture_stdout_limit_bytes: 1024,
-        capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_case(&result);
@@ -154,12 +119,7 @@ fn summarizes_dotnet_test() {
         stdout: "Passed!  - Failed: 0, Passed: 24, Skipped: 0, Total: 24, Duration: 1 s\n".into(),
         stderr: String::new(),
         exit_code: 0,
-        stdout_total_bytes: 0,
-        stderr_total_bytes: 0,
-        stdout_truncated: false,
-        stderr_truncated: false,
-        capture_stdout_limit_bytes: 1024,
-        capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_case(&result);
@@ -177,12 +137,7 @@ fn summarizes_dotnet_restore() {
         stdout: "Restore completed in 1.2 sec for src/app/app.csproj.\n".into(),
         stderr: String::new(),
         exit_code: 0,
-        stdout_total_bytes: 0,
-        stderr_total_bytes: 0,
-        stdout_truncated: false,
-        stderr_truncated: false,
-        capture_stdout_limit_bytes: 1024,
-        capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_case(&result);
@@ -200,12 +155,7 @@ fn summarizes_dotnet_format() {
         stdout: "No files were formatted.\n".into(),
         stderr: String::new(),
         exit_code: 0,
-        stdout_total_bytes: 0,
-        stderr_total_bytes: 0,
-        stdout_truncated: false,
-        stderr_truncated: false,
-        capture_stdout_limit_bytes: 1024,
-        capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_case(&result);
@@ -220,12 +170,7 @@ fn summarizes_cmake() {
         stdout: "-- Configuring done\n-- Generating done\n-- Build files have been written to: /tmp/build\n".into(),
         stderr: String::new(),
         exit_code: 0,
-    stdout_total_bytes: 0,
-    stderr_total_bytes: 0,
-    stdout_truncated: false,
-    stderr_truncated: false,
-    capture_stdout_limit_bytes: 1024,
-    capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_case(&result);

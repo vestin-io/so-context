@@ -1,5 +1,5 @@
 use super::*;
-use crate::shell::types::ShellInvocation;
+use crate::shell::types::{CaptureMetadata, ShellInvocation};
 
 #[test]
 fn summarizes_fetch_transport() {
@@ -8,12 +8,7 @@ fn summarizes_fetch_transport() {
         stdout: String::new(),
         stderr: "From ../remote\n * [new branch]      feat/fetch -> origin/feat/fetch\n * [new tag]         v1.1.0     -> v1.1.0\n".into(),
         exit_code: 0,
-        stdout_total_bytes: 0,
-        stderr_total_bytes: 113,
-        stdout_truncated: false,
-        stderr_truncated: false,
-        capture_stdout_limit_bytes: 1024,
-        capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_fetch(&result);
@@ -29,12 +24,7 @@ fn summarizes_pull_transport() {
         stdout: "Updating abc1234..def5678\nFast-forward\n src/main.rs | 2 +-\n 1 file changed, 1 insertion(+)\n".into(),
         stderr: "From ../remote\n abc1234..def5678  main -> origin/main\n".into(),
         exit_code: 0,
-        stdout_total_bytes: 94,
-        stderr_total_bytes: 53,
-        stdout_truncated: false,
-        stderr_truncated: false,
-        capture_stdout_limit_bytes: 1024,
-        capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_pull(&result);
@@ -50,12 +40,7 @@ fn summarizes_push_transport() {
         stdout: String::new(),
         stderr: "To ../remote.git\n   abc1234..def5678  main -> main\n".into(),
         exit_code: 0,
-        stdout_total_bytes: 0,
-        stderr_total_bytes: 49,
-        stdout_truncated: false,
-        stderr_truncated: false,
-        capture_stdout_limit_bytes: 1024,
-        capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_push(&result);
@@ -75,12 +60,7 @@ fn summarizes_checkout_transition() {
         stdout: "Switched to branch 'feat-shell'\n".into(),
         stderr: String::new(),
         exit_code: 0,
-        stdout_total_bytes: 31,
-        stderr_total_bytes: 0,
-        stdout_truncated: false,
-        stderr_truncated: false,
-        capture_stdout_limit_bytes: 1024,
-        capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_checkout(&result);
@@ -98,12 +78,7 @@ fn summarizes_switch_transition() {
         stdout: String::new(),
         stderr: "Already on 'main'\n".into(),
         exit_code: 0,
-        stdout_total_bytes: 0,
-        stderr_total_bytes: 18,
-        stdout_truncated: false,
-        stderr_truncated: false,
-        capture_stdout_limit_bytes: 1024,
-        capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_switch(&result);
@@ -124,12 +99,7 @@ fn summarizes_commit_result() {
         stdout: "[main abc123] msg\n 1 file changed, 2 insertions(+)\n".into(),
         stderr: String::new(),
         exit_code: 0,
-        stdout_total_bytes: 50,
-        stderr_total_bytes: 0,
-        stdout_truncated: false,
-        stderr_truncated: false,
-        capture_stdout_limit_bytes: 1024,
-        capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_commit(&result);

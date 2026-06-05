@@ -1,5 +1,5 @@
 use super::*;
-use crate::shell::types::ShellInvocation;
+use crate::shell::types::{CaptureMetadata, ShellInvocation};
 
 fn summarize_case(result: &ShellResult) -> CompressionSummary {
     summarize(result, super::super::classify_only(result))
@@ -12,12 +12,7 @@ fn summarizes_npm_and_strips_boilerplate() {
         stdout: "\n> app@1.0.0 build\n> next build\n\nnpm WARN deprecated old-lib\nnpm notice\nCreating an optimized production build...\n✓ Build completed\n".into(),
         stderr: String::new(),
         exit_code: 0,
-    stdout_total_bytes: 0,
-    stderr_total_bytes: 0,
-    stdout_truncated: false,
-    stderr_truncated: false,
-    capture_stdout_limit_bytes: 1024,
-    capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_case(&result);
@@ -37,12 +32,7 @@ fn keeps_more_meaningful_node_lines_before_truncating() {
         stdout: format!("{stdout}\n"),
         stderr: String::new(),
         exit_code: 0,
-        stdout_total_bytes: 0,
-        stderr_total_bytes: 0,
-        stdout_truncated: false,
-        stderr_truncated: false,
-        capture_stdout_limit_bytes: 1024,
-        capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_case(&result);
@@ -61,12 +51,7 @@ fn summarizes_pnpm() {
                 .into(),
         stderr: String::new(),
         exit_code: 0,
-        stdout_total_bytes: 0,
-        stderr_total_bytes: 0,
-        stdout_truncated: false,
-        stderr_truncated: false,
-        capture_stdout_limit_bytes: 1024,
-        capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_case(&result);
@@ -81,12 +66,7 @@ fn summarizes_yarn() {
         stdout: "[1/4] Resolving packages...\n[2/4] Fetching packages...\nDone in 0.45s.\n".into(),
         stderr: String::new(),
         exit_code: 0,
-        stdout_total_bytes: 0,
-        stderr_total_bytes: 0,
-        stdout_truncated: false,
-        stderr_truncated: false,
-        capture_stdout_limit_bytes: 1024,
-        capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_case(&result);
@@ -101,12 +81,7 @@ fn summarizes_bun() {
         stdout: "bun install v1.2.0\nSaved lockfile\n3 packages installed\n".into(),
         stderr: String::new(),
         exit_code: 0,
-        stdout_total_bytes: 0,
-        stderr_total_bytes: 0,
-        stdout_truncated: false,
-        stderr_truncated: false,
-        capture_stdout_limit_bytes: 1024,
-        capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_case(&result);
@@ -122,12 +97,7 @@ fn strips_shell_echo_from_node_stderr_preview() {
         stdout: "Creating an optimized production build...\n✓ Build completed\n".into(),
         stderr: "$ node scripts/demo.js\n".into(),
         exit_code: 0,
-        stdout_total_bytes: 0,
-        stderr_total_bytes: 0,
-        stdout_truncated: false,
-        stderr_truncated: false,
-        capture_stdout_limit_bytes: 1024,
-        capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_case(&result);
@@ -141,12 +111,7 @@ fn summarizes_npx() {
         stdout: " _______\n< hello >\n -------\n".into(),
         stderr: String::new(),
         exit_code: 0,
-        stdout_total_bytes: 0,
-        stderr_total_bytes: 0,
-        stdout_truncated: false,
-        stderr_truncated: false,
-        capture_stdout_limit_bytes: 1024,
-        capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_case(&result);

@@ -1,5 +1,5 @@
 use super::*;
-use crate::shell::types::ShellInvocation;
+use crate::shell::types::{CaptureMetadata, ShellInvocation};
 
 #[test]
 fn summarizes_ps_rows() {
@@ -8,12 +8,7 @@ fn summarizes_ps_rows() {
         stdout: "NAMES IMAGE STATUS\nweb nginx Up\ndb postgres Up\n".into(),
         stderr: String::new(),
         exit_code: 0,
-        stdout_total_bytes: 0,
-        stderr_total_bytes: 0,
-        stdout_truncated: false,
-        stderr_truncated: false,
-        capture_stdout_limit_bytes: 1024,
-        capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_ps(&result);
@@ -28,12 +23,7 @@ fn summarizes_inspect_json() {
         stdout: "[{\"Id\":\"1234567890abcdef\",\"Name\":\"/web\",\"Image\":\"nginx:latest\",\"State\":{\"Status\":\"running\"}}]".into(),
         stderr: String::new(),
         exit_code: 0,
-    stdout_total_bytes: 0,
-    stderr_total_bytes: 0,
-    stdout_truncated: false,
-    stderr_truncated: false,
-    capture_stdout_limit_bytes: 1024,
-    capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_inspect(&result);
@@ -50,12 +40,7 @@ fn summarizes_images_rows() {
                 .into(),
         stderr: String::new(),
         exit_code: 0,
-        stdout_total_bytes: 0,
-        stderr_total_bytes: 0,
-        stdout_truncated: false,
-        stderr_truncated: false,
-        capture_stdout_limit_bytes: 1024,
-        capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_images(&result);
@@ -70,12 +55,7 @@ fn summarizes_images_with_kilobytes() {
         stdout: "REPOSITORY  TAG  IMAGE ID  CREATED  SIZE\nfixture  latest  abc123  Less than a second ago  11.1kB\n".into(),
         stderr: String::new(),
         exit_code: 0,
-    stdout_total_bytes: 0,
-    stderr_total_bytes: 0,
-    stdout_truncated: false,
-    stderr_truncated: false,
-    capture_stdout_limit_bytes: 1024,
-    capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_images(&result);
@@ -89,12 +69,7 @@ fn summarizes_images_total_size_across_units() {
         stdout: "REPOSITORY  TAG  IMAGE ID  CREATED  SIZE\nnginx  latest  abc123  2 days ago  512MB\npostgres  17  def456  3 days ago  1.5GB\n".into(),
         stderr: String::new(),
         exit_code: 0,
-    stdout_total_bytes: 0,
-    stderr_total_bytes: 0,
-    stdout_truncated: false,
-    stderr_truncated: false,
-    capture_stdout_limit_bytes: 1024,
-    capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_images(&result);
@@ -110,12 +85,7 @@ fn summarizes_compose_ps_table() {
                 .into(),
         stderr: String::new(),
         exit_code: 0,
-    stdout_total_bytes: 0,
-    stderr_total_bytes: 0,
-    stdout_truncated: false,
-    stderr_truncated: false,
-    capture_stdout_limit_bytes: 1024,
-    capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_compose(&result);
@@ -137,12 +107,7 @@ fn summarizes_compose_ps_with_total_service_count() {
         stdout,
         stderr: String::new(),
         exit_code: 0,
-        stdout_total_bytes: 0,
-        stderr_total_bytes: 0,
-        stdout_truncated: false,
-        stderr_truncated: false,
-        capture_stdout_limit_bytes: 1024,
-        capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_compose(&result);
@@ -161,12 +126,7 @@ fn summarizes_pull_result() {
         stdout: "latest: Pulling from library/nginx\nDigest: sha256:abc\nStatus: Downloaded newer image for nginx:latest\n".into(),
         stderr: String::new(),
         exit_code: 0,
-    stdout_total_bytes: 0,
-    stderr_total_bytes: 0,
-    stdout_truncated: false,
-    stderr_truncated: false,
-    capture_stdout_limit_bytes: 1024,
-    capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_pull(&result);
@@ -183,12 +143,7 @@ fn summarizes_compose_fallback_output() {
         stdout: "services:\n  web:\n    image: nginx\n".into(),
         stderr: String::new(),
         exit_code: 0,
-        stdout_total_bytes: 0,
-        stderr_total_bytes: 0,
-        stdout_truncated: false,
-        stderr_truncated: false,
-        capture_stdout_limit_bytes: 1024,
-        capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_compose(&result);
@@ -203,12 +158,7 @@ fn summarizes_logs_prefers_error_lines() {
         stdout: "booting\nERROR failed to connect\nstill retrying\n".into(),
         stderr: String::new(),
         exit_code: 0,
-        stdout_total_bytes: 0,
-        stderr_total_bytes: 0,
-        stdout_truncated: false,
-        stderr_truncated: false,
-        capture_stdout_limit_bytes: 1024,
-        capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_logs(&result);
@@ -223,12 +173,7 @@ fn summarizes_build_steps() {
         stdout: "#1 [internal] load build definition from Dockerfile\n#2 [1/2] FROM rust:1.90\nSuccessfully tagged app:latest\n".into(),
         stderr: String::new(),
         exit_code: 0,
-    stdout_total_bytes: 0,
-    stderr_total_bytes: 0,
-    stdout_truncated: false,
-    stderr_truncated: false,
-    capture_stdout_limit_bytes: 1024,
-    capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_build(&result);
@@ -246,12 +191,7 @@ fn summarizes_buildkit_output_without_digest_noise() {
         stdout: String::new(),
         stderr: "#0 building with \"desktop-linux\" instance using docker driver\n#1 [internal] load build definition from Dockerfile\n#1 transferring dockerfile: 179B done\n#1 DONE 0.0s\n#2 [internal] load .dockerignore\n#2 transferring context: 2B done\n#2 DONE 0.0s\n#3 [internal] load build context\n#3 transferring context: 79B done\n#3 DONE 0.0s\n#4 [1/1] COPY hello.txt /hello.txt\n#4 CACHED\n#5 exporting to image\n#5 exporting layers done\n#5 naming to moby-dangling@sha256:abc done\n#5 unpacking to moby-dangling@sha256:abc done\n#5 DONE 0.0s\n".into(),
         exit_code: 0,
-    stdout_total_bytes: 0,
-    stderr_total_bytes: 0,
-    stdout_truncated: false,
-    stderr_truncated: false,
-    capture_stdout_limit_bytes: 1024,
-    capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_build(&result);

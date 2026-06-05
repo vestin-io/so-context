@@ -1,5 +1,5 @@
 use super::*;
-use crate::shell::types::ShellInvocation;
+use crate::shell::types::{CaptureMetadata, ShellInvocation};
 
 #[test]
 fn summarizes_log_entries() {
@@ -8,12 +8,7 @@ fn summarizes_log_entries() {
         stdout: "abc1234 first\nbcd2345 second\n".into(),
         stderr: String::new(),
         exit_code: 0,
-        stdout_total_bytes: 29,
-        stderr_total_bytes: 0,
-        stdout_truncated: false,
-        stderr_truncated: false,
-        capture_stdout_limit_bytes: 1024,
-        capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_log(&result);
@@ -28,12 +23,7 @@ fn summarizes_raw_log_entries() {
         stdout: "commit abc1234567890\nAuthor: Dev <dev@example.com>\nDate: Thu May 29 10:00:00 2026 +1200\n\n    improve shell diff\n\ncommit def4567890123\nAuthor: Dev <dev@example.com>\nDate: Thu May 29 09:00:00 2026 +1200\n\n    fix branch output\n".into(),
         stderr: String::new(),
         exit_code: 0,
-        stdout_total_bytes: 242,
-        stderr_total_bytes: 0,
-        stdout_truncated: false,
-        stderr_truncated: false,
-        capture_stdout_limit_bytes: 1024,
-        capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_log(&result);
@@ -49,12 +39,7 @@ fn summarizes_branch_list() {
         stdout: "* main\n  feat-shell\n  remotes/origin/HEAD -> origin/main\n  remotes/origin/feat-remote\n  remotes/origin/main\n".into(),
         stderr: String::new(),
         exit_code: 0,
-        stdout_total_bytes: 107,
-        stderr_total_bytes: 0,
-        stdout_truncated: false,
-        stderr_truncated: false,
-        capture_stdout_limit_bytes: 1024,
-        capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_branch(&result);
@@ -71,12 +56,7 @@ fn summarizes_remote_list() {
         stdout: "origin git@github.com:vestin-io/so-context.git (fetch)\norigin git@github.com:vestin-io/so-context.git (push)\nupstream git@github.com:example/upstream.git (fetch)\n".into(),
         stderr: String::new(),
         exit_code: 0,
-        stdout_total_bytes: 166,
-        stderr_total_bytes: 0,
-        stdout_truncated: false,
-        stderr_truncated: false,
-        capture_stdout_limit_bytes: 1024,
-        capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_remote(&result);
@@ -94,12 +74,7 @@ fn summarizes_show_output() {
         stdout: "commit abc1234567890\nAuthor: Dev <dev@example.com>\nDate: Thu May 29 10:00:00 2026 +1200\n\n    improve shell diff\n\ndiff --git a/src/main.rs b/src/main.rs\n@@ -1 +1 @@\n-old\n+new\n".into(),
         stderr: String::new(),
         exit_code: 0,
-        stdout_total_bytes: 184,
-        stderr_total_bytes: 0,
-        stdout_truncated: false,
-        stderr_truncated: false,
-        capture_stdout_limit_bytes: 1024,
-        capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_show(&result);
@@ -123,12 +98,7 @@ fn summarizes_show_stat_without_patch() {
         stdout: "commit abc1234567890\nAuthor: Dev <dev@example.com>\nDate: Thu May 29 10:00:00 2026 +1200\n\n    improve shell diff\n\n src/main.rs | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)\n".into(),
         stderr: String::new(),
         exit_code: 0,
-        stdout_total_bytes: 193,
-        stderr_total_bytes: 0,
-        stdout_truncated: false,
-        stderr_truncated: false,
-        capture_stdout_limit_bytes: 1024,
-        capture_stderr_limit_bytes: 1024,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_show(&result);

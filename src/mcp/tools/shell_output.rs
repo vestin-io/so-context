@@ -7,6 +7,7 @@ use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::model::{CallToolResult, Content, JsonObject, Tool};
 
 use super::BuiltinServer;
+use super::shell_contract::{RAW_OUTPUT_FETCH_POLICY, build_shell_output_structured};
 use crate::core_events::{EventRecord, Timer, enqueue};
 use crate::core_tokens::count_tokens;
 use crate::shell::get_spooled_output;
@@ -68,24 +69,9 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
             } else {
                 CallToolResult::error(vec![Content::text(text.clone())])
             };
-            tool_result.structured_content = Some(serde_json::json!({
-                "run_id": output.run_id,
-                "argv": output.argv,
-                "cwd": output.cwd.map(|path| path.to_string_lossy().to_string()),
-                "exit_code": output.exit_code,
-                "content_kind": "raw_output",
-                "source": "spool",
-                "reason": reason,
-                "stdout_truncated": output.stdout_truncated,
-                "stderr_truncated": output.stderr_truncated,
-                "capture_stdout_limit_bytes": output.capture_stdout_limit_bytes,
-                "capture_stderr_limit_bytes": output.capture_stderr_limit_bytes,
-                "raw_output_complete": output.raw_output_complete,
-                "capture_strategy": "bounded",
-                "use_policy": "only_for_verbatim_user_request_or_missing_required_detail",
-                "output_is_in_text": true,
-                "rerun_not_needed_if_text_sufficient": true,
-            }));
+            tool_result.structured_content = Some(serde_json::Value::Object(
+                build_shell_output_structured(&output, reason),
+            ));
             Ok((tool_result, Some(text), true))
         }
         None => {
@@ -98,6 +84,7 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
                 "content_kind": "raw_output",
                 "source": "spool",
                 "reason": reason,
+                "use_policy": RAW_OUTPUT_FETCH_POLICY,
                 "found": false,
             }));
             Ok((tool_result, Some(message), false))

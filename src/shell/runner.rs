@@ -83,13 +83,7 @@ impl ShellRunner {
             exit_code: result.exit_code,
             output_mode,
             requested_full: false,
-            stdout_bytes: result.stdout_total_bytes,
-            stderr_bytes: result.stderr_total_bytes,
-            stdout_truncated: result.stdout_truncated,
-            stderr_truncated: result.stderr_truncated,
-            capture_stdout_limit_bytes: result.capture_stdout_limit_bytes,
-            capture_stderr_limit_bytes: result.capture_stderr_limit_bytes,
-            raw_output_complete: !result.stdout_truncated && !result.stderr_truncated,
+            capture: result.capture,
         };
         output_spool::store_run_output(&output, self.options.spool_owner.as_ref());
         Ok(output)
@@ -108,13 +102,7 @@ impl ShellRunner {
             exit_code: result.exit_code,
             output_mode: ShellOutputMode::Full,
             requested_full: true,
-            stdout_bytes: result.stdout_total_bytes,
-            stderr_bytes: result.stderr_total_bytes,
-            stdout_truncated: result.stdout_truncated,
-            stderr_truncated: result.stderr_truncated,
-            capture_stdout_limit_bytes: result.capture_stdout_limit_bytes,
-            capture_stderr_limit_bytes: result.capture_stderr_limit_bytes,
-            raw_output_complete: !result.stdout_truncated && !result.stderr_truncated,
+            capture: result.capture,
         };
         output_spool::store_run_output(&output, self.options.spool_owner.as_ref());
         Ok(output)
