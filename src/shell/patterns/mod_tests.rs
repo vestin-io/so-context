@@ -1,5 +1,5 @@
 use super::*;
-use crate::shell::types::ShellInvocation;
+use crate::shell::types::{CaptureMetadata, ShellInvocation};
 
 fn result(argv: &[&str]) -> ShellResult {
     ShellResult {
@@ -7,6 +7,7 @@ fn result(argv: &[&str]) -> ShellResult {
         stdout: String::new(),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     }
 }
 

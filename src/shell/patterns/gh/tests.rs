@@ -1,5 +1,5 @@
 use super::*;
-use crate::shell::types::ShellInvocation;
+use crate::shell::types::{CaptureMetadata, ShellInvocation};
 
 fn summarize_case(result: &ShellResult) -> CompressionSummary {
     summarize(result, super::super::classify_only(result))
@@ -12,6 +12,7 @@ fn summarizes_gh_pr_list() {
         stdout: "123\tRefine shell compression\tmain\tOPEN\t2026-05-29\n124\tFix docker summaries\tmain\tOPEN\t2026-05-29\n".into(),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_case(&result);
@@ -27,6 +28,7 @@ fn summarizes_gh_issue_list() {
         stdout: "456\tOPEN\tTrack shell metrics\tneeds-triage\t2026-05-29\n".into(),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_case(&result);
@@ -43,6 +45,7 @@ fn summarizes_gh_run_list() {
             .into(),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_case(&result);

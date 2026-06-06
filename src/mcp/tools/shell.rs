@@ -9,12 +9,13 @@ use rmcp::model::{CallToolResult, Content, JsonObject, Tool};
 
 use super::BuiltinServer;
 use super::infer_connection_project_root;
+use super::shell_contract::build_shell_structured;
 use crate::core_events::{Timer, enqueue};
 use crate::daemon::WatchManager;
 use crate::daemon::watch_manager::ProjectStatus;
 use crate::shell::{
-    ShellEventContext, ShellOutputMode, ShellRunOptions, ShellRunner, SpoolOwner,
-    build_shell_error_event, build_shell_event,
+    ShellEventContext, ShellRunOptions, ShellRunner, SpoolOwner, build_shell_error_event,
+    build_shell_event,
 };
 
 const FULL_REASON_TEE_MISSING_OR_EXPIRED: &str = "tee_missing_or_expired";
@@ -68,7 +69,7 @@ fn handler(
 
     match result {
         Ok(output) => {
-            let text = render_tool_text(&output.rendered, output.exit_code);
+            let text = render_tool_text(output.displayed_output(), output.exit_code);
             enqueue(build_shell_event(
                 ShellEventContext::mcp_shell(
                     client.clone(),
@@ -87,30 +88,9 @@ fn handler(
             } else {
                 CallToolResult::error(vec![Content::text(text)])
             };
-            tool_result.structured_content = Some(serde_json::json!({
-                "run_id": output.run_id,
-                "argv": argv,
-                "cwd": cwd_display,
-                "exit_code": output.exit_code,
-                "full": full,
-                "output_mode": output.output_mode.label(),
-                "content_kind": if output.requested_full || output.output_mode == ShellOutputMode::RawFallback {
-                    "raw_output"
-                } else {
-                    "compressed_summary"
-                },
-                "raw_output_available": true,
-                "follow_up_tool": "so_shell_output",
-                "preferred_response_source": if output.requested_full || output.output_mode == ShellOutputMode::RawFallback {
-                    "current_text_content"
-                } else {
-                    "compressed_summary"
-                },
-                "should_fetch_raw_output": false,
-                "raw_output_use_policy": "only_if_user_explicitly_requests_verbatim_output_or_summary_is_missing_required_detail",
-                "output_is_in_text": true,
-                "rerun_not_needed_if_text_sufficient": true,
-            }));
+            tool_result.structured_content = Some(serde_json::Value::Object(
+                build_shell_structured(&output, argv, cwd_display, full),
+            ));
             Ok(tool_result)
         }
         Err(error) => {
@@ -171,14 +151,14 @@ fn parse_full_request(args: &JsonObject) -> Result<bool, rmcp::ErrorData> {
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| {
             rmcp::ErrorData::invalid_params(
-                "full=true requires full_reason=tee_missing_or_expired; use compressed output first, then so_shell_output, and only rerun full when tee is unavailable",
+                "full=true requires full_reason=tee_missing_or_expired; use compressed output first, then so_shell_output, and only rerun full when tee is unavailable and you need a larger bounded raw capture",
                 None,
             )
         })?;
 
     if reason != FULL_REASON_TEE_MISSING_OR_EXPIRED {
         return Err(rmcp::ErrorData::invalid_params(
-            "full_reason must be tee_missing_or_expired; use compressed output first, then so_shell_output, and only rerun full when tee is unavailable",
+            "full_reason must be tee_missing_or_expired; use compressed output first, then so_shell_output, and only rerun full when tee is unavailable and you need a larger bounded raw capture",
             None,
         ));
     }
@@ -260,12 +240,12 @@ fn schema() -> Arc<JsonObject> {
                 "full": {
                     "type": "boolean",
                     "default": false,
-                    "description": "Deprecated escape hatch. Leave this false by default. Normal workflow is: use compressed output first, then so_shell_output for cached raw output, and only rerun with full=true when tee is unavailable."
+                    "description": "Deprecated escape hatch. Leave this false by default. Normal workflow is: use compressed output first, then so_shell_output for cached raw output, and only rerun with full=true when tee is unavailable and you need a larger bounded raw capture."
                 },
                 "full_reason": {
                     "type": "string",
                     "enum": ["tee_missing_or_expired"],
-                    "description": "Required only when full=true. Use this only after so_shell_output could not return raw output because tee is missing or expired."
+                    "description": "Required only when full=true. Use this only after so_shell_output could not return raw output because tee is missing or expired, and you need a larger bounded raw capture."
                 },
                 "_so_session_id": {
                     "type": "string",

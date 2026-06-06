@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+pub const CAPTURE_STRATEGY_BOUNDED: &str = "bounded";
+
 #[derive(Debug, Clone)]
 pub struct ShellInvocation {
     pub argv: Vec<String>,
@@ -42,12 +44,51 @@ impl ShellInvocation {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
+pub struct CaptureMetadata {
+    pub stdout_bytes: usize,
+    pub stderr_bytes: usize,
+    pub stdout_truncated: bool,
+    pub stderr_truncated: bool,
+    pub timed_out: bool,
+    pub capture_stdout_limit_bytes: usize,
+    pub capture_stderr_limit_bytes: usize,
+}
+
+impl CaptureMetadata {
+    pub fn raw_output_complete(&self) -> bool {
+        !self.stdout_truncated && !self.stderr_truncated && !self.timed_out
+    }
+
+    pub fn insert_json_fields(&self, target: &mut serde_json::Map<String, serde_json::Value>) {
+        target.insert("raw_stdout_bytes".into(), self.stdout_bytes.into());
+        target.insert("raw_stderr_bytes".into(), self.stderr_bytes.into());
+        target.insert("stdout_truncated".into(), self.stdout_truncated.into());
+        target.insert("stderr_truncated".into(), self.stderr_truncated.into());
+        target.insert("timed_out".into(), self.timed_out.into());
+        target.insert(
+            "capture_stdout_limit_bytes".into(),
+            self.capture_stdout_limit_bytes.into(),
+        );
+        target.insert(
+            "capture_stderr_limit_bytes".into(),
+            self.capture_stderr_limit_bytes.into(),
+        );
+        target.insert(
+            "raw_output_complete".into(),
+            self.raw_output_complete().into(),
+        );
+        target.insert("capture_strategy".into(), CAPTURE_STRATEGY_BOUNDED.into());
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ShellResult {
     pub invocation: ShellInvocation,
     pub stdout: String,
     pub stderr: String,
     pub exit_code: i32,
+    pub capture: CaptureMetadata,
 }
 
 impl ShellResult {
@@ -57,6 +98,10 @@ impl ShellResult {
             (true, false) => with_trailing_newline(&self.stderr),
             _ => self.render_full_body(),
         }
+    }
+
+    pub fn raw_output_complete(&self) -> bool {
+        self.capture.raw_output_complete()
     }
 
     fn render_full_body(&self) -> String {
@@ -83,13 +128,18 @@ pub struct RunOutput {
     pub run_id: String,
     pub invocation: ShellInvocation,
     pub pattern: ShellPattern,
-    pub rendered: String,
+    pub rendered: Option<String>,
     pub full_output: String,
     pub exit_code: i32,
     pub output_mode: ShellOutputMode,
     pub requested_full: bool,
-    pub stdout_bytes: usize,
-    pub stderr_bytes: usize,
+    pub capture: CaptureMetadata,
+}
+
+impl RunOutput {
+    pub fn displayed_output(&self) -> &str {
+        self.rendered.as_deref().unwrap_or(&self.full_output)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
