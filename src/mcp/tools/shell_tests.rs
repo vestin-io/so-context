@@ -4,8 +4,8 @@ use rmcp::model::JsonObject;
 
 use super::{parse_full_request, render_tool_text, resolve_cwd};
 use crate::daemon::watch_manager::{Consumer, ProjectStatus, WatchState};
-use crate::mcp::tools::{infer_connection_project_for_path, infer_connection_project_root};
 use crate::mcp::tools::shell_contract::build_shell_structured;
+use crate::mcp::tools::{infer_connection_project_for_path, infer_connection_project_root};
 use crate::shell::types::{CaptureMetadata, ShellInvocation, ShellPattern};
 use crate::shell::{RunOutput, ShellOutputMode};
 
@@ -133,13 +133,9 @@ fn attributes_subdirectory_cwd_back_to_project_root() {
         }],
     }];
 
-    let project = infer_connection_project_for_path(
-        &statuses,
-        "codex",
-        "conn-1",
-        "/tmp/alpha/src/bin",
-    )
-    .unwrap();
+    let project =
+        infer_connection_project_for_path(&statuses, "codex", "conn-1", "/tmp/alpha/src/bin")
+            .unwrap();
 
     assert_eq!(project, PathBuf::from("/tmp/alpha"));
 }

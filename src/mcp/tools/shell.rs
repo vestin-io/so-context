@@ -8,8 +8,8 @@ use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::model::{CallToolResult, Content, JsonObject, Tool};
 
 use super::BuiltinServer;
-use super::{infer_connection_project_for_path, infer_connection_project_root};
 use super::shell_contract::build_shell_structured;
+use super::{infer_connection_project_for_path, infer_connection_project_root};
 use crate::core_events::{Timer, enqueue};
 use crate::daemon::WatchManager;
 use crate::daemon::watch_manager::ProjectStatus;
