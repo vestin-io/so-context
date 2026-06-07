@@ -5,9 +5,9 @@
 //! Writes:
 //!   - `[mcp_servers.so-context]`      — MCP stdio bridge
 //!   - `[[hooks.PreToolUse]]`          — injects `_so_session_id` into so-context tool calls
-//!                                       and blocks short native shell commands so the agent retries with `so_shell`
+//!                                       and reroutes selected native read/shell calls through so-context tools
 //!   - `[[hooks.PostCompact]]`         — resets file-visit cache after context compaction
-//!   - `~/.codex/AGENTS.md` snippet    — prefer `so_shell` for one-shot shell commands
+//!   - `~/.codex/AGENTS.md` snippet    — prefer `so_read`/`so_shell` over native read/shell tools
 //!
 //! Watch lifecycle is handled automatically by the daemon via the MCP connection:
 //! projects are registered on `initialize` and unwatched on connection close.
@@ -22,6 +22,15 @@ use toml_edit::{Array, DocumentMut, Item, Table, value};
 
 const SERVER_NAME: &str = "so-context";
 const SO_CONTEXT_MCP_MATCHER: &str = "mcp__so-context__.*";
+const NATIVE_READ_MATCHERS: &[&str] = &["Read", "read", "View", "view", "read_file"];
+const NATIVE_SEARCH_MATCHERS: &[&str] = &[
+    "Grep",
+    "grep",
+    "rg",
+    "ripgrep",
+    "SearchFiles",
+    "search_files",
+];
 const NATIVE_SHELL_MATCHERS: &[&str] = &[
     "Bash",
     "bash",
@@ -138,6 +147,26 @@ fn install_pre_tool_use_hook(doc: &mut DocumentMut, binary: &str) {
         SO_CONTEXT_MCP_MATCHER,
         make_pre_tool_handler(binary, "Tagging so-context call with session ID"),
     );
+    for matcher in NATIVE_READ_MATCHERS {
+        install_pre_tool_group(
+            event_aot,
+            matcher,
+            make_pre_tool_handler(
+                binary,
+                "Native file read detected; routing to mcp__so-context__so_read",
+            ),
+        );
+    }
+    for matcher in NATIVE_SEARCH_MATCHERS {
+        install_pre_tool_group(
+            event_aot,
+            matcher,
+            make_pre_tool_handler(
+                binary,
+                "Native search detected; routing to mcp__so-context__so_search",
+            ),
+        );
+    }
     for matcher in NATIVE_SHELL_MATCHERS {
         install_pre_tool_group(
             event_aot,
@@ -256,7 +285,12 @@ fn remove_pre_tool_use_hook(doc: &mut DocumentMut) {
         let matches_group = group
             .get("matcher")
             .and_then(|m| m.as_str())
-            .map(|m| m == SO_CONTEXT_MCP_MATCHER || NATIVE_SHELL_MATCHERS.contains(&m))
+            .map(|m| {
+                m == SO_CONTEXT_MCP_MATCHER
+                    || NATIVE_READ_MATCHERS.contains(&m)
+                    || NATIVE_SEARCH_MATCHERS.contains(&m)
+                    || NATIVE_SHELL_MATCHERS.contains(&m)
+            })
             .unwrap_or(false);
         if !matches_group {
             continue;

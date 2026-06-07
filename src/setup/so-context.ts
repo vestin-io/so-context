@@ -4,15 +4,15 @@
 // reaches the daemon, so the daemon can attribute events to the correct
 // context window (sub-agent).
 //
-// Also blocks short native shell commands and tells the agent to retry with
-// the so-context MCP shell tool instead.
+// Also blocks selected native read and short native shell commands and tells
+// the agent to retry with the so-context MCP tools instead.
 //
 // Also resets the file-visit cache after context compaction so the agent
 // receives full file content again instead of "use cached context" stubs.
 //
 // Hooks used:
 //   tool.execute.before  — injects _so_session_id into so-context tool args
-//                          and blocks selected native shell calls
+//                          and blocks selected native read/shell calls
 //   session.compacted    — calls `so-context hook post-compact` to reset cache
 //
 // OpenCode registers MCP tools as "<server-name>_<tool-name>", so tools from
@@ -22,6 +22,9 @@ import type { Plugin } from "@opencode-ai/plugin";
 
 const SO_CONTEXT_BINARY = "__SO_CONTEXT_BINARY__";
 const SO_CONTEXT_TOOL_PREFIX = "so-context_";
+const NATIVE_READ_TOOL_NAMES = new Set(["Read", "read", "View", "view", "read_file"]);
+const NATIVE_SEARCH_TOOL_NAMES = new Set(["Grep", "grep", "rg", "ripgrep", "SearchFiles", "search_files"]);
+const SIMPLE_NATIVE_SEARCH_KEYS = new Set(["query", "pattern", "path", "directory", "root", "limit"]);
 const NATIVE_SHELL_TOOL_NAMES = new Set(__SO_CONTEXT_NATIVE_SHELL_TOOL_NAMES__);
 const NATIVE_SHELL_POLICY = __SO_CONTEXT_NATIVE_SHELL_POLICY__;
 
@@ -240,6 +243,47 @@ function preferredSoShellArgv(command: string): string[] | null {
 }
 
 export const SoContextPlugin: Plugin = async ({ $ }) => {
+  function usesOnlyAllowedSearchKeys(args: Record<string, unknown>): boolean {
+    return Object.keys(args).every((key) => SIMPLE_NATIVE_SEARCH_KEYS.has(key));
+  }
+
+  function isSimpleLiteralSearchQuery(query: string): boolean {
+    return query.length > 0 && !/[\\^$*+?()[\]{}|]/.test(query);
+  }
+
+  function preferredSoSearchArgs(args: Record<string, unknown>): { query: string; path?: string; limit?: number } | null {
+    const queryValue = (args as any)?.query;
+    const query = typeof queryValue === "string" ? queryValue.trim() : "";
+    const patternValue = (args as any)?.pattern;
+    const pattern = typeof patternValue === "string" ? patternValue.trim() : "";
+
+    let normalizedQuery = "";
+    if (query) {
+      if (!usesOnlyAllowedSearchKeys(args) || !isSimpleLiteralSearchQuery(query)) return null;
+      normalizedQuery = query;
+    } else {
+      if ((args as any)?.regex != null || (args as any)?.regexp != null) return null;
+      if (!pattern || !usesOnlyAllowedSearchKeys(args) || !isSimpleLiteralSearchQuery(pattern)) {
+        return null;
+      }
+      normalizedQuery = pattern;
+    }
+
+    const path = String(
+      (args as any)?.path ??
+      (args as any)?.directory ??
+      (args as any)?.root ??
+      ""
+    ).trim();
+    const limitValue = (args as any)?.limit;
+    const limit = typeof limitValue === "number" && Number.isFinite(limitValue) && limitValue > 0
+      ? Math.trunc(limitValue)
+      : undefined;
+
+    const retry = path ? { query: normalizedQuery, path } : { query: normalizedQuery };
+    return limit != null ? { ...retry, limit } : retry;
+  }
+
   return {
     "tool.execute.before": async (input, output) => {
       if (input.tool.startsWith(SO_CONTEXT_TOOL_PREFIX)) {
@@ -249,6 +293,22 @@ export const SoContextPlugin: Plugin = async ({ $ }) => {
         // Inject the context window session ID into the tool arguments.
         output.args._so_session_id = sessionId;
         return;
+      }
+
+      if (NATIVE_READ_TOOL_NAMES.has(input.tool ?? "")) {
+        const path = String((output.args as any)?.path ?? (output.args as any)?.file_path ?? "").trim();
+        if (!path) return;
+        throw new Error(
+          `This native file read was automatically routed to mcp__so-context__so_read. This is expected, not an error. Retry with arguments: ${JSON.stringify({ path, mode: "full" })}. Use mode="outline" when you only need structure.`
+        );
+      }
+
+      if (NATIVE_SEARCH_TOOL_NAMES.has(input.tool ?? "")) {
+        const retry = preferredSoSearchArgs((output.args as any) ?? {});
+        if (!retry) return;
+        throw new Error(
+          `This native search was automatically routed to mcp__so-context__so_search. This is expected, not an error. Retry with arguments: ${JSON.stringify(retry)}. Keep native grep-style tools only when you need raw grep semantics or the project is not indexed.`
+        );
       }
 
       if (!NATIVE_SHELL_TOOL_NAMES.has(input.tool ?? "")) return;
@@ -270,7 +330,7 @@ export const SoContextPlugin: Plugin = async ({ $ }) => {
       const sessionId: string = (input as any).session?.id ?? (input as any).sessionID ?? "";
       if (!sessionId) return;
 
-      const payload = JSON.stringify({ session_id: sessionId, connection_id: sessionId });
+      const payload = JSON.stringify({ session_id: sessionId });
       try {
         await $`echo ${payload} | ${SO_CONTEXT_BINARY} hook post-compact`.quiet();
       } catch {

@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
-use super::super::text::{append_omitted_line, compact_whitespace, truncate_text};
+use super::super::text::{append_omitted_line, truncate_text};
 
 const FIND_PASSTHROUGH_THRESHOLD: usize = 80;
 
@@ -99,25 +99,6 @@ pub(super) fn summarize_env_vars(vars: &[String]) -> Vec<String> {
     details.extend(tool_vars.into_iter().take(3));
     details.extend(other_vars.into_iter().take(3));
     details
-}
-
-pub(super) fn clean_search_snippet(snippet: &str) -> String {
-    let trimmed = compact_whitespace(snippet);
-    for marker in ["stdout:\"", "stderr:\""] {
-        if let Some((_, inner)) = trimmed.split_once(marker) {
-            let line = inner.split("\\n").next().unwrap_or(inner);
-            let line = line.trim_end_matches('"').trim_end_matches(".into(),");
-            let mut parts = line.splitn(3, ':');
-            let _ = parts.next();
-            let maybe_line = parts.next();
-            let maybe_content = parts.next();
-            if maybe_line.is_some() && maybe_content.is_some() {
-                return maybe_content.unwrap_or(line).trim().to_string();
-            }
-            return line.trim().to_string();
-        }
-    }
-    trimmed
 }
 
 pub(super) fn stream_source(args: &[String]) -> Option<String> {

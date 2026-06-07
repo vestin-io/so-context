@@ -9,6 +9,7 @@ use rmcp::model::{CallToolResult, Content, JsonObject, Tool};
 use super::BuiltinServer;
 use crate::core_events::{EventRecord, Timer, enqueue};
 use crate::core_tokens::count_tokens;
+use crate::mcp::prefers_plain_text_tool_output;
 use crate::shell::get_spooled_output;
 
 pub fn route() -> ToolRoute<BuiltinServer> {
@@ -68,18 +69,20 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
             } else {
                 CallToolResult::error(vec![Content::text(text.clone())])
             };
-            tool_result.structured_content = Some(serde_json::json!({
-                "run_id": output.run_id,
-                "argv": output.argv,
-                "cwd": output.cwd.map(|path| path.to_string_lossy().to_string()),
-                "exit_code": output.exit_code,
-                "content_kind": "raw_output",
-                "source": "spool",
-                "reason": reason,
-                "use_policy": "only_for_verbatim_user_request_or_missing_required_detail",
-                "output_is_in_text": true,
-                "rerun_not_needed_if_text_sufficient": true,
-            }));
+            if !prefers_plain_text_tool_output(client.as_deref()) {
+                tool_result.structured_content = Some(serde_json::json!({
+                    "run_id": output.run_id,
+                    "argv": output.argv,
+                    "cwd": output.cwd.map(|path| path.to_string_lossy().to_string()),
+                    "exit_code": output.exit_code,
+                    "content_kind": "raw_output",
+                    "source": "spool",
+                    "reason": reason,
+                    "use_policy": "only_for_verbatim_user_request_or_missing_required_detail",
+                    "output_is_in_text": true,
+                    "rerun_not_needed_if_text_sufficient": true,
+                }));
+            }
             Ok((tool_result, Some(text), true))
         }
         None => {
@@ -87,13 +90,15 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
                 "no cached raw shell output found for run_id `{run_id}`; rerun so_shell with `full: true` and `full_reason: \"tee_missing_or_expired\"` if you still need the original output"
             );
             let mut tool_result = CallToolResult::error(vec![Content::text(message.clone())]);
-            tool_result.structured_content = Some(serde_json::json!({
-                "run_id": run_id,
-                "content_kind": "raw_output",
-                "source": "spool",
-                "reason": reason,
-                "found": false,
-            }));
+            if !prefers_plain_text_tool_output(client.as_deref()) {
+                tool_result.structured_content = Some(serde_json::json!({
+                    "run_id": run_id,
+                    "content_kind": "raw_output",
+                    "source": "spool",
+                    "reason": reason,
+                    "found": false,
+                }));
+            }
             Ok((tool_result, Some(message), false))
         }
     }?;

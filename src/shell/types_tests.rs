@@ -1,4 +1,4 @@
-use super::{CompressionSummary, ShellPattern};
+use super::{CompressionRenderStyle, CompressionSummary, ShellPattern};
 use std::path::PathBuf;
 
 use crate::shell::types::{ShellInvocation, ShellResult};
@@ -9,6 +9,7 @@ fn sample_summary() -> CompressionSummary {
         summary: "files=2; hunks=3; additions=10; deletions=4".into(),
         details: vec!["src/main.rs".into(), "README.md".into()],
         stderr_preview: vec!["warning: demo".into()],
+        render_style: CompressionRenderStyle::Bulleted,
     }
 }
 
@@ -20,6 +21,25 @@ fn render_includes_summary_details_and_stderr() {
     assert!(rendered.contains("- src/main.rs\n"));
     assert!(rendered.contains("stderr:\n- warning: demo\n"));
     assert!(!rendered.contains("pattern:"));
+}
+
+#[test]
+fn plain_render_omits_bullets_for_details() {
+    let rendered = CompressionSummary::plain(
+        ShellPattern::GitStatus,
+        "* main",
+        vec!["M  src/main.rs".into(), "?? docs/notes.md".into()],
+        Vec::new(),
+        &ShellResult {
+            invocation: ShellInvocation::new(vec!["git".into(), "status".into()]),
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: 0,
+        },
+    )
+    .render();
+
+    assert_eq!(rendered, "* main\nM  src/main.rs\n?? docs/notes.md\n");
 }
 
 #[test]

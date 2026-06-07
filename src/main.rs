@@ -37,13 +37,14 @@ enum HookCommands {
     /// PreToolUse hook handler for agent CLIs (Claude Code, Codex).
     ///
     /// Reads the hook JSON from stdin. For so-context MCP tools it injects
-    /// `_so_session_id`. For short, one-shot native shell calls it blocks the
-    /// tool call and tells the agent to retry with `mcp__so-context__so_shell`.
+    /// `_so_session_id`. For selected native read and short, one-shot native
+    /// shell calls it blocks the tool call and tells the agent to retry with
+    /// `mcp__so-context__so_read` or `mcp__so-context__so_shell`.
     /// Exit 0 with no output for everything else (agent continues normally).
     ///
     /// Register as a PreToolUse hook with matchers `"mcp__so-context__.*"`
-    /// plus the shell-tool aliases this agent exposes (for example `"Bash"`
-    /// or `"runTerminalCommand"`).
+    /// plus the read/shell-tool aliases this agent exposes (for example
+    /// `"Read"`, `"View"`, `"Bash"`, or `"runTerminalCommand"`).
     PreTool,
     /// PostCompact hook handler for Claude Code.
     ///

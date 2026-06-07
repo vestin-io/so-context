@@ -9,6 +9,15 @@ const CODEX_INCLUDE_FILE: &str = "SO-CONTEXT.md";
 const CLAUDE_RULES_DIR: &str = "rules";
 const CLAUDE_RULES_FILE: &str = "so-context.md";
 
+const SHARED_READ_GUIDANCE: &str = r#"Prefer `mcp__so-context__so_read` over native file-read tools for source and config files.
+Use `so_read` instead of native `Read` / `View` / `cat` / `head` when you want file contents in shared project context.
+Use `mode: "full"` for exact file text and `mode: "outline"` when you only need structure.
+Do not reread the same file through native read tools just to confirm content that `so_read` already returned."#;
+
+const SHARED_SEARCH_GUIDANCE: &str = r#"Prefer `mcp__so-context__so_search` over native grep-style tools when indexed project search is enough.
+Use `so_search` instead of native `Grep` / `rg` when you want attributable project search hits in shared context.
+Keep native grep-style tools only when you need raw grep semantics, an unindexed project fallback, or shell-native pipelines."#;
+
 const SHARED_SHELL_GUIDANCE: &str = r#"Prefer `mcp__so-context__so_shell` over native shell tools for short, one-shot shell commands.
 Expect short native shell calls to be blocked and retried through `mcp__so-context__so_shell`.
 Prefer compressed `so_shell` results first, and treat them as the default final answer.
@@ -19,15 +28,15 @@ Do not set `full: true` on the first `so_shell` call. Sequence is strict: compre
 
 fn codex_include_body() -> String {
     format!(
-        "# so-context — Shell Guidance\n\n{}\n\nUse `so_shell` when:\n- you want `pwd`, `git status`, `git diff`, `cargo test`, `rg`, or similar non-interactive commands\n- compressed output is useful\n- you want the command recorded through so-context\n\nKeep native `Bash` only for:\n- long-running or streaming commands\n- interactive commands that need stdin/TTY\n- background jobs, servers, watchers, or shells that should stay open\n",
-        SHARED_SHELL_GUIDANCE
+        "# so-context — Read, Search, And Shell Guidance\n\n{}\n\n{}\n\n{}\n\nUse `so_read` when:\n- you want exact file contents from source or config files\n- you want that file read cached and attributable in shared context\n- native `Read` or `View` would otherwise be the default choice\n\nUse `so_search` when:\n- you want indexed project hits for symbols, config names, or identifiers\n- native `Grep` / `rg` would otherwise be the default choice\n- you want search results to stay attributable in shared context\n\nUse `so_shell` when:\n- you want `pwd`, `git status`, `git diff`, `cargo test`, `rg`, or similar non-interactive commands\n- compressed output is useful\n- you want the command recorded through so-context\n\nKeep native `Bash` only for:\n- long-running or streaming commands\n- interactive commands that need stdin/TTY\n- background jobs, servers, watchers, or shells that should stay open\n",
+        SHARED_READ_GUIDANCE, SHARED_SEARCH_GUIDANCE, SHARED_SHELL_GUIDANCE
     )
 }
 
 fn claude_rules_body() -> String {
     format!(
-        "## so-context\n\n{}\n\nUse `mcp__so-context__so_shell` for commands like:\n- `pwd`\n- `git status`\n- `git diff`\n- `cargo test`\n- `rg ...`\n\nKeep the native shell only for:\n- long-running or streaming commands\n- interactive commands that need stdin/TTY\n- background jobs, servers, watchers, or shells that should stay open\n",
-        SHARED_SHELL_GUIDANCE
+        "## so-context\n\n{}\n\n{}\n\n{}\n\nUse `mcp__so-context__so_read` for:\n- reading source files\n- reading config files\n- replacing native `Read` / `View` when you want file contents preserved in shared context\n\nUse `mcp__so-context__so_search` for:\n- indexed project search hits\n- replacing native `Grep` / `rg` when raw grep semantics are not required\n\nUse `mcp__so-context__so_shell` for commands like:\n- `pwd`\n- `git status`\n- `git diff`\n- `cargo test`\n- `rg ...`\n\nKeep the native shell only for:\n- long-running or streaming commands\n- interactive commands that need stdin/TTY\n- background jobs, servers, watchers, or shells that should stay open\n",
+        SHARED_READ_GUIDANCE, SHARED_SEARCH_GUIDANCE, SHARED_SHELL_GUIDANCE
     )
 }
 

@@ -12,6 +12,7 @@ use super::infer_connection_project_root;
 use crate::core_events::{Timer, enqueue};
 use crate::daemon::WatchManager;
 use crate::daemon::watch_manager::ProjectStatus;
+use crate::mcp::prefers_plain_text_tool_output;
 use crate::shell::{
     ShellEventContext, ShellOutputMode, ShellRunOptions, ShellRunner, SpoolOwner,
     build_shell_error_event, build_shell_event,
@@ -87,30 +88,18 @@ fn handler(
             } else {
                 CallToolResult::error(vec![Content::text(text)])
             };
-            tool_result.structured_content = Some(serde_json::json!({
-                "run_id": output.run_id,
-                "argv": argv,
-                "cwd": cwd_display,
-                "exit_code": output.exit_code,
-                "full": full,
-                "output_mode": output.output_mode.label(),
-                "content_kind": if output.requested_full || output.output_mode == ShellOutputMode::RawFallback {
-                    "raw_output"
-                } else {
-                    "compressed_summary"
-                },
-                "raw_output_available": true,
-                "follow_up_tool": "so_shell_output",
-                "preferred_response_source": if output.requested_full || output.output_mode == ShellOutputMode::RawFallback {
-                    "current_text_content"
-                } else {
-                    "compressed_summary"
-                },
-                "should_fetch_raw_output": false,
-                "raw_output_use_policy": "only_if_user_explicitly_requests_verbatim_output_or_summary_is_missing_required_detail",
-                "output_is_in_text": true,
-                "rerun_not_needed_if_text_sufficient": true,
-            }));
+            if !prefers_plain_text_tool_output(client.as_deref()) {
+                tool_result.structured_content = Some(build_structured_content(
+                    &output.run_id,
+                    argv,
+                    cwd_display,
+                    output.exit_code,
+                    full,
+                    output.output_mode,
+                    output.requested_full,
+                    output.rendered == output.full_output,
+                ));
+            }
             Ok(tool_result)
         }
         Err(error) => {
@@ -217,6 +206,53 @@ fn resolve_cwd(
         client.as_deref().unwrap_or("unknown"),
         connection_id,
     )
+}
+
+fn build_structured_content(
+    run_id: &str,
+    argv: Vec<String>,
+    cwd_display: String,
+    exit_code: i32,
+    full: bool,
+    output_mode: ShellOutputMode,
+    requested_full: bool,
+    current_text_matches_full: bool,
+) -> serde_json::Value {
+    let current_text_is_raw =
+        requested_full || output_mode == ShellOutputMode::RawFallback || current_text_matches_full;
+    let mut content = serde_json::json!({
+        "run_id": run_id,
+        "argv": argv,
+        "cwd": cwd_display,
+        "exit_code": exit_code,
+        "full": full,
+        "output_mode": output_mode.label(),
+        "content_kind": if current_text_is_raw {
+            "raw_output"
+        } else {
+            "compressed_summary"
+        },
+        "preferred_response_source": if current_text_is_raw {
+            "current_text_content"
+        } else {
+            "compressed_summary"
+        },
+        "current_text_is_raw_output": current_text_is_raw,
+        "output_is_in_text": true,
+        "rerun_not_needed_if_text_sufficient": true,
+    });
+
+    if !current_text_is_raw {
+        content["raw_output_available"] = serde_json::Value::Bool(true);
+        content["follow_up_tool"] = serde_json::Value::String("so_shell_output".to_string());
+        content["should_fetch_raw_output"] = serde_json::Value::Bool(false);
+        content["raw_output_use_policy"] = serde_json::Value::String(
+            "only_if_user_explicitly_requests_verbatim_output_or_summary_is_missing_required_detail"
+                .to_string(),
+        );
+    }
+
+    content
 }
 
 fn render_tool_text(rendered: &str, exit_code: i32) -> String {

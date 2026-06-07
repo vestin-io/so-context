@@ -2,9 +2,10 @@ use std::path::PathBuf;
 
 use rmcp::model::JsonObject;
 
-use super::{parse_full_request, render_tool_text, resolve_cwd};
+use super::{build_structured_content, parse_full_request, render_tool_text, resolve_cwd};
 use crate::daemon::watch_manager::{Consumer, ProjectStatus, WatchState};
 use crate::mcp::tools::infer_connection_project_root;
+use crate::shell::ShellOutputMode;
 
 #[test]
 fn infers_cwd_from_single_matching_project() {
@@ -118,4 +119,69 @@ fn accepts_full_with_tee_missing_reason() {
     .unwrap();
 
     assert!(parse_full_request(&args).unwrap());
+}
+
+#[test]
+fn compressed_output_advertises_follow_up_tool() {
+    let content = build_structured_content(
+        "run-123",
+        vec!["git".into(), "status".into()],
+        "/tmp/project".into(),
+        0,
+        false,
+        ShellOutputMode::Compressed,
+        false,
+        false,
+    );
+
+    assert_eq!(content["content_kind"], "compressed_summary");
+    assert_eq!(content["preferred_response_source"], "compressed_summary");
+    assert_eq!(content["current_text_is_raw_output"], false);
+    assert_eq!(content["raw_output_available"], true);
+    assert_eq!(content["follow_up_tool"], "so_shell_output");
+}
+
+#[test]
+fn raw_fallback_output_does_not_advertise_follow_up_tool() {
+    let content = build_structured_content(
+        "run-123",
+        vec!["git".into(), "status".into()],
+        "/tmp/project".into(),
+        0,
+        false,
+        ShellOutputMode::RawFallback,
+        false,
+        true,
+    );
+
+    assert_eq!(content["content_kind"], "raw_output");
+    assert_eq!(content["preferred_response_source"], "current_text_content");
+    assert_eq!(content["current_text_is_raw_output"], true);
+    assert!(content.get("raw_output_available").is_none());
+    assert!(content.get("follow_up_tool").is_none());
+}
+
+#[test]
+fn verbatim_compressed_output_does_not_advertise_follow_up_tool() {
+    let content = build_structured_content(
+        "run-123",
+        vec![
+            "sed".into(),
+            "-n".into(),
+            "1,10p".into(),
+            "src/main.rs".into(),
+        ],
+        "/tmp/project".into(),
+        0,
+        false,
+        ShellOutputMode::Compressed,
+        false,
+        true,
+    );
+
+    assert_eq!(content["content_kind"], "raw_output");
+    assert_eq!(content["preferred_response_source"], "current_text_content");
+    assert_eq!(content["current_text_is_raw_output"], true);
+    assert!(content.get("raw_output_available").is_none());
+    assert!(content.get("follow_up_tool").is_none());
 }

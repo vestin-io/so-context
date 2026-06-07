@@ -1,6 +1,10 @@
 use super::super::types::{CompressionSummary, ShellPattern, ShellResult};
 use super::argv::first_positional;
+use super::text::append_omitted_line;
 use super::text::{compact_whitespace, non_empty_lines, preview, sample_lines};
+
+const SUCCESS_TEST_NAME_LIMIT: usize = 20;
+const COMPILE_ERROR_BLOCK_LIMIT: usize = 15;
 
 fn summarize(result: &ShellResult, pattern: ShellPattern) -> CompressionSummary {
     match pattern {
@@ -56,22 +60,35 @@ pub(super) fn summarize_pattern(
 fn summarize_test_like(result: &ShellResult, pattern: ShellPattern) -> CompressionSummary {
     let output = format!("{}\n{}", result.stdout, result.stderr);
     let lines = non_empty_lines(&output);
+    let raw_lines = output
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>();
     let label = if pattern == ShellPattern::CargoNextest {
         "cargo nextest"
     } else {
         "cargo test"
     };
+    let compile_error_blocks = collect_compile_error_blocks(&raw_lines);
+    let has_compile_errors = !compile_error_blocks.is_empty();
     let summary = if let Some(result) = aggregate_test_results(&lines) {
         format!("{label}: {}", result.summary())
+    } else if has_compile_errors {
+        compile_error_summary(label, &lines, &raw_lines, compile_error_blocks.len())
     } else {
         let errors = count_error_lines(&lines);
         let warnings = count_warning_lines(&lines);
         format!("{label}: {errors} errors, {warnings} warnings")
     };
-    let details = collect_failure_names(&lines);
-    let stderr_preview = test_stderr_preview(result, &lines, &details);
+    let details = collect_test_details(result, &lines, &compile_error_blocks);
+    let stderr_preview = test_stderr_preview(result, &lines, &compile_error_blocks, &details);
 
-    CompressionSummary::new(pattern, summary, details, stderr_preview, result)
+    if has_compile_errors {
+        CompressionSummary::plain(pattern, summary, details, stderr_preview, result)
+    } else {
+        CompressionSummary::new(pattern, summary, details, stderr_preview, result)
+    }
 }
 
 fn summarize_clippy(result: &ShellResult) -> CompressionSummary {
@@ -237,16 +254,194 @@ fn collect_failure_names(lines: &[String]) -> Vec<String> {
     sample_lines(failures, 6)
 }
 
+fn collect_test_details(
+    result: &ShellResult,
+    lines: &[String],
+    compile_error_blocks: &[String],
+) -> Vec<String> {
+    if result.exit_code == 0 {
+        let success_names = collect_success_test_names(lines);
+        if !success_names.is_empty() && success_names.len() <= SUCCESS_TEST_NAME_LIMIT {
+            return success_names;
+        }
+    }
+
+    let failure_names = collect_failure_names(lines);
+    if !failure_names.is_empty() {
+        return failure_names;
+    }
+
+    if !compile_error_blocks.is_empty() {
+        let shown = compile_error_blocks.len().min(COMPILE_ERROR_BLOCK_LIMIT);
+        let mut details = sample_lines(compile_error_blocks.iter().cloned(), shown);
+        append_omitted_line(&mut details, compile_error_blocks.len(), shown, "issues");
+        return details;
+    }
+
+    sample_lines(collect_error_blocks(lines), 6)
+}
+
+fn collect_success_test_names(lines: &[String]) -> Vec<String> {
+    lines
+        .iter()
+        .filter_map(|line| {
+            let rest = line.strip_prefix("test ")?;
+            let (name, status) = rest.rsplit_once(" ... ")?;
+            (status == "ok").then(|| name.to_string())
+        })
+        .collect()
+}
+
+fn collect_error_blocks(lines: &[String]) -> Vec<String> {
+    let mut blocks = Vec::new();
+    let mut index = 0usize;
+
+    while index < lines.len() {
+        let line = &lines[index];
+        if !(line.starts_with("error[") || line.starts_with("error:")) {
+            index += 1;
+            continue;
+        }
+
+        let mut block = vec![line.clone()];
+        let mut lookahead = index + 1;
+        while lookahead < lines.len() {
+            let candidate = &lines[lookahead];
+            if candidate.starts_with("error[")
+                || candidate.starts_with("error:")
+                || candidate.starts_with("warning")
+                || candidate.starts_with("test result:")
+            {
+                break;
+            }
+
+            if candidate.trim_start().starts_with("--> ")
+                || candidate.contains("could not compile")
+                || candidate.starts_with("For more information")
+            {
+                block.push(candidate.clone());
+            }
+
+            if candidate.contains("could not compile") {
+                break;
+            }
+            lookahead += 1;
+        }
+
+        blocks.push(block.join(" | "));
+        index = lookahead;
+    }
+
+    blocks
+}
+
+fn collect_compile_error_blocks(raw_lines: &[String]) -> Vec<String> {
+    let mut blocks = Vec::new();
+    let mut current_block = Vec::new();
+    let mut in_block = false;
+
+    for line in raw_lines {
+        let trimmed = line.trim_start();
+
+        if is_compile_error_start(trimmed) {
+            if !current_block.is_empty() {
+                blocks.push(current_block.join("\n"));
+                current_block.clear();
+            }
+            in_block = true;
+            current_block.push(trimmed.to_string());
+            continue;
+        }
+
+        if !in_block {
+            continue;
+        }
+
+        if is_compile_error_terminal(trimmed) {
+            current_block.push(trimmed.to_string());
+            blocks.push(current_block.join("\n"));
+            current_block.clear();
+            in_block = false;
+            continue;
+        }
+
+        if is_compile_error_continuation(line, trimmed) {
+            current_block.push(line.to_string());
+            continue;
+        }
+
+        blocks.push(current_block.join("\n"));
+        current_block.clear();
+        in_block = false;
+    }
+
+    if !current_block.is_empty() {
+        blocks.push(current_block.join("\n"));
+    }
+
+    blocks
+}
+
+fn compile_error_summary(
+    label: &str,
+    lines: &[String],
+    raw_lines: &[String],
+    error_count: usize,
+) -> String {
+    let warnings = count_warning_lines(lines);
+    let compiled = count_compiling_crates(raw_lines);
+    if compiled > 0 {
+        format!("{label}: {error_count} errors, {warnings} warnings ({compiled} crates)")
+    } else {
+        format!("{label}: {error_count} errors, {warnings} warnings")
+    }
+}
+
+fn count_compiling_crates(raw_lines: &[String]) -> usize {
+    raw_lines
+        .iter()
+        .filter(|line| {
+            let trimmed = line.trim_start();
+            trimmed.starts_with("Compiling") || trimmed.starts_with("Checking")
+        })
+        .count()
+}
+
+fn is_compile_error_start(line: &str) -> bool {
+    line.starts_with("error[")
+}
+
+fn is_compile_error_terminal(line: &str) -> bool {
+    line.contains("could not compile") || line.contains("aborting due to")
+}
+
+fn is_compile_error_continuation(raw_line: &str, trimmed: &str) -> bool {
+    raw_line.starts_with(' ')
+        || raw_line.starts_with('\t')
+        || trimmed.starts_with("--> ")
+        || trimmed.starts_with('|')
+        || trimmed.starts_with("= note:")
+        || trimmed.starts_with("= help:")
+        || trimmed.starts_with("note:")
+        || trimmed.starts_with("help:")
+        || trimmed.starts_with("For more information")
+}
+
 fn test_stderr_preview(
     result: &ShellResult,
     lines: &[String],
-    failure_names: &[String],
+    compile_error_blocks: &[String],
+    details: &[String],
 ) -> Vec<String> {
-    if result.exit_code == 0 && failure_names.is_empty() {
+    if result.exit_code == 0 && details.is_empty() {
         return Vec::new();
     }
 
-    let actionable = filter_actionable_lines(lines);
+    if !compile_error_blocks.is_empty() {
+        return Vec::new();
+    }
+
+    let actionable = filter_test_actionable_lines(lines);
     if actionable.is_empty() {
         preview(&result.stderr)
     } else {
@@ -300,6 +495,15 @@ fn filter_actionable_lines(lines: &[String]) -> Vec<String> {
         })
         .cloned()
         .collect()
+}
+
+fn filter_test_actionable_lines(lines: &[String]) -> Vec<String> {
+    let blocks = collect_error_blocks(lines);
+    if !blocks.is_empty() {
+        return blocks;
+    }
+
+    filter_actionable_lines(lines)
 }
 
 fn count_error_lines(lines: &[String]) -> usize {

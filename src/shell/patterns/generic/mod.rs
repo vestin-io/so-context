@@ -13,6 +13,7 @@ use super::text::{
 const FALLBACK_PASSTHROUGH_THRESHOLD: usize = 40;
 const SCRIPT_PASSTHROUGH_THRESHOLD: usize = 80;
 const TEXT_TRANSFORM_PASSTHROUGH_THRESHOLD: usize = 120;
+const RG_FILES_PASSTHROUGH_THRESHOLD: usize = 200;
 
 fn summarize_ls(result: &ShellResult) -> CompressionSummary {
     let entries = non_empty_lines(&result.stdout);
@@ -45,15 +46,45 @@ fn summarize_rg(result: &ShellResult) -> CompressionSummary {
     summarize_search_output(result, ShellPattern::Rg)
 }
 
+fn summarize_rg_files(result: &ShellResult) -> CompressionSummary {
+    let files = exact_output_lines(&result.stdout);
+    if files.len() <= RG_FILES_PASSTHROUGH_THRESHOLD {
+        return CompressionSummary::plain(
+            ShellPattern::RgFiles,
+            String::new(),
+            files,
+            preview(&result.stderr),
+            result,
+        );
+    }
+
+    let shown = RG_FILES_PASSTHROUGH_THRESHOLD;
+    let mut details = sample_lines(files, shown);
+    append_omitted_line(&mut details, result.stdout.lines().count(), shown, "files");
+
+    CompressionSummary::plain(
+        ShellPattern::RgFiles,
+        String::new(),
+        details,
+        preview(&result.stderr),
+        result,
+    )
+}
+
 fn summarize_grep(result: &ShellResult) -> CompressionSummary {
     summarize_search_output(result, ShellPattern::Grep)
 }
 
 fn summarize_search_output(result: &ShellResult, pattern: ShellPattern) -> CompressionSummary {
-    let hits = non_empty_lines(&result.stdout);
+    let hits = result
+        .stdout
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>();
     let SummaryDetails { summary, details } = summarize_search_hits(&hits);
 
-    CompressionSummary::new(pattern, summary, details, preview(&result.stderr), result)
+    CompressionSummary::plain(pattern, summary, details, preview(&result.stderr), result)
 }
 
 fn summarize_curl(result: &ShellResult) -> CompressionSummary {
@@ -118,6 +149,16 @@ fn summarize_tail(result: &ShellResult) -> CompressionSummary {
     summarize_file_excerpt(result, ShellPattern::Tail, "tail")
 }
 
+fn summarize_text_excerpt(result: &ShellResult) -> CompressionSummary {
+    CompressionSummary::plain(
+        ShellPattern::TextExcerpt,
+        String::new(),
+        exact_output_lines(&preferred_output(result)),
+        preview(&result.stderr),
+        result,
+    )
+}
+
 pub(super) fn summarize_unknown(result: &ShellResult) -> CompressionSummary {
     summarize_fallback(result, ShellPattern::Unknown)
 }
@@ -130,6 +171,17 @@ pub(super) fn summarize_fallback(
     let output = preferred_output(result);
     let details = non_empty_lines(&output);
     let threshold = fallback_passthrough_threshold(program);
+
+    if should_plain_passthrough(&output, details.len(), threshold) {
+        return CompressionSummary::plain(
+            pattern,
+            String::new(),
+            exact_output_lines(&output),
+            Vec::new(),
+            result,
+        );
+    }
+
     let shown = details.len().min(threshold);
     let mut rendered_details = sample_lines(details.clone(), threshold);
     append_omitted_line(&mut rendered_details, details.len(), shown, "lines");
@@ -143,11 +195,21 @@ pub(super) fn summarize_fallback(
     )
 }
 
-pub(super) fn classify(program: &str, _args: &[String]) -> Option<ShellPattern> {
+pub(super) fn classify(program: &str, args: &[String]) -> Option<ShellPattern> {
+    if is_text_excerpt_command(program, args) {
+        return Some(ShellPattern::TextExcerpt);
+    }
+
     match program {
         "ls" => Some(ShellPattern::Ls),
         "find" => Some(ShellPattern::Find),
-        "rg" => Some(ShellPattern::Rg),
+        "rg" => {
+            if args.iter().any(|arg| arg == "--files") {
+                Some(ShellPattern::RgFiles)
+            } else {
+                Some(ShellPattern::Rg)
+            }
+        }
         "grep" => Some(ShellPattern::Grep),
         "curl" => Some(ShellPattern::Curl),
         "wget" => Some(ShellPattern::Wget),
@@ -167,6 +229,7 @@ pub(super) fn summarize_pattern(
         ShellPattern::Ls => summarize_ls(result),
         ShellPattern::Find => summarize_find(result),
         ShellPattern::Rg => summarize_rg(result),
+        ShellPattern::RgFiles => summarize_rg_files(result),
         ShellPattern::Grep => summarize_grep(result),
         ShellPattern::Curl => summarize_curl(result),
         ShellPattern::Wget => summarize_wget(result),
@@ -174,6 +237,7 @@ pub(super) fn summarize_pattern(
         ShellPattern::Cat => summarize_cat(result),
         ShellPattern::Head => summarize_head(result),
         ShellPattern::Tail => summarize_tail(result),
+        ShellPattern::TextExcerpt => summarize_text_excerpt(result),
         ShellPattern::Unknown => summarize_unknown(result),
         _ => return None,
     })
@@ -257,6 +321,73 @@ fn fallback_summary(result: &ShellResult, program: &str, details: &[String]) -> 
 
     let lead = truncate_text(details.first().map(String::as_str).unwrap_or(""), 80);
     format!("{line_count} lines | {stderr_lines} stderr lines | {lead}")
+}
+
+fn should_plain_passthrough(output: &str, line_count: usize, threshold: usize) -> bool {
+    !output.trim().is_empty() && line_count > 0 && line_count <= threshold
+}
+
+fn exact_output_lines(output: &str) -> Vec<String> {
+    output.lines().map(|line| line.to_string()).collect()
+}
+
+fn is_text_excerpt_command(program: &str, args: &[String]) -> bool {
+    matches!(program, "sed" | "sh" | "bash" | "zsh")
+        && excerpt_line_count_hint(program, args).is_some()
+}
+
+fn excerpt_line_count_hint(program: &str, args: &[String]) -> Option<usize> {
+    if program == "sed" {
+        return parse_sed_excerpt_args(args);
+    }
+
+    shell_c_command(args).and_then(parse_shell_excerpt_command)
+}
+
+fn parse_sed_excerpt_args(args: &[String]) -> Option<usize> {
+    let has_print_range = args.iter().any(|arg| parse_sed_range(arg).is_some());
+    let has_file = args.iter().any(|arg| !arg.starts_with('-'));
+    has_print_range.then_some(())?;
+    has_file.then_some(())?;
+    args.iter().find_map(|arg| parse_sed_range(arg))
+}
+
+fn shell_c_command(args: &[String]) -> Option<&str> {
+    let command_index = args
+        .iter()
+        .position(|arg| arg.starts_with('-') && arg.contains('c'))?;
+    args.get(command_index + 1).map(String::as_str)
+}
+
+fn parse_shell_excerpt_command(command: &str) -> Option<usize> {
+    let normalized = command.trim();
+    let has_line_number_prefix =
+        normalized.starts_with("nl -ba ") || normalized.contains(" nl -ba ");
+    let has_sed_range = normalized.contains("sed -n");
+    if !(has_line_number_prefix && has_sed_range) {
+        return None;
+    }
+
+    let sed_segment = normalized
+        .split('|')
+        .map(str::trim)
+        .find(|part| part.starts_with("sed -n"))?;
+    parse_sed_command_range(sed_segment)
+}
+
+fn parse_sed_command_range(command: &str) -> Option<usize> {
+    let mut tokens = command
+        .split_whitespace()
+        .map(|token| token.trim_matches(|ch| ch == '\'' || ch == '"'));
+    tokens.find_map(parse_sed_range)
+}
+
+fn parse_sed_range(token: &str) -> Option<usize> {
+    let body = token.strip_suffix('p')?;
+    let (start, end) = body.split_once(',')?;
+    let start: usize = start.parse().ok()?;
+    let end: usize = end.parse().ok()?;
+    (end >= start).then_some(end - start + 1)
 }
 
 fn infer_wget_filename(stderr: &str, args: &[String]) -> Option<String> {
