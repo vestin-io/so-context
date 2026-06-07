@@ -221,9 +221,18 @@ pub async fn send_ctrl_metrics_request(
     let mut line = serde_json::to_string(&msg)?;
     line.push('\n');
 
-    let stream = UnixStream::connect(&sock)
-        .await
-        .map_err(|e| anyhow::anyhow!("connect to ctrl socket: {e}"))?;
+    let stream = UnixStream::connect(&sock).await.map_err(|e| {
+        if matches!(
+            e.kind(),
+            std::io::ErrorKind::ConnectionRefused
+                | std::io::ErrorKind::NotFound
+                | std::io::ErrorKind::ConnectionReset
+        ) {
+            anyhow::anyhow!("so-context daemon is not running.\nStart it with: so-context daemon")
+        } else {
+            anyhow::anyhow!("connect to ctrl socket: {e}")
+        }
+    })?;
     let (read_half, mut write_half) = stream.into_split();
 
     write_half

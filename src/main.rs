@@ -139,7 +139,7 @@ enum Commands {
     },
     /// Show all projects currently watched by the running daemon.
     Status,
-    /// Show runtime and usage metrics aggregated by the running daemon.
+    /// Show usage metrics aggregated from so-context events.
     Metrics {
         /// Time window for event aggregation.
         #[arg(long, value_enum, default_value = "24h")]

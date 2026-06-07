@@ -17,9 +17,6 @@ pub fn render_metrics_text(summary: &MetricsSummary) -> String {
     out.push(String::new());
 
     render_top_shell_commands(&mut out, summary);
-    out.push(String::new());
-
-    render_runtime(&mut out, summary);
     out.join("\n")
 }
 
@@ -131,35 +128,6 @@ fn render_top_shell_commands(out: &mut Vec<String>, summary: &MetricsSummary) {
     out.push(shell_table.to_string());
 }
 
-fn render_runtime(out: &mut Vec<String>, summary: &MetricsSummary) {
-    out.push("Runtime".to_string());
-    let rows = [
-        (
-            "Watched projects",
-            summary.runtime.watched_projects.to_string(),
-        ),
-        ("Running", summary.runtime.running.to_string()),
-        ("Indexing", summary.runtime.indexing.to_string()),
-        ("Failed", summary.runtime.failed.to_string()),
-        (
-            "Active consumers",
-            summary.runtime.active_consumers.to_string(),
-        ),
-        (
-            "Daemon uptime",
-            format_duration(summary.runtime.daemon_uptime_seconds),
-        ),
-    ];
-
-    let label_width = rows.iter().map(|(label, _)| label.len()).max().unwrap_or(0);
-    for (label, value) in rows {
-        out.push(format!(
-            "{label:label_width$}  {value}",
-            label_width = label_width
-        ));
-    }
-}
-
 fn base_table() -> Table {
     let mut table = Table::new();
     table
@@ -220,19 +188,6 @@ fn progress_bar(ratio: f64, width: usize) -> String {
     let filled = (clamped * width as f64).round() as usize;
     let empty = width.saturating_sub(filled);
     format!("[{}{}]", "█".repeat(filled), "░".repeat(empty))
-}
-
-fn format_duration(seconds: u64) -> String {
-    let hours = seconds / 3600;
-    let minutes = (seconds % 3600) / 60;
-    let secs = seconds % 60;
-    if hours > 0 {
-        format!("{hours}h {minutes}m")
-    } else if minutes > 0 {
-        format!("{minutes}m {secs}s")
-    } else {
-        format!("{secs}s")
-    }
 }
 
 fn truncate_middle(value: &str, max_len: usize) -> String {

@@ -7,7 +7,7 @@
 
 pub mod watch_manager;
 
-use std::{fs, sync::Arc, time::Instant};
+use std::{fs, sync::Arc};
 
 use anyhow::{Context, Result};
 use rmcp::ServiceExt;
@@ -25,7 +25,6 @@ use crate::socket::{ctrl_socket_path, socket_path};
 pub struct Daemon {
     pub watch_manager: Arc<WatchManager>,
     pub file_visit_cache: FileVisitCache,
-    pub started_at: Instant,
 }
 
 impl Daemon {
@@ -33,14 +32,12 @@ impl Daemon {
         Self {
             watch_manager: Arc::new(WatchManager::new()),
             file_visit_cache: FileVisitCache::new(),
-            started_at: Instant::now(),
         }
     }
 
     pub async fn run(self) -> Result<()> {
         let wm = Arc::clone(&self.watch_manager);
         let fvc = self.file_visit_cache;
-        let started_at = self.started_at;
 
         // --- MCP socket (raw JSON-RPC) ---
         let mcp_path = socket_path();
@@ -74,7 +71,7 @@ impl Daemon {
         let wm_ctrl = Arc::clone(&wm);
         let fvc_ctrl = fvc.clone();
         tokio::spawn(async move {
-            run_ctrl_listener(ctrl_listener, wm_ctrl, fvc_ctrl, started_at).await;
+            run_ctrl_listener(ctrl_listener, wm_ctrl, fvc_ctrl).await;
         });
 
         // --- MCP accept loop ---
@@ -108,20 +105,13 @@ impl Daemon {
 
 // ctrl socket — newline-delimited JSON-RPC 2.0 (notifications only)
 
-async fn run_ctrl_listener(
-    listener: UnixListener,
-    wm: Arc<WatchManager>,
-    fvc: FileVisitCache,
-    started_at: Instant,
-) {
+async fn run_ctrl_listener(listener: UnixListener, wm: Arc<WatchManager>, fvc: FileVisitCache) {
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {
                 let wm = Arc::clone(&wm);
                 let fvc = fvc.clone();
-                tokio::spawn(
-                    async move { handle_ctrl_connection(stream, wm, fvc, started_at).await },
-                );
+                tokio::spawn(async move { handle_ctrl_connection(stream, wm, fvc).await });
             }
             Err(e) => {
                 eprintln!("so-context daemon: ctrl accept error: {e}");
@@ -130,12 +120,7 @@ async fn run_ctrl_listener(
     }
 }
 
-async fn handle_ctrl_connection(
-    stream: UnixStream,
-    wm: Arc<WatchManager>,
-    fvc: FileVisitCache,
-    started_at: Instant,
-) {
+async fn handle_ctrl_connection(stream: UnixStream, wm: Arc<WatchManager>, fvc: FileVisitCache) {
     let (read_half, mut write_half) = stream.into_split();
     let mut lines = BufReader::new(read_half).lines();
     while let Ok(Some(line)) = lines.next_line().await {
@@ -144,7 +129,7 @@ async fn handle_ctrl_connection(
             continue;
         }
         if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&line) {
-            if let Some(response) = dispatch_ctrl(&msg, &wm, &fvc, started_at) {
+            if let Some(response) = dispatch_ctrl(&msg, &wm, &fvc) {
                 match serde_json::to_string(&response) {
                     Ok(mut payload) => {
                         payload.push('\n');
@@ -166,7 +151,6 @@ fn dispatch_ctrl(
     msg: &serde_json::Value,
     wm: &WatchManager,
     fvc: &FileVisitCache,
-    started_at: Instant,
 ) -> Option<serde_json::Value> {
     let method = msg.get("method").and_then(|v| v.as_str()).unwrap_or("");
     let id = msg.get("id").cloned();
@@ -254,7 +238,7 @@ fn dispatch_ctrl(
                 project,
                 top_n: top,
             };
-            match build_metrics_summary(&request, wm, started_at) {
+            match build_metrics_summary(&request) {
                 Ok(summary) => Some(serde_json::json!({
                     "jsonrpc": "2.0",
                     "id": id.unwrap_or(serde_json::Value::Null),

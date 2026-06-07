@@ -1,11 +1,7 @@
-use std::collections::{BTreeSet, HashMap};
-use std::time::Instant;
+use std::collections::HashMap;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-
-use crate::daemon::WatchManager;
-use crate::daemon::watch_manager::WatchState;
 
 #[path = "metrics/query.rs"]
 mod query;
@@ -59,7 +55,6 @@ pub struct MetricsSummary {
     pub summary: SummaryMetrics,
     pub by_tool: Vec<ToolMetrics>,
     pub top_shell_commands: Vec<ShellCommandMetrics>,
-    pub runtime: RuntimeMetrics,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,16 +89,6 @@ pub struct ShellCommandMetrics {
     pub avg_latency_ms: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RuntimeMetrics {
-    pub watched_projects: usize,
-    pub running: usize,
-    pub indexing: usize,
-    pub failed: usize,
-    pub active_consumers: usize,
-    pub daemon_uptime_seconds: u64,
-}
-
 #[derive(Default)]
 struct ToolAgg {
     calls: u64,
@@ -135,14 +120,9 @@ struct UsageAgg {
     shell_aggs: HashMap<String, ShellCommandAgg>,
 }
 
-pub fn build_metrics_summary(
-    request: &MetricsRequest,
-    wm: &WatchManager,
-    daemon_started_at: Instant,
-) -> Result<MetricsSummary> {
+pub fn build_metrics_summary(request: &MetricsRequest) -> Result<MetricsSummary> {
     let rows = load_event_rows(request)?;
     let usage = aggregate_usage(&rows);
-    let runtime = build_runtime_metrics(wm, daemon_started_at);
 
     Ok(MetricsSummary {
         window: request.window,
@@ -150,7 +130,6 @@ pub fn build_metrics_summary(
         summary: build_summary_metrics(&usage),
         by_tool: build_tool_metrics(usage.tool_aggs),
         top_shell_commands: build_shell_command_metrics(usage.shell_aggs, request.top_n),
-        runtime,
     })
 }
 
@@ -255,34 +234,6 @@ fn build_shell_command_metrics(
     });
     top_shell_commands.truncate(top_n.max(1));
     top_shell_commands
-}
-
-fn build_runtime_metrics(wm: &WatchManager, daemon_started_at: Instant) -> RuntimeMetrics {
-    let statuses = wm.status();
-    let mut active_consumers = BTreeSet::new();
-    let mut running = 0usize;
-    let mut indexing = 0usize;
-    let mut failed = 0usize;
-
-    for status in &statuses {
-        match &status.state {
-            WatchState::Running => running += 1,
-            WatchState::Indexing => indexing += 1,
-            WatchState::Failed(_) => failed += 1,
-        }
-        for consumer in &status.consumers {
-            active_consumers.insert(consumer.key());
-        }
-    }
-
-    RuntimeMetrics {
-        watched_projects: statuses.len(),
-        running,
-        indexing,
-        failed,
-        active_consumers: active_consumers.len(),
-        daemon_uptime_seconds: daemon_started_at.elapsed().as_secs(),
-    }
 }
 
 fn ratio(numerator: u64, denominator: u64) -> f64 {
