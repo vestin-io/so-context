@@ -139,12 +139,20 @@ Pushing the tag triggers `.github/workflows/release.yml`, which builds and uploa
 - `so-context-x86_64-apple-darwin.tar.gz`
 - `so-context-aarch64-apple-darwin.tar.gz`
 - `SHA256SUMS.txt`
+- and, when configured, updates `vestin-io/homebrew-tap` to point `Formula/so-context.rb` at the new stable release
 
 You can also run the same workflow manually from GitHub Actions with `workflow_dispatch`:
 - optional `version` input, for example `0.1.1`
 - optional `draft` toggle
 
 If the manual dispatch `version` is empty, the workflow falls back to the version in `Cargo.toml`.
+
+To enable automatic tap updates after non-draft releases, add this repository secret in `vestin-io/so-context`:
+
+- `HOMEBREW_TAP_TOKEN`
+  - a GitHub token with permission to push to `vestin-io/homebrew-tap`
+
+If `HOMEBREW_TAP_TOKEN` is not set, the release still succeeds; only the tap sync step is skipped.
 
 ---
 
