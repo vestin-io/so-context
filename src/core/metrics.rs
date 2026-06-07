@@ -310,5 +310,5 @@ fn savings_ratio(saved_tokens: i64, estimated_origin_tokens: i64) -> f64 {
 }
 
 #[cfg(test)]
-#[path = "metrics/tests.rs"]
+#[path = "metrics_tests.rs"]
 mod tests;
