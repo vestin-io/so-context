@@ -29,4 +29,5 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS idx_events_agent     ON events(agent, session_id);
 CREATE INDEX IF NOT EXISTS idx_events_tool_ts   ON events(tool, ts);
 CREATE INDEX IF NOT EXISTS idx_events_project   ON events(project) WHERE project IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_events_project_ts ON events(project, ts) WHERE project IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_events_ts        ON events(ts);

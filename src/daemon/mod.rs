@@ -11,12 +11,14 @@ use std::{fs, sync::Arc};
 
 use anyhow::{Context, Result};
 use rmcp::ServiceExt;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 pub use watch_manager::WatchManager;
 
+use crate::core_metrics::{MetricsRequest, MetricsWindow, build_metrics_summary};
 use crate::file_visit_cache::FileVisitCache;
 use crate::mcp::BuiltinServer;
+use crate::mcp::tools::status::render_status_text;
 use crate::socket::{ctrl_socket_path, socket_path};
 
 /// The daemon runtime.
@@ -119,22 +121,39 @@ async fn run_ctrl_listener(listener: UnixListener, wm: Arc<WatchManager>, fvc: F
 }
 
 async fn handle_ctrl_connection(stream: UnixStream, wm: Arc<WatchManager>, fvc: FileVisitCache) {
-    let mut lines = BufReader::new(stream).lines();
+    let (read_half, mut write_half) = stream.into_split();
+    let mut lines = BufReader::new(read_half).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         let line = line.trim().to_string();
         if line.is_empty() {
             continue;
         }
         if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&line) {
-            dispatch_ctrl(&msg, &wm, &fvc);
+            if let Some(response) = dispatch_ctrl(&msg, &wm, &fvc) {
+                match serde_json::to_string(&response) {
+                    Ok(mut payload) => {
+                        payload.push('\n');
+                        if let Err(e) = write_half.write_all(payload.as_bytes()).await {
+                            eprintln!("so-context daemon: ctrl write error: {e}");
+                            break;
+                        }
+                    }
+                    Err(e) => eprintln!("so-context daemon: ctrl encode error: {e}"),
+                }
+            }
         } else {
             eprintln!("so-context daemon: ctrl invalid JSON: {line}");
         }
     }
 }
 
-fn dispatch_ctrl(msg: &serde_json::Value, wm: &WatchManager, fvc: &FileVisitCache) {
+fn dispatch_ctrl(
+    msg: &serde_json::Value,
+    wm: &WatchManager,
+    fvc: &FileVisitCache,
+) -> Option<serde_json::Value> {
     let method = msg.get("method").and_then(|v| v.as_str()).unwrap_or("");
+    let id = msg.get("id").cloned();
     let params = msg.get("params");
     let path = params
         .and_then(|p| p.get("path"))
@@ -151,13 +170,14 @@ fn dispatch_ctrl(msg: &serde_json::Value, wm: &WatchManager, fvc: &FileVisitCach
         "watch" | "unwatch" => {
             if path.is_empty() {
                 eprintln!("so-context daemon: ctrl missing path in {method} message");
-                return;
+                return None;
             }
             if method == "watch" {
                 wm.ensure_watching(path, client, session_id);
             } else {
                 wm.unwatch(path, client, session_id);
             }
+            None
         }
         "compact_reset" => {
             // Reset all file-visit cache entries for this session so the agent
@@ -168,7 +188,7 @@ fn dispatch_ctrl(msg: &serde_json::Value, wm: &WatchManager, fvc: &FileVisitCach
                 .unwrap_or("");
             let Some(session_id) = session_id.filter(|value| !value.is_empty()) else {
                 eprintln!("so-context daemon: ctrl compact_reset missing session_id");
-                return;
+                return None;
             };
             let deleted = (!connection_id.is_empty()
                 && fvc.delete_context_window(connection_id, session_id))
@@ -177,9 +197,63 @@ fn dispatch_ctrl(msg: &serde_json::Value, wm: &WatchManager, fvc: &FileVisitCach
                 "so-context daemon: compact_reset connection={connection_id} session={} deleted={}",
                 session_id, deleted
             );
+            None
+        }
+        "status" => {
+            let text = render_status_text(wm);
+            Some(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id.unwrap_or(serde_json::Value::Null),
+                "result": { "text": text }
+            }))
+        }
+        "metrics" => {
+            let window = match params
+                .and_then(|p| p.get("window"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("24h")
+            {
+                "24h" => MetricsWindow::Last24Hours,
+                "7d" => MetricsWindow::Last7Days,
+                "all" => MetricsWindow::All,
+                other => {
+                    return Some(serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": id.unwrap_or(serde_json::Value::Null),
+                        "error": { "message": format!("unsupported metrics window: {other}") }
+                    }));
+                }
+            };
+            let project = params
+                .and_then(|p| p.get("project"))
+                .and_then(|v| v.as_str())
+                .filter(|v| !v.is_empty())
+                .map(|v| v.to_string());
+            let top = params
+                .and_then(|p| p.get("top"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(5) as usize;
+            let request = MetricsRequest {
+                window,
+                project,
+                top_n: top,
+            };
+            match build_metrics_summary(&request) {
+                Ok(summary) => Some(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id.unwrap_or(serde_json::Value::Null),
+                    "result": summary
+                })),
+                Err(error) => Some(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id.unwrap_or(serde_json::Value::Null),
+                    "error": { "message": error.to_string() }
+                })),
+            }
         }
         other => {
             eprintln!("so-context daemon: ctrl unknown method: {other}");
+            None
         }
     }
 }
