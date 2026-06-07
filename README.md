@@ -46,8 +46,11 @@ If no matching release asset exists yet, it falls back to building from source w
 Developer fallback options:
 
 ```sh
-# Homebrew (HEAD formula; builds from source)
-brew install --HEAD https://raw.githubusercontent.com/vestin-io/so-context/main/Formula/so-context.rb
+# Homebrew stable formula (requires repository access; builds from tagged source)
+brew install ./Formula/so-context.rb
+
+# Homebrew development build from main
+brew install --HEAD ./Formula/so-context.rb
 
 # Cargo (builds from source)
 cargo install --git https://github.com/vestin-io/so-context so-context
@@ -136,6 +139,12 @@ Pushing the tag triggers `.github/workflows/release.yml`, which builds and uploa
 - `so-context-x86_64-apple-darwin.tar.gz`
 - `so-context-aarch64-apple-darwin.tar.gz`
 - `SHA256SUMS.txt`
+
+You can also run the same workflow manually from GitHub Actions with `workflow_dispatch`:
+- optional `version` input, for example `0.1.1`
+- optional `draft` toggle
+
+If the manual dispatch `version` is empty, the workflow falls back to the version in `Cargo.toml`.
 
 ---
 
