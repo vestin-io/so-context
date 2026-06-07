@@ -32,13 +32,24 @@ Five separate techniques exist to fix this. They all work. None of them talk to 
 ## Installation
 
 ```sh
-# Quick install (GitHub release when available, cargo fallback)
+# Primary install path
 curl -fsSL https://raw.githubusercontent.com/vestin-io/so-context/main/scripts/install.sh | sh
+```
 
-# Homebrew (HEAD formula)
+The install script downloads a prebuilt GitHub release binary for:
+- macOS Apple Silicon (`aarch64-apple-darwin`)
+- macOS Intel (`x86_64-apple-darwin`)
+- Linux x86_64 (`x86_64-unknown-linux-gnu`)
+
+If no matching release asset exists yet, it falls back to building from source with `cargo`.
+
+Developer fallback options:
+
+```sh
+# Homebrew (HEAD formula; builds from source)
 brew install --HEAD https://raw.githubusercontent.com/vestin-io/so-context/main/Formula/so-context.rb
 
-# Cargo
+# Cargo (builds from source)
 cargo install --git https://github.com/vestin-io/so-context so-context
 ```
 
@@ -107,6 +118,24 @@ cargo build
 cargo check
 so-context daemon
 ```
+
+## Maintainer release flow
+
+1. Bump `Cargo.toml` version.
+2. Commit the release changes.
+3. Tag the release with a `v` prefix, for example `v0.1.1`.
+4. Push the branch and tag:
+
+```sh
+git push origin main
+git push origin v0.1.1
+```
+
+Pushing the tag triggers `.github/workflows/release.yml`, which builds and uploads:
+- `so-context-x86_64-unknown-linux-gnu.tar.gz`
+- `so-context-x86_64-apple-darwin.tar.gz`
+- `so-context-aarch64-apple-darwin.tar.gz`
+- `SHA256SUMS.txt`
 
 ---
 
