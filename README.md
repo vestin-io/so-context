@@ -46,11 +46,11 @@ If no matching release asset exists yet, it falls back to building from source w
 Developer fallback options:
 
 ```sh
-# Homebrew stable formula (requires repository access; builds from tagged source)
-brew install ./Formula/so-context.rb
+# Homebrew stable formula
+brew install vestin-io/tap/so-context
 
 # Homebrew development build from main
-brew install --HEAD ./Formula/so-context.rb
+brew install --HEAD vestin-io/tap/so-context
 
 # Cargo (builds from source)
 cargo install --git https://github.com/vestin-io/so-context so-context
