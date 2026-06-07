@@ -1,7 +1,7 @@
 use super::{CompressionRenderStyle, CompressionSummary, ShellPattern};
 use std::path::PathBuf;
 
-use crate::shell::types::{ShellInvocation, ShellResult};
+use crate::shell::types::{CaptureMetadata, ShellInvocation, ShellResult};
 
 fn sample_summary() -> CompressionSummary {
     CompressionSummary {
@@ -76,7 +76,33 @@ fn full_render_includes_newline_between_stdout_and_stderr() {
         stdout: "hello".into(),
         stderr: "warn".into(),
         exit_code: 7,
+        capture: CaptureMetadata {
+            stdout_bytes: 5,
+            stderr_bytes: 4,
+            capture_stdout_limit_bytes: 1024,
+            capture_stderr_limit_bytes: 1024,
+            ..CaptureMetadata::default()
+        },
     };
 
     assert_eq!(result.render_full(), "hello\nwarn\n");
+}
+
+#[test]
+fn raw_output_is_incomplete_when_command_timed_out() {
+    let result = ShellResult {
+        invocation: ShellInvocation::new(vec!["sh".into(), "-c".into(), "sleep 1".into()]),
+        stdout: String::new(),
+        stderr: "[shell] command timed out after 50ms\n".into(),
+        exit_code: 124,
+        capture: CaptureMetadata {
+            stderr_bytes: 35,
+            timed_out: true,
+            capture_stdout_limit_bytes: 1024,
+            capture_stderr_limit_bytes: 1024,
+            ..CaptureMetadata::default()
+        },
+    };
+
+    assert!(!result.raw_output_complete());
 }

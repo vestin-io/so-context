@@ -4,7 +4,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use super::types::RunOutput;
+use super::types::{CaptureMetadata, RunOutput};
 
 const SPOOL_TTL_SECS: u64 = 24 * 60 * 60;
 const MAX_SPOOL_BYTES: u64 = 256 * 1024 * 1024;
@@ -19,6 +19,7 @@ pub struct SpooledShellOutput {
     pub cwd: Option<PathBuf>,
     pub full_output: String,
     pub exit_code: i32,
+    pub capture: CaptureMetadata,
 }
 
 #[derive(Debug, Clone)]
@@ -37,6 +38,7 @@ struct SpooledShellOutputMeta {
     argv: Vec<String>,
     cwd: Option<PathBuf>,
     exit_code: i32,
+    capture: CaptureMetadata,
     created_at_epoch_secs: u64,
 }
 
@@ -74,6 +76,7 @@ fn read_spooled_output(tee_dir: &Path, run_id: &str) -> Option<SpooledShellOutpu
         cwd: meta.cwd,
         full_output,
         exit_code: meta.exit_code,
+        capture: meta.capture,
     })
 }
 
@@ -116,6 +119,7 @@ fn store_run_output_in_dir(tee_dir: &Path, output: &RunOutput, owner: Option<&Sp
         argv: output.invocation.argv.clone(),
         cwd: output.invocation.cwd().map(PathBuf::from),
         exit_code: output.exit_code,
+        capture: output.capture,
         created_at_epoch_secs: now_epoch_secs(),
     };
 
@@ -256,7 +260,9 @@ mod tests {
         SPOOL_TTL_SECS, SpoolOwner, collect_entries, get_spooled_output_in_dir, rotate_spool,
         store_run_output_in_dir,
     };
-    use crate::shell::types::{RunOutput, ShellInvocation, ShellOutputMode, ShellPattern};
+    use crate::shell::types::{
+        CaptureMetadata, RunOutput, ShellInvocation, ShellOutputMode, ShellPattern,
+    };
     use std::fs;
     use std::path::PathBuf;
     use std::time::{Duration, SystemTime};
@@ -279,13 +285,17 @@ mod tests {
                 PathBuf::from("/tmp/project"),
             ),
             pattern: ShellPattern::Unknown,
-            rendered: "compressed".into(),
+            rendered: Some("compressed".into()),
             full_output: full_output.to_string(),
             exit_code: 0,
             output_mode: ShellOutputMode::Compressed,
             requested_full: false,
-            stdout_bytes: full_output.len(),
-            stderr_bytes: 0,
+            capture: CaptureMetadata {
+                stdout_bytes: full_output.len(),
+                stderr_bytes: 0,
+                capture_stdout_limit_bytes: full_output.len(),
+                ..CaptureMetadata::default()
+            },
         }
     }
 
@@ -301,6 +311,8 @@ mod tests {
             .expect("spooled output");
         assert_eq!(cached.full_output, "hello world");
         assert_eq!(cached.argv, vec!["echo".to_string(), "hello".to_string()]);
+        assert!(cached.capture.raw_output_complete());
+        assert!(!cached.capture.timed_out);
 
         let _ = fs::remove_dir_all(dir);
     }
@@ -331,7 +343,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(10));
         store_run_output_in_dir(&dir, &sample_output("run-3", &"c".repeat(80)), None);
 
-        rotate_spool(&dir, Duration::from_secs(SPOOL_TTL_SECS), 400);
+        rotate_spool(&dir, Duration::from_secs(SPOOL_TTL_SECS), 600);
         let entries = collect_entries(&dir).unwrap();
         let remaining_logs: Vec<String> = entries
             .into_iter()

@@ -1,5 +1,5 @@
 use super::*;
-use crate::shell::types::ShellInvocation;
+use crate::shell::types::{CaptureMetadata, ShellInvocation};
 
 #[test]
 fn summarizes_rg_hits() {
@@ -8,6 +8,7 @@ fn summarizes_rg_hits() {
         stdout: "src/main.rs:10: TODO one\nsrc/lib.rs:7: TODO two\n".into(),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_rg(&result);
@@ -23,6 +24,7 @@ fn summarizes_ls_entries() {
         stdout: "Cargo.toml\nREADME.md\nsrc\n".into(),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_ls(&result);
@@ -38,6 +40,7 @@ fn summarizes_find_paths() {
         stdout: "src/main.rs\nsrc/shell/mod.rs\n".into(),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_find(&result);
@@ -58,6 +61,7 @@ fn summarizes_grep_hits() {
         stdout: "./src/main.rs:10: TODO one\n./src/lib.rs:7: TODO two\n".into(),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_grep(&result);
@@ -177,6 +181,7 @@ fn summarizes_head_excerpt() {
         stdout: "# so-context\nintro line\n".into(),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_head(&result);
@@ -191,6 +196,7 @@ fn summarizes_env_keys() {
         stdout: "PATH=/usr/bin:/bin\nAWS_SECRET_ACCESS_KEY=super-secret\nRUST_LOG=debug\n".into(),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_env(&result);
@@ -211,6 +217,7 @@ fn summarizes_curl_body() {
         stdout: "line one\nline two\n".into(),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_curl(&result);
@@ -233,6 +240,7 @@ fn redacts_sensitive_curl_source_url() {
         stdout: "line one\n".into(),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_curl(&result);
@@ -256,6 +264,7 @@ fn summarizes_curl_json_passthrough_shape() {
         stdout: "{\"ok\":true,\"items\":[1,2]}".into(),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_curl(&result);
@@ -273,6 +282,7 @@ fn summarizes_wget_download_result() {
         stdout: String::new(),
         stderr: "Saving to: 'archive.tgz'\n‘archive.tgz’ saved [1024/1024]\n".into(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_wget(&result);
@@ -292,6 +302,7 @@ fn redacts_sensitive_wget_source_url() {
         stdout: String::new(),
         stderr: "Saving to: 'archive.tgz'\n‘archive.tgz’ saved [1024/1024]\n".into(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_wget(&result);
@@ -308,6 +319,7 @@ fn summarizes_cat_excerpt() {
         stdout: "# so-context\nintro line\nsecond line\n".into(),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_cat(&result);
@@ -327,6 +339,7 @@ fn summarizes_tail_excerpt() {
         stdout: "line one\nline two\n".into(),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_tail(&result);
@@ -345,6 +358,7 @@ fn fallback_keeps_more_unknown_lines() {
         stdout: format!("{stdout}\n"),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_unknown(&result);
@@ -361,6 +375,7 @@ fn fallback_keeps_full_jq_json_output() {
         stdout: "{\n  \"name\": \"so-context\",\n  \"enabled\": true\n}\n".into(),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_unknown(&result);
@@ -382,6 +397,7 @@ fn fallback_keeps_more_sed_lines_before_truncating() {
         stdout: format!("{stdout}\n"),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_unknown(&result);
@@ -402,6 +418,7 @@ fn fallback_keeps_more_shell_script_lines_before_truncating() {
         stdout: format!("{stdout}\n"),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_unknown(&result);

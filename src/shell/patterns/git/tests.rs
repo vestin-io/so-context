@@ -1,5 +1,5 @@
 use super::*;
-use crate::shell::types::ShellInvocation;
+use crate::shell::types::{CaptureMetadata, ShellInvocation};
 
 #[test]
 fn summarizes_porcelain_status() {
@@ -8,6 +8,7 @@ fn summarizes_porcelain_status() {
         stdout: "## main\nM  src/main.rs\n M README.md\n?? src/shell/mod.rs\n".into(),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = status::summarize(&result);
@@ -26,6 +27,7 @@ fn summarizes_human_status() {
                 .into(),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = status::summarize(&result);
@@ -60,6 +62,7 @@ fn summarizes_diff_stats() {
             .into(),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = diff::summarize(&result);
@@ -89,6 +92,7 @@ fn keeps_all_changed_files_in_diff_details() {
         .into(),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = diff::summarize(&result);

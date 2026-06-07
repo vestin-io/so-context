@@ -93,23 +93,45 @@ pub fn build_shell_error_event(
 }
 
 fn shell_params(output: &RunOutput, displayed_output: &str) -> serde_json::Value {
-    serde_json::json!({
-        "run_id": output.run_id,
-        "argv": redact_argv(&output.invocation.argv),
-        "command_line": render_redacted_command_line(&output.invocation.argv),
-        "cwd": output
-            .invocation
-            .cwd()
-            .map(|path| path.to_string_lossy().to_string()),
-        "full": output.requested_full,
-        "family": output.pattern.label(),
-        "exit_code": output.exit_code,
-        "render_mode": output.output_mode.label(),
-        "raw_stdout_bytes": output.stdout_bytes,
-        "raw_stderr_bytes": output.stderr_bytes,
-        "full_output_bytes": output.full_output.len(),
-        "displayed_output_bytes": displayed_output.len(),
-    })
+    let mut params = serde_json::Map::from_iter([
+        ("run_id".into(), output.run_id.clone().into()),
+        (
+            "argv".into(),
+            serde_json::Value::Array(
+                redact_argv(&output.invocation.argv)
+                    .into_iter()
+                    .map(Into::into)
+                    .collect(),
+            ),
+        ),
+        (
+            "command_line".into(),
+            render_redacted_command_line(&output.invocation.argv).into(),
+        ),
+        (
+            "cwd".into(),
+            output
+                .invocation
+                .cwd()
+                .map(|path| path.to_string_lossy().to_string())
+                .map(Into::into)
+                .unwrap_or(serde_json::Value::Null),
+        ),
+        ("full".into(), output.requested_full.into()),
+        ("family".into(), output.pattern.label().into()),
+        ("exit_code".into(), output.exit_code.into()),
+        ("render_mode".into(), output.output_mode.label().into()),
+        (
+            "full_output_bytes".into(),
+            (output.full_output.len() as i64).into(),
+        ),
+        (
+            "displayed_output_bytes".into(),
+            (displayed_output.len() as i64).into(),
+        ),
+    ]);
+    output.capture.insert_json_fields(&mut params);
+    serde_json::Value::Object(params)
 }
 
 fn render_redacted_command_line(argv: &[String]) -> String {

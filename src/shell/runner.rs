@@ -59,7 +59,11 @@ impl ShellRunner {
 
     fn run_invocation(&self, invocation: ShellInvocation) -> Result<RunOutput> {
         let run_id = resolve_run_id();
-        let result = exec::execute(invocation)?;
+        let result = if self.options.full {
+            exec::execute_full(invocation)?
+        } else {
+            exec::execute(invocation)?
+        };
         if self.options.full {
             return self.render_full_output(&run_id, result);
         }
@@ -79,8 +83,7 @@ impl ShellRunner {
             exit_code: result.exit_code,
             output_mode,
             requested_full: false,
-            stdout_bytes: result.stdout.len(),
-            stderr_bytes: result.stderr.len(),
+            capture: result.capture,
         };
         output_spool::store_run_output(&output, self.options.spool_owner.as_ref());
         Ok(output)
@@ -94,13 +97,12 @@ impl ShellRunner {
             run_id: run_id.to_string(),
             invocation: result.invocation.clone(),
             pattern,
-            rendered: full_output.clone(),
+            rendered: None,
             full_output,
             exit_code: result.exit_code,
             output_mode: ShellOutputMode::Full,
             requested_full: true,
-            stdout_bytes: result.stdout.len(),
-            stderr_bytes: result.stderr.len(),
+            capture: result.capture,
         };
         output_spool::store_run_output(&output, self.options.spool_owner.as_ref());
         Ok(output)
@@ -110,12 +112,12 @@ impl ShellRunner {
         &self,
         full_output: &str,
         compressed_rendered: String,
-    ) -> (String, ShellOutputMode) {
-        if compressed_rendered.len() > full_output.len() {
-            return (full_output.to_string(), ShellOutputMode::RawFallback);
+    ) -> (Option<String>, ShellOutputMode) {
+        if compressed_rendered.len() >= full_output.len() {
+            return (None, ShellOutputMode::RawFallback);
         }
 
-        (compressed_rendered, ShellOutputMode::Compressed)
+        (Some(compressed_rendered), ShellOutputMode::Compressed)
     }
 }
 
@@ -144,8 +146,8 @@ mod tests {
         let (rendered, mode) =
             runner.select_rendered_output("M  src/main.rs\n", "M  src/main.rs\n".to_string());
 
-        assert_eq!(rendered, "M  src/main.rs\n");
-        assert_eq!(mode, ShellOutputMode::Compressed);
+        assert_eq!(rendered, None);
+        assert_eq!(mode, ShellOutputMode::RawFallback);
     }
 
     #[test]
@@ -154,7 +156,7 @@ mod tests {
         let (rendered, mode) = runner
             .select_rendered_output("M  src/main.rs\n", "* main\nM  src/main.rs\n".to_string());
 
-        assert_eq!(rendered, "M  src/main.rs\n");
+        assert_eq!(rendered, None);
         assert_eq!(mode, ShellOutputMode::RawFallback);
     }
 }

@@ -1,5 +1,5 @@
 use super::*;
-use crate::shell::types::ShellInvocation;
+use crate::shell::types::{CaptureMetadata, ShellInvocation};
 
 fn summarize_case(result: &ShellResult) -> CompressionSummary {
     summarize(result, super::super::classify_only(result))
@@ -12,6 +12,7 @@ fn summarizes_cargo_build() {
         stdout: "Compiling so-context v0.1.0\nFinished `dev` profile [unoptimized + debuginfo] target(s) in 0.72s\n".into(),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_case(&result);
@@ -30,6 +31,7 @@ fn suppresses_success_stderr_noise_for_cargo_build() {
         )
         .into(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_case(&result);
@@ -48,6 +50,7 @@ fn summarizes_cargo_test() {
         stdout: "running 2 tests\ntest a ... ok\ntest b ... ok\n\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s\n".into(),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_case(&result);
@@ -78,6 +81,7 @@ fn summarizes_cargo_test_across_multiple_targets() {
         .into(),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_case(&result);
@@ -98,6 +102,7 @@ fn summarizes_cargo_clippy() {
         stdout: String::new(),
         stderr: "warning: this can be simplified\n".into(),
         exit_code: 1,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_case(&result);
@@ -112,6 +117,7 @@ fn summarizes_cargo_check() {
         stdout: "Checking so-context v0.1.0\nFinished `dev` profile [unoptimized + debuginfo] target(s) in 0.33s\n".into(),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_case(&result);
@@ -125,6 +131,7 @@ fn summarizes_cargo_install() {
         stdout: "Installed package `ripgrep v14.0.0` (executable `rg`)\n".into(),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_case(&result);
@@ -147,6 +154,7 @@ fn keeps_only_warning_preview_for_successful_cargo_install() {
         )
         .into(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_case(&result);
@@ -171,6 +179,7 @@ fn summarizes_cargo_nextest() {
         stdout: "running 3 tests\n\ntest result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s\n".into(),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_case(&result);
@@ -187,6 +196,7 @@ fn keeps_actionable_stderr_for_failing_cargo_test() {
         stdout: "running 1 test\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n".into(),
         stderr: "Compiling demo v0.1.0\nerror: test failed\nwarning: retrying\n".into(),
         exit_code: 101,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_case(&result);
