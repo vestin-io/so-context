@@ -44,6 +44,7 @@ fn summarizes_short_status_without_branch_header() {
             .into(),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = status::summarize(&result);

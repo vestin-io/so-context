@@ -100,6 +100,7 @@ impl ShellResult {
         }
     }
 
+    #[cfg(test)]
     pub fn raw_output_complete(&self) -> bool {
         self.capture.raw_output_complete()
     }

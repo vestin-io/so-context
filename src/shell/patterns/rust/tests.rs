@@ -232,6 +232,7 @@ fn keeps_error_blocks_for_failing_cargo_test_compile_errors() {
         )
         .into(),
         exit_code: 101,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_case(&result);
@@ -278,6 +279,7 @@ fn caps_compile_error_blocks_for_failing_cargo_test() {
         stdout: String::new(),
         stderr,
         exit_code: 101,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_case(&result);

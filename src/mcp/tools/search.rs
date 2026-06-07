@@ -223,11 +223,9 @@ fn strip_query_wrappers(term: &str) -> String {
 }
 
 fn line_matches_terms(line: &str, terms: &[String]) -> bool {
-    let haystack = line.to_lowercase();
     terms
         .iter()
-        .map(|term| term.to_lowercase())
-        .any(|needle| !needle.is_empty() && haystack.contains(&needle))
+        .any(|needle| !needle.is_empty() && line.contains(needle))
 }
 
 fn should_skip_path(path: &std::path::Path) -> bool {
@@ -325,8 +323,12 @@ mod tests {
     }
 
     #[test]
-    fn fallback_line_matching_is_case_insensitive() {
+    fn fallback_line_matching_is_case_sensitive() {
         assert!(line_matches_terms(
+            "ConfigRepository loads recommendation files",
+            &["ConfigRepository".to_string()]
+        ));
+        assert!(!line_matches_terms(
             "ConfigRepository loads recommendation files",
             &["configrepository".to_string()]
         ));

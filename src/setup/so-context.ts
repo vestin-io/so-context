@@ -284,6 +284,39 @@ export const SoContextPlugin: Plugin = async ({ $ }) => {
     return limit != null ? { ...retry, limit } : retry;
   }
 
+  function preferredSoReadArgs(args: Record<string, unknown>): Record<string, unknown> | null {
+    const path = String((args as any)?.path ?? (args as any)?.file_path ?? "").trim();
+    if (!path) return null;
+
+    const retry: Record<string, unknown> = { path };
+    const mode = typeof (args as any)?.mode === "string" ? (args as any).mode.trim() : "";
+    if (mode) retry.mode = mode;
+
+    let hasExcerpt = false;
+    const startLine = (args as any)?.start_line;
+    if (typeof startLine === "number" && Number.isFinite(startLine) && startLine > 0) {
+      retry.start_line = Math.trunc(startLine);
+      hasExcerpt = true;
+    }
+
+    const endLine = (args as any)?.end_line;
+    if (typeof endLine === "number" && Number.isFinite(endLine) && endLine > 0) {
+      retry.end_line = Math.trunc(endLine);
+      hasExcerpt = true;
+    }
+
+    if (typeof (args as any)?.line_numbers === "boolean") {
+      retry.line_numbers = (args as any).line_numbers;
+      hasExcerpt = true;
+    }
+
+    if (!("mode" in retry) && !hasExcerpt) {
+      retry.mode = "full";
+    }
+
+    return retry;
+  }
+
   return {
     "tool.execute.before": async (input, output) => {
       if (input.tool.startsWith(SO_CONTEXT_TOOL_PREFIX)) {
@@ -296,10 +329,10 @@ export const SoContextPlugin: Plugin = async ({ $ }) => {
       }
 
       if (NATIVE_READ_TOOL_NAMES.has(input.tool ?? "")) {
-        const path = String((output.args as any)?.path ?? (output.args as any)?.file_path ?? "").trim();
-        if (!path) return;
+        const retry = preferredSoReadArgs((output.args as any) ?? {});
+        if (!retry) return;
         throw new Error(
-          `This native file read was automatically routed to mcp__so-context__so_read. This is expected, not an error. Retry with arguments: ${JSON.stringify({ path, mode: "full" })}. Use mode="outline" when you only need structure.`
+          `This native file read was automatically routed to mcp__so-context__so_read. This is expected, not an error. Retry with arguments: ${JSON.stringify(retry)}. Use mode="outline" when you only need structure.`
         );
       }
 

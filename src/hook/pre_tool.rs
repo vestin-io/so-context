@@ -127,24 +127,7 @@ fn deny_native_shell_if_needed(input: &Value) -> Option<Value> {
 }
 
 fn deny_native_read_if_needed(input: &Value) -> Option<Value> {
-    let path = input
-        .pointer("/tool_input/path")
-        .and_then(|value| value.as_str())
-        .or_else(|| {
-            input
-                .pointer("/tool_input/file_path")
-                .and_then(|value| value.as_str())
-        })?
-        .trim();
-
-    if path.is_empty() {
-        return None;
-    }
-
-    let retry = serde_json::json!({
-        "path": path,
-        "mode": "full",
-    });
+    let retry = preferred_so_read_args(input)?;
     let reason = format!(
         "I routed this native file read through `mcp__so-context__so_read` so the file content stays attributable and reusable in shared project context. This is expected, not an error. Retry with arguments: {}. Use `mode: \"outline\"` when you only need structure instead of full file text.",
         retry
@@ -157,6 +140,61 @@ fn deny_native_read_if_needed(input: &Value) -> Option<Value> {
             "permissionDecisionReason": reason,
         }
     }))
+}
+
+fn preferred_so_read_args(input: &Value) -> Option<Value> {
+    let tool_input = input.get("tool_input")?.as_object()?;
+    let path = tool_input
+        .get("path")
+        .and_then(|value| value.as_str())
+        .or_else(|| tool_input.get("file_path").and_then(|value| value.as_str()))?
+        .trim();
+    if path.is_empty() {
+        return None;
+    }
+
+    let mut retry = serde_json::Map::new();
+    retry.insert("path".to_string(), Value::String(path.to_string()));
+
+    if let Some(mode) = tool_input
+        .get("mode")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        retry.insert("mode".to_string(), Value::String(mode.to_string()));
+    }
+
+    let mut has_excerpt = false;
+    if let Some(start_line) = tool_input
+        .get("start_line")
+        .and_then(|value| value.as_u64())
+        .filter(|value| *value > 0)
+    {
+        retry.insert("start_line".to_string(), Value::Number(start_line.into()));
+        has_excerpt = true;
+    }
+    if let Some(end_line) = tool_input
+        .get("end_line")
+        .and_then(|value| value.as_u64())
+        .filter(|value| *value > 0)
+    {
+        retry.insert("end_line".to_string(), Value::Number(end_line.into()));
+        has_excerpt = true;
+    }
+    if let Some(line_numbers) = tool_input
+        .get("line_numbers")
+        .and_then(|value| value.as_bool())
+    {
+        retry.insert("line_numbers".to_string(), Value::Bool(line_numbers));
+        has_excerpt = true;
+    }
+
+    if !retry.contains_key("mode") && !has_excerpt {
+        retry.insert("mode".to_string(), Value::String("full".to_string()));
+    }
+
+    Some(Value::Object(retry))
 }
 
 fn deny_native_search_if_needed(input: &Value) -> Option<Value> {
@@ -363,6 +401,30 @@ mod tests {
         assert!(reason.contains("mcp__so-context__so_read"));
         assert!(reason.contains("\"path\":\"/tmp/example.rs\""));
         assert!(reason.contains("\"mode\":\"full\""));
+    }
+
+    #[test]
+    fn preserves_excerpt_arguments_for_native_read_reroute() {
+        let output = hook(json!({
+            "tool_name": "Read",
+            "tool_input": {
+                "path": "/tmp/example.rs",
+                "start_line": 12,
+                "end_line": 20,
+                "line_numbers": true
+            }
+        }))
+        .expect("expected deny output");
+
+        let reason = output
+            .pointer("/hookSpecificOutput/permissionDecisionReason")
+            .and_then(|value| value.as_str())
+            .unwrap();
+        assert!(reason.contains("\"path\":\"/tmp/example.rs\""));
+        assert!(reason.contains("\"start_line\":12"));
+        assert!(reason.contains("\"end_line\":20"));
+        assert!(reason.contains("\"line_numbers\":true"));
+        assert!(!reason.contains("\"mode\":\"full\""));
     }
 
     #[test]

@@ -35,6 +35,7 @@ fn plain_render_omits_bullets_for_details() {
             stdout: String::new(),
             stderr: String::new(),
             exit_code: 0,
+            capture: CaptureMetadata::default(),
         },
     )
     .render();

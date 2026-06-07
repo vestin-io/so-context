@@ -77,6 +77,7 @@ fn summarizes_rg_files_as_plain_listing() {
         stdout: "src/main.rs\nsrc/lib.rs\nsrc/shell/mod.rs\n".into(),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_rg_files(&result);
@@ -97,6 +98,7 @@ fn summarizes_text_excerpt_as_verbatim_lines() {
         stdout: "fn demo() {\n    println!(\"hi\");\n}\n".into(),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_text_excerpt(&result);
@@ -117,6 +119,7 @@ fn summarizes_search_hits_with_omitted_tail() {
         stdout: format!("{stdout}\n"),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_rg(&result);
@@ -140,6 +143,7 @@ fn caps_search_hits_per_file_before_global_limit() {
         stdout: format!("{}\n", hits.join("\n")),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_rg(&result);
@@ -162,6 +166,7 @@ fn keeps_long_search_hit_lines_verbatim() {
         stdout: format!("{long_snippet}\n"),
         stderr: String::new(),
         exit_code: 0,
+        capture: CaptureMetadata::default(),
     };
 
     let summary = summarize_rg(&result);
