@@ -141,6 +141,20 @@ impl FileVisitCache {
             .is_some()
     }
 
+    /// Remove a context window from every connection that contains it.
+    ///
+    /// Returns `true` if at least one `(connection_id, cw_id)` pair was removed.
+    pub fn delete_context_window_globally(&self, cw_id: &str) -> bool {
+        let mut guard = self.inner.lock().unwrap();
+        let mut deleted = false;
+
+        for cw_map in guard.data.values_mut() {
+            deleted |= cw_map.remove(cw_id).is_some();
+        }
+
+        deleted
+    }
+
     /// Remove all context windows and file entries associated with a connection.
     ///
     /// Returns `true` if the connection existed and was removed.
@@ -268,6 +282,20 @@ mod tests {
         assert!(!cache.is_visited("conn-1", "cw-1", "/src/b.rs"));
         // cw-2 must be unaffected.
         assert!(cache.is_visited("conn-1", "cw-2", "/src/c.rs"));
+    }
+
+    #[test]
+    fn delete_context_window_globally() {
+        let cache = make_cache();
+        cache.add_file("conn-1", "cw-1", "/src/a.rs", 10, "h1".to_string());
+        cache.add_file("conn-2", "cw-1", "/src/b.rs", 20, "h2".to_string());
+        cache.add_file("conn-2", "cw-2", "/src/c.rs", 30, "h3".to_string());
+
+        assert!(cache.delete_context_window_globally("cw-1"));
+        assert!(!cache.is_visited("conn-1", "cw-1", "/src/a.rs"));
+        assert!(!cache.is_visited("conn-2", "cw-1", "/src/b.rs"));
+        assert!(cache.is_visited("conn-2", "cw-2", "/src/c.rs"));
+        assert!(!cache.delete_context_window_globally("missing"));
     }
 
     #[test]

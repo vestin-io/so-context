@@ -4,25 +4,20 @@ use super::super::super::types::{CompressionSummary, ShellPattern, ShellResult};
 use super::super::text::preview;
 
 pub(super) fn summarize(result: &ShellResult) -> CompressionSummary {
-    let mut branch = "unknown".to_string();
-    let mut staged = 0usize;
-    let mut unstaged = 0usize;
-    let mut untracked = 0usize;
+    let mut branch = None;
     let mut changed_files = BTreeSet::new();
-    let mut staged_files = Vec::new();
-    let mut unstaged_files = Vec::new();
-    let mut untracked_files = Vec::new();
+    let mut rendered_status_lines = Vec::new();
     let mut section: Option<&str> = None;
 
     for line in result.stdout.lines() {
         let trimmed = line.trim();
 
         if let Some(rest) = line.strip_prefix("## ") {
-            branch = rest.trim().to_string();
+            branch = Some(rest.trim().to_string());
             continue;
         }
         if let Some(rest) = line.strip_prefix("On branch ") {
-            branch = rest.trim().to_string();
+            branch = Some(rest.trim().to_string());
             continue;
         }
 
@@ -48,33 +43,11 @@ pub(super) fn summarize(result: &ShellResult) -> CompressionSummary {
         }
 
         if is_porcelain_status_line(line) {
-            let bytes = line.as_bytes();
-            let x = bytes[0] as char;
-            let y = bytes[1] as char;
             let path = line[3..].trim();
             if !path.is_empty() {
                 changed_files.insert(path.to_string());
             }
-
-            if x == '?' && y == '?' {
-                untracked += 1;
-                if !path.is_empty() {
-                    untracked_files.push(format!("untracked: {path}"));
-                }
-            } else {
-                if x != ' ' {
-                    staged += 1;
-                    if !path.is_empty() {
-                        staged_files.push(format!("staged: {path}"));
-                    }
-                }
-                if y != ' ' {
-                    unstaged += 1;
-                    if !path.is_empty() {
-                        unstaged_files.push(format!("unstaged: {path}"));
-                    }
-                }
-            }
+            rendered_status_lines.push(line.to_string());
             continue;
         }
 
@@ -82,87 +55,58 @@ pub(super) fn summarize(result: &ShellResult) -> CompressionSummary {
             let path = path.trim().to_string();
             changed_files.insert(path.clone());
             match section {
-                Some("staged") => {
-                    staged += 1;
-                    staged_files.push(format!("staged: {path}"));
-                }
-                Some("unstaged") => {
-                    unstaged += 1;
-                    unstaged_files.push(format!("unstaged: {path}"));
-                }
-                _ => {
-                    unstaged += 1;
-                    unstaged_files.push(format!("unstaged: {path}"));
-                }
+                Some("staged") => rendered_status_lines.push(format!("M  {path}")),
+                Some("unstaged") => rendered_status_lines.push(format!(" M {path}")),
+                _ => rendered_status_lines.push(format!(" M {path}")),
             }
         } else if let Some(path) = trimmed.strip_prefix("new file:") {
             let path = path.trim().to_string();
             changed_files.insert(path.clone());
             match section {
-                Some("untracked") => {
-                    untracked += 1;
-                    untracked_files.push(format!("untracked: {path}"));
-                }
-                _ => {
-                    staged += 1;
-                    staged_files.push(format!("staged: {path}"));
-                }
+                Some("untracked") => rendered_status_lines.push(format!("?? {path}")),
+                _ => rendered_status_lines.push(format!("A  {path}")),
             }
         } else if let Some(path) = trimmed.strip_prefix("deleted:") {
             let path = path.trim().to_string();
             changed_files.insert(path.clone());
             match section {
-                Some("staged") => {
-                    staged += 1;
-                    staged_files.push(format!("staged: {path}"));
-                }
-                Some("unstaged") => {
-                    unstaged += 1;
-                    unstaged_files.push(format!("unstaged: {path}"));
-                }
-                _ => {
-                    unstaged += 1;
-                    unstaged_files.push(format!("unstaged: {path}"));
-                }
+                Some("staged") => rendered_status_lines.push(format!("D  {path}")),
+                Some("unstaged") => rendered_status_lines.push(format!(" D {path}")),
+                _ => rendered_status_lines.push(format!(" D {path}")),
             }
         } else if let Some(path) = trimmed.strip_prefix("renamed:") {
             let path = path.trim().to_string();
             changed_files.insert(path.clone());
-            staged += 1;
-            staged_files.push(format!("staged: {path}"));
+            rendered_status_lines.push(format!("R  {path}"));
         } else if let Some(path) = line.strip_prefix('\t') {
             let path = path.trim().to_string();
             changed_files.insert(path.clone());
             match section {
-                Some("staged") => {
-                    staged += 1;
-                    staged_files.push(format!("staged: {path}"));
-                }
-                Some("unstaged") => {
-                    unstaged += 1;
-                    unstaged_files.push(format!("unstaged: {path}"));
-                }
-                Some("untracked") => {
-                    untracked += 1;
-                    untracked_files.push(format!("untracked: {path}"));
-                }
+                Some("staged") => rendered_status_lines.push(format!("M  {path}")),
+                Some("unstaged") => rendered_status_lines.push(format!(" M {path}")),
+                Some("untracked") => rendered_status_lines.push(format!("?? {path}")),
                 _ => {}
             }
         }
     }
 
-    let mut details = Vec::new();
-    details.extend(staged_files);
-    details.extend(unstaged_files);
-    details.extend(untracked_files);
+    let has_branch = branch.is_some();
+    let summary = if let Some(branch) = branch {
+        format!("* {branch}")
+    } else if rendered_status_lines.is_empty() {
+        "Clean working tree".to_string()
+    } else {
+        rendered_status_lines.remove(0)
+    };
 
-    CompressionSummary::new(
+    if has_branch && changed_files.is_empty() {
+        rendered_status_lines.push("clean — nothing to commit".to_string());
+    }
+
+    CompressionSummary::plain(
         ShellPattern::GitStatus,
-        format!(
-            "{branch} | staged={staged}; unstaged={unstaged}; untracked={untracked}; changed_files={}",
-            changed_files.len()
-        ),
-        details,
+        summary,
+        rendered_status_lines,
         preview(&result.stderr),
         result,
     )

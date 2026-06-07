@@ -166,17 +166,16 @@ fn dispatch_ctrl(msg: &serde_json::Value, wm: &WatchManager, fvc: &FileVisitCach
                 .and_then(|p| p.get("connection_id"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            if connection_id.is_empty() || session_id.unwrap_or("").is_empty() {
-                eprintln!(
-                    "so-context daemon: ctrl compact_reset missing connection_id or session_id"
-                );
+            let Some(session_id) = session_id.filter(|value| !value.is_empty()) else {
+                eprintln!("so-context daemon: ctrl compact_reset missing session_id");
                 return;
-            }
-            let deleted = fvc.delete_context_window(connection_id, session_id.unwrap());
+            };
+            let deleted = (!connection_id.is_empty()
+                && fvc.delete_context_window(connection_id, session_id))
+                || fvc.delete_context_window_globally(session_id);
             eprintln!(
                 "so-context daemon: compact_reset connection={connection_id} session={} deleted={}",
-                session_id.unwrap(),
-                deleted
+                session_id, deleted
             );
         }
         other => {

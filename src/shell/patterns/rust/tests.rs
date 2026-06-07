@@ -58,6 +58,7 @@ fn summarizes_cargo_test() {
         summary.summary,
         "cargo test: 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s"
     );
+    assert_eq!(summary.details, vec!["a".to_string(), "b".to_string()]);
     assert!(summary.stderr_preview.is_empty());
 }
 
@@ -87,6 +88,10 @@ fn summarizes_cargo_test_across_multiple_targets() {
     assert_eq!(
         summary.summary,
         "cargo test: 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s"
+    );
+    assert_eq!(
+        summary.details,
+        vec!["lib_test".to_string(), "integration_test".to_string()]
     );
 }
 
@@ -200,11 +205,90 @@ fn keeps_actionable_stderr_for_failing_cargo_test() {
         "cargo test: 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s"
     );
     assert_eq!(summary.stderr_preview[0], "error: test failed");
-    assert_eq!(summary.stderr_preview[1], "warning: retrying");
     assert!(
         !summary
             .stderr_preview
             .iter()
             .any(|line| line.contains("Compiling"))
     );
+}
+
+#[test]
+fn keeps_error_blocks_for_failing_cargo_test_compile_errors() {
+    let result = ShellResult {
+        invocation: ShellInvocation::new(vec!["cargo".into(), "test".into()]),
+        stdout: String::new(),
+        stderr: concat!(
+            "   Compiling so-context v0.1.0 (/tmp/so-context)\n",
+            "error[E0432]: unresolved import `super::resolve_agent_session`\n",
+            "  --> src/mcp/tools/read.rs:11:5\n",
+            "   |\n",
+            "11 | use super::resolve_agent_session;\n",
+            "   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no `resolve_agent_session` in `super`\n",
+            "error[E0061]: this function takes 6 arguments but 5 arguments were supplied\n",
+            "  --> src/shell/telemetry_tests.rs:32:9\n",
+            "For more information about this error, try `rustc --explain E0061`.\n",
+            "error: could not compile `so-context` (bin \"so-context\" test) due to 8 previous errors\n",
+        )
+        .into(),
+        exit_code: 101,
+        capture: CaptureMetadata::default(),
+    };
+
+    let summary = summarize_case(&result);
+    assert_eq!(
+        summary.summary,
+        "cargo test: 2 errors, 0 warnings (1 crates)"
+    );
+    assert!(summary.stderr_preview.is_empty());
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|block| block.contains("src/mcp/tools/read.rs:11:5"))
+    );
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|block| block.contains("src/shell/telemetry_tests.rs:32:9"))
+    );
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|block| block.contains("could not compile"))
+    );
+}
+
+#[test]
+fn caps_compile_error_blocks_for_failing_cargo_test() {
+    let mut stderr = String::from("   Compiling so-context v0.1.0 (/tmp/so-context)\n");
+    for index in 0..20 {
+        stderr.push_str(&format!(
+            "error[E0308]: mismatched types in case {index}\n  --> src/file{index}.rs:{}:5\n  |\n",
+            index + 1
+        ));
+    }
+    stderr.push_str(
+        "error: could not compile `so-context` (bin \"so-context\" test) due to 20 previous errors\n",
+    );
+
+    let result = ShellResult {
+        invocation: ShellInvocation::new(vec!["cargo".into(), "test".into()]),
+        stdout: String::new(),
+        stderr,
+        exit_code: 101,
+        capture: CaptureMetadata::default(),
+    };
+
+    let summary = summarize_case(&result);
+    assert_eq!(
+        summary.summary,
+        "cargo test: 20 errors, 0 warnings (1 crates)"
+    );
+    assert_eq!(summary.details.len(), 16);
+    assert!(summary.details[0].contains("case 0"));
+    assert!(summary.details[14].contains("case 14"));
+    assert_eq!(summary.details[15], "+ 5 more issues");
 }

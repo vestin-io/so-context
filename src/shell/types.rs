@@ -100,6 +100,7 @@ impl ShellResult {
         }
     }
 
+    #[cfg(test)]
     pub fn raw_output_complete(&self) -> bool {
         self.capture.raw_output_complete()
     }
@@ -226,6 +227,8 @@ pub enum ShellPattern {
     Cat,
     Head,
     Tail,
+    TextExcerpt,
+    RgFiles,
     Unknown,
 }
 
@@ -297,6 +300,8 @@ impl ShellPattern {
             Self::Cat => "generic.cat",
             Self::Head => "generic.head",
             Self::Tail => "generic.tail",
+            Self::TextExcerpt => "generic.text-excerpt",
+            Self::RgFiles => "generic.rg-files",
             Self::Unknown => "unknown",
         }
     }
@@ -308,6 +313,13 @@ pub struct CompressionSummary {
     pub summary: String,
     pub details: Vec<String>,
     pub stderr_preview: Vec<String>,
+    pub render_style: CompressionRenderStyle,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompressionRenderStyle {
+    Bulleted,
+    Plain,
 }
 
 impl CompressionSummary {
@@ -323,17 +335,38 @@ impl CompressionSummary {
             summary: summary.into(),
             details,
             stderr_preview,
+            render_style: CompressionRenderStyle::Bulleted,
+        }
+    }
+
+    pub fn plain(
+        pattern: ShellPattern,
+        summary: impl Into<String>,
+        details: Vec<String>,
+        stderr_preview: Vec<String>,
+        _result: &ShellResult,
+    ) -> Self {
+        Self {
+            pattern,
+            summary: summary.into(),
+            details,
+            stderr_preview,
+            render_style: CompressionRenderStyle::Plain,
         }
     }
 
     pub fn render(&self) -> String {
         let mut output = String::new();
-        output.push_str(&self.summary);
-        output.push('\n');
+        if !self.summary.is_empty() {
+            output.push_str(&self.summary);
+            output.push('\n');
+        }
 
         if !self.details.is_empty() {
             for line in &self.details {
-                output.push_str("- ");
+                if self.render_style == CompressionRenderStyle::Bulleted {
+                    output.push_str("- ");
+                }
                 output.push_str(line);
                 output.push('\n');
             }

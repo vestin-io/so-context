@@ -6,7 +6,7 @@ mod policy;
 mod redaction;
 mod runner;
 mod telemetry;
-mod types;
+pub(crate) mod types;
 
 pub use command_string::{parse_simple_shell_command, rewrite_env_prefix};
 pub use output_spool::{SpoolOwner, SpooledShellOutput, get_spooled_output};

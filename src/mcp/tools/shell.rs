@@ -13,9 +13,10 @@ use super::shell_contract::build_shell_structured;
 use crate::core_events::{Timer, enqueue};
 use crate::daemon::WatchManager;
 use crate::daemon::watch_manager::ProjectStatus;
+use crate::mcp::prefers_plain_text_tool_output;
 use crate::shell::{
-    ShellEventContext, ShellRunOptions, ShellRunner, SpoolOwner, build_shell_error_event,
-    build_shell_event,
+    ShellEventContext, ShellOutputMode, ShellRunOptions, ShellRunner, SpoolOwner,
+    build_shell_error_event, build_shell_event,
 };
 
 const FULL_REASON_TEE_MISSING_OR_EXPIRED: &str = "tee_missing_or_expired";
@@ -69,7 +70,14 @@ fn handler(
 
     match result {
         Ok(output) => {
-            let text = render_tool_text(output.displayed_output(), output.exit_code);
+            let client_prefers_plain_text = prefers_plain_text_tool_output(client.as_deref());
+            let text = render_tool_text(
+                output.displayed_output(),
+                output.exit_code,
+                output.output_mode,
+                client_prefers_plain_text,
+                &output.run_id,
+            );
             enqueue(build_shell_event(
                 ShellEventContext::mcp_shell(
                     client.clone(),
@@ -88,9 +96,11 @@ fn handler(
             } else {
                 CallToolResult::error(vec![Content::text(text)])
             };
-            tool_result.structured_content = Some(serde_json::Value::Object(
-                build_shell_structured(&output, argv, cwd_display, full),
-            ));
+            if !client_prefers_plain_text {
+                tool_result.structured_content = Some(serde_json::Value::Object(
+                    build_shell_structured(&output, argv, cwd_display, full),
+                ));
+            }
             Ok(tool_result)
         }
         Err(error) => {
@@ -199,19 +209,29 @@ fn resolve_cwd(
     )
 }
 
-fn render_tool_text(rendered: &str, exit_code: i32) -> String {
-    if exit_code == 0 {
-        return rendered.to_string();
+fn render_tool_text(
+    rendered: &str,
+    exit_code: i32,
+    output_mode: ShellOutputMode,
+    client_prefers_plain_text: bool,
+    run_id: &str,
+) -> String {
+    let mut text = if exit_code == 0 {
+        rendered.to_string()
+    } else if rendered.is_empty() {
+        format!("[shell] exit_code={exit_code}\n")
+    } else {
+        format!(
+            "{}[shell] exit_code={exit_code}\n",
+            ensure_trailing_newline(rendered)
+        )
+    };
+
+    if client_prefers_plain_text && output_mode == ShellOutputMode::Compressed {
+        text = append_codex_follow_up_hint(&text, run_id);
     }
 
-    if rendered.is_empty() {
-        return format!("[shell] exit_code={exit_code}\n");
-    }
-
-    format!(
-        "{}[shell] exit_code={exit_code}\n",
-        ensure_trailing_newline(rendered)
-    )
+    text
 }
 
 fn ensure_trailing_newline(text: &str) -> String {
@@ -220,6 +240,13 @@ fn ensure_trailing_newline(text: &str) -> String {
     } else {
         format!("{text}\n")
     }
+}
+
+fn append_codex_follow_up_hint(text: &str, run_id: &str) -> String {
+    format!(
+        "{}[so-context follow-up] run_id={run_id} tool=so_shell_output\n",
+        ensure_trailing_newline(text)
+    )
 }
 
 fn schema() -> Arc<JsonObject> {

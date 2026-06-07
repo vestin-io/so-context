@@ -64,6 +64,32 @@ command = "/usr/local/bin/custom-hook"
 }
 
 #[test]
+fn install_pre_tool_use_hook_adds_native_read_matcher_group() {
+    let mut doc: DocumentMut = r#"
+[hooks]
+"#
+    .parse()
+    .unwrap();
+
+    install_pre_tool_use_hook(&mut doc, "/opt/bin/so-context");
+
+    let groups = doc["hooks"]["PreToolUse"].as_array_of_tables().unwrap();
+    let read_group = groups
+        .iter()
+        .find(|group| group.get("matcher").and_then(|v| v.as_str()) == Some("Read"))
+        .expect("expected Read matcher group");
+    let hooks = read_group
+        .get("hooks")
+        .and_then(|v| v.as_array_of_tables())
+        .unwrap();
+    let hook = hooks.iter().next().unwrap();
+    assert_eq!(
+        hook.get("statusMessage").and_then(|v| v.as_str()),
+        Some("Native file read detected; routing to mcp__so-context__so_read")
+    );
+}
+
+#[test]
 fn remove_post_compact_hook_keeps_other_hooks() {
     let mut doc: DocumentMut = r#"
 [hooks]

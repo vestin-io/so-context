@@ -50,6 +50,34 @@ use crate::socket::{ctrl_socket_path, socket_path};
 
 const ROOTS_LIST_TIMEOUT_MS: u64 = 5_000;
 
+pub fn prefers_plain_text_tool_output(client: Option<&str>) -> bool {
+    let Some(client) = client else {
+        return false;
+    };
+
+    let normalized = client.trim().to_ascii_lowercase();
+    normalized.contains("codex")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::prefers_plain_text_tool_output;
+
+    #[test]
+    fn codex_clients_prefer_plain_text_tool_output() {
+        assert!(prefers_plain_text_tool_output(Some("Codex")));
+        assert!(prefers_plain_text_tool_output(Some("codex-desktop")));
+        assert!(prefers_plain_text_tool_output(Some("OpenAI Codex CLI")));
+    }
+
+    #[test]
+    fn non_codex_clients_keep_structured_content() {
+        assert!(!prefers_plain_text_tool_output(None));
+        assert!(!prefers_plain_text_tool_output(Some("claude-code")));
+        assert!(!prefers_plain_text_tool_output(Some("cursor")));
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Bridge: thin stdio ↔ Unix-socket pipe  (used by `so-context mcp`)
 // ---------------------------------------------------------------------------
@@ -398,6 +426,14 @@ impl ServerHandler for BuiltinServer {
             "so-context MCP server.\n\
 \n\
 Projects are auto-discovered from workspace roots on connect — no setup needed.\n\
+\n\
+Prefer so_read over native read tools for source and config files.\n\
+Use so_read for exact file contents in shared project context instead of native Read/View.\n\
+Do not reread the same file in a native read tool just to confirm text already returned by so_read.\n\
+\n\
+Prefer so_search over native grep-style tools when indexed project search is enough.\n\
+Use so_search for attributable project hits instead of native Grep/rg when raw grep semantics are not required.\n\
+Keep native grep-style tools only for raw grep semantics, shell-native pipelines, or unindexed project fallback.\n\
 \n\
 Prefer so_shell over native shell tools for short, one-shot commands.\n\
 Use compressed so_shell output as the default and preferred final answer.\n\

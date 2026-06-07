@@ -12,10 +12,10 @@ fn summarizes_porcelain_status() {
     };
 
     let summary = status::summarize(&result);
-    assert!(summary.summary.starts_with("main |"));
-    assert!(summary.summary.contains("staged=1"));
-    assert!(summary.summary.contains("unstaged=1"));
-    assert!(summary.summary.contains("untracked=1"));
+    assert_eq!(summary.summary, "* main");
+    assert_eq!(summary.details[0], "M  src/main.rs");
+    assert_eq!(summary.details[1], " M README.md");
+    assert_eq!(summary.details[2], "?? src/shell/mod.rs");
 }
 
 #[test]
@@ -31,11 +31,28 @@ fn summarizes_human_status() {
     };
 
     let summary = status::summarize(&result);
-    assert!(summary.summary.starts_with("main |"));
-    assert!(summary.summary.contains("staged=1"));
-    assert!(summary.summary.contains("untracked=1"));
-    assert_eq!(summary.details[0], "staged: src/main.rs");
-    assert_eq!(summary.details[1], "untracked: src/shell/mod.rs");
+    assert_eq!(summary.summary, "* main");
+    assert_eq!(summary.details[0], "M  src/main.rs");
+    assert_eq!(summary.details[1], "?? src/shell/mod.rs");
+}
+
+#[test]
+fn summarizes_short_status_without_branch_header() {
+    let result = ShellResult {
+        invocation: ShellInvocation::new(vec!["git".into(), "status".into(), "--short".into()]),
+        stdout: " M src/hook/pre_tool.rs\n?? docs/shell/raw-fallback-so-shell-output-cases.md\n"
+            .into(),
+        stderr: String::new(),
+        exit_code: 0,
+        capture: CaptureMetadata::default(),
+    };
+
+    let summary = status::summarize(&result);
+    assert_eq!(summary.summary, " M src/hook/pre_tool.rs");
+    assert_eq!(
+        summary.details[0],
+        "?? docs/shell/raw-fallback-so-shell-output-cases.md"
+    );
 }
 
 #[test]

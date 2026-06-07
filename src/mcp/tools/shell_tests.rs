@@ -5,6 +5,9 @@ use rmcp::model::JsonObject;
 use super::{parse_full_request, render_tool_text, resolve_cwd};
 use crate::daemon::watch_manager::{Consumer, ProjectStatus, WatchState};
 use crate::mcp::tools::infer_connection_project_root;
+use crate::mcp::tools::shell_contract::build_shell_structured;
+use crate::shell::{RunOutput, ShellOutputMode};
+use crate::shell::types::{CaptureMetadata, ShellInvocation, ShellPattern};
 
 #[test]
 fn infers_cwd_from_single_matching_project() {
@@ -61,8 +64,40 @@ fn errors_when_multiple_projects_match_connection() {
 
 #[test]
 fn nonzero_exit_code_is_appended_to_tool_text() {
-    let rendered = render_tool_text("summary line", 7);
+    let rendered = render_tool_text(
+        "summary line",
+        7,
+        ShellOutputMode::Compressed,
+        false,
+        "run-123",
+    );
     assert_eq!(rendered, "summary line\n[shell] exit_code=7\n");
+}
+
+#[test]
+fn codex_compressed_output_includes_follow_up_run_id_hint() {
+    let rendered = render_tool_text(
+        "summary line\n",
+        0,
+        ShellOutputMode::Compressed,
+        true,
+        "run-123",
+    );
+
+    assert!(rendered.contains("[so-context follow-up] run_id=run-123 tool=so_shell_output"));
+}
+
+#[test]
+fn codex_raw_output_does_not_append_follow_up_hint() {
+    let rendered = render_tool_text(
+        "summary line\n",
+        0,
+        ShellOutputMode::RawFallback,
+        true,
+        "run-123",
+    );
+
+    assert_eq!(rendered, "summary line\n");
 }
 
 #[test]
@@ -118,4 +153,87 @@ fn accepts_full_with_tee_missing_reason() {
     .unwrap();
 
     assert!(parse_full_request(&args).unwrap());
+}
+
+#[test]
+fn compressed_output_advertises_follow_up_tool() {
+    let output = RunOutput {
+        run_id: "run-123".into(),
+        invocation: ShellInvocation::new(vec!["git".into(), "status".into()]),
+        pattern: ShellPattern::GitStatus,
+        rendered: Some("* main\nM  src/main.rs\n".into()),
+        full_output: "M  src/main.rs\n".into(),
+        exit_code: 0,
+        output_mode: ShellOutputMode::Compressed,
+        requested_full: false,
+        capture: CaptureMetadata::default(),
+    };
+    let content = build_shell_structured(
+        &output,
+        vec!["git".into(), "status".into()],
+        "/tmp/project".into(),
+        false,
+    );
+
+    assert_eq!(content["content_kind"], "compressed_summary");
+    assert_eq!(content["preferred_response_source"], "compressed_summary");
+    assert_eq!(content["raw_output_available"], true);
+    assert_eq!(content["follow_up_tool"], "so_shell_output");
+}
+
+#[test]
+fn raw_fallback_output_does_not_advertise_follow_up_tool() {
+    let output = RunOutput {
+        run_id: "run-123".into(),
+        invocation: ShellInvocation::new(vec!["git".into(), "status".into()]),
+        pattern: ShellPattern::GitStatus,
+        rendered: None,
+        full_output: "M  src/main.rs\n".into(),
+        exit_code: 0,
+        output_mode: ShellOutputMode::RawFallback,
+        requested_full: false,
+        capture: CaptureMetadata::default(),
+    };
+    let content = build_shell_structured(
+        &output,
+        vec!["git".into(), "status".into()],
+        "/tmp/project".into(),
+        false,
+    );
+
+    assert_eq!(content["content_kind"], "raw_output");
+    assert_eq!(content["preferred_response_source"], "current_text_content");
+    assert_eq!(content["raw_output_available"], true);
+    assert_eq!(content["follow_up_tool"], "so_shell_output");
+}
+
+#[test]
+fn full_output_is_marked_raw() {
+    let output = RunOutput {
+        run_id: "run-123".into(),
+        invocation: ShellInvocation::new(vec!["sed".into(), "-n".into(), "1,10p".into()]),
+        pattern: ShellPattern::Cat,
+        rendered: None,
+        full_output: "fn main() {}\n".into(),
+        exit_code: 0,
+        output_mode: ShellOutputMode::Full,
+        requested_full: true,
+        capture: CaptureMetadata::default(),
+    };
+    let content = build_shell_structured(
+        &output,
+        vec![
+            "sed".into(),
+            "-n".into(),
+            "1,10p".into(),
+            "src/main.rs".into(),
+        ],
+        "/tmp/project".into(),
+        true,
+    );
+
+    assert_eq!(content["content_kind"], "raw_output");
+    assert_eq!(content["preferred_response_source"], "current_text_content");
+    assert_eq!(content["raw_output_available"], true);
+    assert_eq!(content["follow_up_tool"], "so_shell_output");
 }

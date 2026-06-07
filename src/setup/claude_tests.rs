@@ -59,6 +59,26 @@ fn install_pre_tool_use_hook_replaces_only_so_context_entry() {
 }
 
 #[test]
+fn install_pre_tool_use_hook_adds_native_read_matcher_group() {
+    let mut root = json!({
+        "hooks": {}
+    });
+
+    install_pre_tool_use_hook(root.as_object_mut().unwrap(), "/opt/bin/so-context");
+
+    let groups = root["hooks"]["PreToolUse"].as_array().unwrap();
+    let read_group = groups
+        .iter()
+        .find(|group| group["matcher"].as_str() == Some("Read"))
+        .expect("expected Read matcher group");
+    let hooks = read_group["hooks"].as_array().unwrap();
+    assert!(hooks.iter().any(|hook| {
+        hook["statusMessage"].as_str()
+            == Some("Native file read detected; routing to mcp__so-context__so_read")
+    }));
+}
+
+#[test]
 fn remove_post_compact_hook_keeps_other_hooks() {
     let mut root = json!({
         "hooks": {

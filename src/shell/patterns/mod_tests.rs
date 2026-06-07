@@ -123,3 +123,35 @@ fn classifies_positionals_after_double_dash() {
         ShellPattern::CargoTest
     );
 }
+
+#[test]
+fn classifies_simple_shell_wrapped_commands_by_inner_program() {
+    assert_eq!(
+        classify_only(&result(&["sh", "-c", "git status --short"])),
+        ShellPattern::GitStatus
+    );
+    assert_eq!(
+        classify_only(&result(&["bash", "-lc", "rg -n todo src"])),
+        ShellPattern::Rg
+    );
+    assert_eq!(
+        classify_only(&result(&["zsh", "-c", "FOO=bar find src -name '*.rs'"])),
+        ShellPattern::Find
+    );
+}
+
+#[test]
+fn classifies_shell_wrapped_text_excerpt_and_rg_files() {
+    assert_eq!(
+        classify_only(&result(&[
+            "sh",
+            "-c",
+            "nl -ba /tmp/demo.rs | sed -n '1,120p'"
+        ])),
+        ShellPattern::TextExcerpt
+    );
+    assert_eq!(
+        classify_only(&result(&["rg", "--files", "src"])),
+        ShellPattern::RgFiles
+    );
+}

@@ -10,6 +10,7 @@ use super::BuiltinServer;
 use super::shell_contract::{RAW_OUTPUT_FETCH_POLICY, build_shell_output_structured};
 use crate::core_events::{EventRecord, Timer, enqueue};
 use crate::core_tokens::count_tokens;
+use crate::mcp::prefers_plain_text_tool_output;
 use crate::shell::get_spooled_output;
 
 pub fn route() -> ToolRoute<BuiltinServer> {
@@ -69,9 +70,11 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
             } else {
                 CallToolResult::error(vec![Content::text(text.clone())])
             };
-            tool_result.structured_content = Some(serde_json::Value::Object(
-                build_shell_output_structured(&output, reason),
-            ));
+            if !prefers_plain_text_tool_output(client.as_deref()) {
+                tool_result.structured_content = Some(serde_json::Value::Object(
+                    build_shell_output_structured(&output, reason),
+                ));
+            }
             Ok((tool_result, Some(text), true))
         }
         None => {
@@ -79,14 +82,16 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
                 "no cached raw shell output found for run_id `{run_id}`; rerun so_shell with `full: true` and `full_reason: \"tee_missing_or_expired\"` if you still need a larger bounded raw capture"
             );
             let mut tool_result = CallToolResult::error(vec![Content::text(message.clone())]);
-            tool_result.structured_content = Some(serde_json::json!({
-                "run_id": run_id,
-                "content_kind": "raw_output",
-                "source": "spool",
-                "reason": reason,
-                "use_policy": RAW_OUTPUT_FETCH_POLICY,
-                "found": false,
-            }));
+            if !prefers_plain_text_tool_output(client.as_deref()) {
+                tool_result.structured_content = Some(serde_json::json!({
+                    "run_id": run_id,
+                    "content_kind": "raw_output",
+                    "source": "spool",
+                    "reason": reason,
+                    "use_policy": RAW_OUTPUT_FETCH_POLICY,
+                    "found": false,
+                }));
+            }
             Ok((tool_result, Some(message), false))
         }
     }?;
