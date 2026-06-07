@@ -8,7 +8,7 @@ use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::model::{CallToolResult, Content, JsonObject, Tool};
 
 use super::BuiltinServer;
-use super::infer_connection_project_root;
+use super::{infer_connection_project_for_path, infer_connection_project_root};
 use super::shell_contract::build_shell_structured;
 use crate::core_events::{Timer, enqueue};
 use crate::daemon::WatchManager;
@@ -58,8 +58,16 @@ fn handler(
 
     let argv = parse_argv(&args)?;
     let full = parse_full_request(&args)?;
-    let cwd = resolve_cwd(&args, &client, &connection_id, &wm.status())?;
+    let statuses = wm.status();
+    let cwd = resolve_cwd(&args, &client, &connection_id, &statuses)?;
     let cwd_display = cwd.display().to_string();
+    let project_root = infer_connection_project_for_path(
+        &statuses,
+        client.as_deref().unwrap_or("unknown"),
+        &connection_id,
+        &cwd_display,
+    )
+    .unwrap_or_else(|| cwd.clone());
     let timer = Timer::start();
     let runner = ShellRunner::new(ShellRunOptions::new(full).with_spool_owner(SpoolOwner {
         client: client.clone(),
@@ -84,7 +92,7 @@ fn handler(
                     client_version.clone(),
                     session_id,
                     session_source,
-                    cwd.clone(),
+                    project_root.clone(),
                 ),
                 &output,
                 &text,
@@ -110,7 +118,7 @@ fn handler(
                     client_version,
                     session_id,
                     session_source,
-                    cwd.clone(),
+                    project_root.clone(),
                 ),
                 &argv,
                 Some(cwd.as_path()),

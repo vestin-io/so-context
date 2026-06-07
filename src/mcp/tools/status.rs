@@ -92,11 +92,15 @@ pub fn route(wm: Arc<WatchManager>) -> ToolRoute<BuiltinServer> {
 }
 
 fn handler(wm: &WatchManager) -> Result<CallToolResult, rmcp::ErrorData> {
+    Ok(CallToolResult::success(vec![Content::text(
+        render_status_text(wm),
+    )]))
+}
+
+pub(crate) fn render_status_text(wm: &WatchManager) -> String {
     let statuses = wm.status();
     if statuses.is_empty() {
-        return Ok(CallToolResult::success(vec![Content::text(
-            "no projects being watched".to_string(),
-        )]));
+        return "no projects being watched".to_string();
     }
     let lines: Vec<String> = statuses
         .iter()
@@ -124,7 +128,5 @@ fn handler(wm: &WatchManager) -> Result<CallToolResult, rmcp::ErrorData> {
             )
         })
         .collect();
-    Ok(CallToolResult::success(vec![Content::text(
-        lines.join("\n"),
-    )]))
+    lines.join("\n")
 }

@@ -43,12 +43,14 @@ use rmcp::{
 
 use uuid::Uuid;
 
+use crate::core_metrics::{MetricsSummary, MetricsWindow};
 use crate::daemon::WatchManager;
 use crate::daemon::watch_manager::file_uri_to_path;
 use crate::file_visit_cache::FileVisitCache;
 use crate::socket::{ctrl_socket_path, socket_path};
 
 const ROOTS_LIST_TIMEOUT_MS: u64 = 5_000;
+const CTRL_QUERY_TIMEOUT_MS: u64 = 5_000;
 
 pub fn prefers_plain_text_tool_output(client: Option<&str>) -> bool {
     let Some(client) = client else {
@@ -125,6 +127,132 @@ pub async fn send_ctrl_request(
         }
     });
     send_ctrl_message(&msg, false).await
+}
+
+pub async fn send_ctrl_status_request() -> Result<String> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::UnixStream;
+
+    let sock = ctrl_socket_path();
+    if !sock.exists() {
+        return Err(anyhow::anyhow!(
+            "so-context daemon is not running.\nStart it with: so-context daemon"
+        ));
+    }
+
+    let msg = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": "status",
+        "method": "status",
+        "params": {}
+    });
+
+    let mut line = serde_json::to_string(&msg)?;
+    line.push('\n');
+
+    let stream = UnixStream::connect(&sock)
+        .await
+        .map_err(|e| anyhow::anyhow!("connect to ctrl socket: {e}"))?;
+    let (read_half, mut write_half) = stream.into_split();
+
+    write_half
+        .write_all(line.as_bytes())
+        .await
+        .map_err(|e| anyhow::anyhow!("write to ctrl socket: {e}"))?;
+
+    let mut lines = BufReader::new(read_half).lines();
+    let Some(response_line) = tokio::time::timeout(
+        std::time::Duration::from_millis(CTRL_QUERY_TIMEOUT_MS),
+        lines.next_line(),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("timed out waiting for status response from so-context daemon"))?
+    .map_err(|e| anyhow::anyhow!("read ctrl response: {e}"))?
+    else {
+        return Err(anyhow::anyhow!(
+            "so-context daemon did not respond to status request"
+        ));
+    };
+
+    let response: serde_json::Value = serde_json::from_str(&response_line)?;
+    Ok(response
+        .pointer("/result/text")
+        .and_then(|v| v.as_str())
+        .unwrap_or("no projects being watched")
+        .to_string())
+}
+
+pub async fn send_ctrl_metrics_request(
+    window: MetricsWindow,
+    project: Option<&str>,
+    top: usize,
+) -> Result<MetricsSummary> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::UnixStream;
+
+    let sock = ctrl_socket_path();
+    if !sock.exists() {
+        return Err(anyhow::anyhow!(
+            "so-context daemon is not running.\nStart it with: so-context daemon"
+        ));
+    }
+
+    let normalized_project = project.map(|path| {
+        if std::path::Path::new(path).is_absolute() {
+            path.to_string()
+        } else {
+            std::env::current_dir()
+                .map(|cwd| cwd.join(path).to_string_lossy().to_string())
+                .unwrap_or_else(|_| path.to_string())
+        }
+    });
+
+    let msg = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": "metrics",
+        "method": "metrics",
+        "params": {
+            "window": window.label(),
+            "project": normalized_project,
+            "top": top,
+        }
+    });
+
+    let mut line = serde_json::to_string(&msg)?;
+    line.push('\n');
+
+    let stream = UnixStream::connect(&sock)
+        .await
+        .map_err(|e| anyhow::anyhow!("connect to ctrl socket: {e}"))?;
+    let (read_half, mut write_half) = stream.into_split();
+
+    write_half
+        .write_all(line.as_bytes())
+        .await
+        .map_err(|e| anyhow::anyhow!("write to ctrl socket: {e}"))?;
+
+    let mut lines = BufReader::new(read_half).lines();
+    let Some(response_line) = tokio::time::timeout(
+        std::time::Duration::from_millis(CTRL_QUERY_TIMEOUT_MS),
+        lines.next_line(),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("timed out waiting for metrics response from so-context daemon"))?
+    .map_err(|e| anyhow::anyhow!("read ctrl response: {e}"))?
+    else {
+        return Err(anyhow::anyhow!("empty ctrl response for metrics"));
+    };
+
+    let response: serde_json::Value = serde_json::from_str(&response_line)?;
+    if let Some(message) = response.pointer("/error/message").and_then(|v| v.as_str()) {
+        return Err(anyhow::anyhow!(message.to_string()));
+    }
+
+    let Some(summary) = response.get("result") else {
+        return Err(anyhow::anyhow!("missing ctrl metrics result payload"));
+    };
+
+    Ok(serde_json::from_value(summary.clone())?)
 }
 
 async fn send_ctrl_message(msg: &serde_json::Value, silent_if_missing: bool) -> Result<()> {

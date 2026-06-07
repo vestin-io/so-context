@@ -4,10 +4,10 @@ use rmcp::model::JsonObject;
 
 use super::{parse_full_request, render_tool_text, resolve_cwd};
 use crate::daemon::watch_manager::{Consumer, ProjectStatus, WatchState};
-use crate::mcp::tools::infer_connection_project_root;
+use crate::mcp::tools::{infer_connection_project_for_path, infer_connection_project_root};
 use crate::mcp::tools::shell_contract::build_shell_structured;
-use crate::shell::{RunOutput, ShellOutputMode};
 use crate::shell::types::{CaptureMetadata, ShellInvocation, ShellPattern};
+use crate::shell::{RunOutput, ShellOutputMode};
 
 #[test]
 fn infers_cwd_from_single_matching_project() {
@@ -119,6 +119,29 @@ fn resolves_relative_cwd_against_inferred_project_root() {
 
     let cwd = resolve_cwd(&args, &Some("codex".into()), "conn-1", &statuses).unwrap();
     assert_eq!(cwd, PathBuf::from("/tmp/alpha").join("src/bin"));
+}
+
+#[test]
+fn attributes_subdirectory_cwd_back_to_project_root() {
+    let statuses = vec![ProjectStatus {
+        path: PathBuf::from("/tmp/alpha"),
+        state: WatchState::Running,
+        ref_count: 1,
+        consumers: vec![Consumer {
+            client: "codex".into(),
+            session_id: "conn-1".into(),
+        }],
+    }];
+
+    let project = infer_connection_project_for_path(
+        &statuses,
+        "codex",
+        "conn-1",
+        "/tmp/alpha/src/bin",
+    )
+    .unwrap();
+
+    assert_eq!(project, PathBuf::from("/tmp/alpha"));
 }
 
 #[test]

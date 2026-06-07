@@ -2,6 +2,8 @@
 pub mod core_events;
 #[path = "core/graph/mod.rs"]
 mod core_graph;
+#[path = "core/metrics.rs"]
+mod core_metrics;
 #[path = "core/read.rs"]
 mod core_read;
 #[path = "core/tokens.rs"]
@@ -18,7 +20,8 @@ mod shell;
 mod socket;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
+use core_metrics::{MetricsWindow, render_metrics_text};
 use daemon::Daemon;
 
 #[derive(Parser, Debug)]
@@ -30,6 +33,32 @@ use daemon::Daemon;
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+}
+
+#[derive(Copy, Clone, Debug, ValueEnum)]
+enum MetricsWindowArg {
+    #[value(name = "24h")]
+    H24,
+    #[value(name = "7d")]
+    D7,
+    #[value(name = "all")]
+    All,
+}
+
+impl From<MetricsWindowArg> for MetricsWindow {
+    fn from(value: MetricsWindowArg) -> Self {
+        match value {
+            MetricsWindowArg::H24 => MetricsWindow::Last24Hours,
+            MetricsWindowArg::D7 => MetricsWindow::Last7Days,
+            MetricsWindowArg::All => MetricsWindow::All,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, ValueEnum)]
+enum MetricsFormatArg {
+    Text,
+    Json,
 }
 
 #[derive(Subcommand, Debug)]
@@ -108,6 +137,23 @@ enum Commands {
         #[arg(long)]
         session_id: Option<String>,
     },
+    /// Show all projects currently watched by the running daemon.
+    Status,
+    /// Show runtime and usage metrics aggregated by the running daemon.
+    Metrics {
+        /// Time window for event aggregation.
+        #[arg(long, value_enum, default_value = "24h")]
+        window: MetricsWindowArg,
+        /// Restrict to one absolute project path.
+        #[arg(long)]
+        project: Option<String>,
+        /// Number of top shell commands to show.
+        #[arg(long, default_value_t = 5)]
+        top: usize,
+        /// Output format.
+        #[arg(long, value_enum, default_value = "text")]
+        format: MetricsFormatArg,
+    },
     /// Install so-context as an MCP server in Claude, OpenCode, and Codex configs.
     Setup {
         /// Path to the so-context binary (default: current executable).
@@ -161,6 +207,27 @@ async fn main() -> Result<()> {
             session_id,
         } => {
             mcp::send_ctrl_request("unwatch", &path, client.as_deref(), session_id.as_deref()).await
+        }
+        Commands::Status => {
+            let text = mcp::send_ctrl_status_request().await?;
+            println!("{text}");
+            Ok(())
+        }
+        Commands::Metrics {
+            window,
+            project,
+            top,
+            format,
+        } => {
+            let summary =
+                mcp::send_ctrl_metrics_request(window.into(), project.as_deref(), top).await?;
+            match format {
+                MetricsFormatArg::Text => println!("{}", render_metrics_text(&summary)),
+                MetricsFormatArg::Json => {
+                    println!("{}", serde_json::to_string_pretty(&summary)?)
+                }
+            }
+            Ok(())
         }
         Commands::Setup { binary } => {
             let bin = resolve_binary(binary);

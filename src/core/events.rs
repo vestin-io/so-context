@@ -46,7 +46,7 @@ fn events_db_path() -> PathBuf {
         .join("events.db")
 }
 
-fn open_db() -> Result<Connection, String> {
+pub(crate) fn open_db() -> Result<Connection, String> {
     let path = events_db_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("create events dir: {e}"))?;
