@@ -146,10 +146,26 @@ jobs:
     needs:
       - resolve-version
       - publish
-    if: ${{ needs.resolve-version.outputs.draft != 'true' && secrets.HOMEBREW_TAP_TOKEN != '' }}
+    if: ${{ needs.resolve-version.outputs.draft != 'true' }}
 
     steps:
+      - name: Check tap token availability
+        id: tap-token
+        shell: bash
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${HOMEBREW_TAP_TOKEN:-}" ]]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "HOMEBREW_TAP_TOKEN is not configured; skipping tap sync."
+          else
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Checkout tap repository
+        if: ${{ steps.tap-token.outputs.available == 'true' }}
         uses: actions/checkout@v4
         with:
           repository: vestin-io/homebrew-tap
@@ -157,6 +173,7 @@ jobs:
           path: homebrew-tap
 
       - name: Update formula
+        if: ${{ steps.tap-token.outputs.available == 'true' }}
         shell: bash
         env:
           RELEASE_TAG: ${{ needs.resolve-version.outputs.tag }}
@@ -178,6 +195,7 @@ jobs:
           RUBY
 
       - name: Commit and push tap update
+        if: ${{ steps.tap-token.outputs.available == 'true' }}
         shell: bash
         env:
           RELEASE_TAG: ${{ needs.resolve-version.outputs.tag }}
