@@ -21,6 +21,16 @@ fn runtime_dir() -> PathBuf {
     PathBuf::from(format!("/tmp/so-context-{uid}"))
 }
 
+/// Runtime PID file for the long-running daemon process.
+pub fn pid_path() -> PathBuf {
+    runtime_dir().join("so-context.pid")
+}
+
+/// Runtime log file for background daemon output.
+pub fn log_path() -> PathBuf {
+    runtime_dir().join("so-context.log")
+}
+
 /// Unix socket the daemon serves MCP (streamable HTTP) over — agents only.
 pub fn socket_path() -> PathBuf {
     runtime_dir().join("so-context.sock")
