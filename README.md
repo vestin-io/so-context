@@ -102,6 +102,69 @@ so-context index [path]
 so-context watch [path]
 ```
 
+### Status and metrics
+
+Use `status` to inspect the daemon's current runtime state:
+
+```sh
+so-context status
+```
+
+Use `metrics` to inspect historical usage and compression data recorded in `events.db`:
+
+```sh
+so-context metrics
+so-context metrics --window 7d
+so-context metrics --project /absolute/path/to/repo
+so-context metrics --top 10
+so-context metrics --format json
+```
+
+Example text output:
+
+```text
+so-context Metrics (24h)
+
+Summary
+Total calls       151
+Success rate      88.7%
+Avg latency       1699ms
+Token saved       1.7M
+Bytes saved       5.1 MB
+Compression hits  14/90 (15.6%)
+Savings ratio     [██████████████████████░░] 93.1%
+
+By Tool
+╭─────────────────┬───────┬────────┬──────────────┬─────────────╮
+│ Tool            ┆ Calls ┆ Errors ┆ Tokens saved ┆ Bytes saved │
+╞═════════════════╪═══════╪════════╪══════════════╪═════════════╡
+│ so_shell        ┆ 82    ┆ 17     ┆ 1.7M         ┆ 5.1 MB      │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ so_read         ┆ 59    ┆ 0      ┆ 0            ┆ 0 B         │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ so_search       ┆ 8     ┆ 0      ┆ 0            ┆ 0 B         │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ so_shell_output ┆ 1     ┆ 0      ┆ 0            ┆ 0 B         │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ so_status       ┆ 1     ┆ 0      ┆ 0            ┆ 0 B         │
+╰─────────────────┴───────┴────────┴──────────────┴─────────────╯
+
+Top Shell Commands (top 5 by token savings)
+╭───┬────────────┬───────┬──────────────┬────────┬────────╮
+│ # ┆ Command    ┆ Calls ┆ Tokens saved ┆ Saved% ┆ Avg ms │
+╞═══╪════════════╪═══════╪══════════════╪════════╪════════╡
+│ 1 ┆ rg -n      ┆ 28    ┆ 1.3M         ┆ 92.3%  ┆ 95     │
+├╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌┤
+│ 2 ┆ rg --files ┆ 5     ┆ 378.5K       ┆ 98.5%  ┆ 74     │
+├╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌┤
+│ 3 ┆ find       ┆ 5     ┆ 4.2K         ┆ 64.1%  ┆ 577    │
+├╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌┤
+│ 4 ┆ ls -la     ┆ 1     ┆ 194          ┆ 66.2%  ┆ 17     │
+├╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌┤
+│ 5 ┆ git -C     ┆ 12    ┆ 96           ┆ 3.7%   ┆ 439    │
+╰───┴────────────┴───────┴──────────────┴────────┴────────╯
+```
+
 ## MCP tools
 
 | Tool | Description |
