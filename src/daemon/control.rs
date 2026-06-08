@@ -57,6 +57,11 @@ pub async fn stop_background() -> Result<()> {
     let pid = read_pid_file()?;
     if let Some(pid) = pid {
         if is_pid_running(pid)? {
+            if !process_matches_daemon(pid)? {
+                bail!(
+                    "pid file points to pid {pid}, but that process is not `so-context daemon`.\nStop it manually if needed, then remove stale runtime files."
+                );
+            }
             signal_pid(pid, libc::SIGTERM)?;
             wait_for_daemon_stop(pid).await?;
             cleanup_stale_runtime_files()?;
@@ -219,6 +224,33 @@ fn signal_pid(pid: u32, signal: i32) -> Result<()> {
     }
 }
 
+fn process_matches_daemon(pid: u32) -> Result<bool> {
+    let output = Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "command="])
+        .output()
+        .with_context(|| format!("inspect daemon pid {pid} with ps"))?;
+    if !output.status.success() {
+        return Ok(false);
+    }
+
+    let command = String::from_utf8_lossy(&output.stdout);
+    Ok(command_line_matches_daemon(command.trim()))
+}
+
+fn command_line_matches_daemon(command: &str) -> bool {
+    let mut saw_binary = false;
+    for token in command.split_whitespace() {
+        if !saw_binary && token.contains("so-context") {
+            saw_binary = true;
+            continue;
+        }
+        if saw_binary && token == "daemon" {
+            return true;
+        }
+    }
+    false
+}
+
 fn remove_if_exists(path: &std::path::Path) -> Result<()> {
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
@@ -236,3 +268,7 @@ impl Drop for PidFileGuard {
         let _ = fs::remove_file(&self.path);
     }
 }
+
+#[cfg(test)]
+#[path = "control_tests.rs"]
+mod control_tests;
