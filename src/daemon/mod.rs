@@ -5,6 +5,7 @@
 //!   - ctrl socket (`so-context-ctrl.sock`)  — raw newline-delimited JSON-RPC, for CLI hooks
 //!   - HTTP socket (`so-context-http.sock`)  — Axum HTTP server, for dashboard UI (future)
 
+mod control;
 pub mod watch_manager;
 
 use std::{fs, sync::Arc};
@@ -20,6 +21,7 @@ use crate::file_visit_cache::FileVisitCache;
 use crate::mcp::BuiltinServer;
 use crate::mcp::tools::status::render_status_text;
 use crate::socket::{ctrl_socket_path, socket_path};
+pub use control::{restart_background, start_background, stop_background};
 
 /// The daemon runtime.
 pub struct Daemon {
@@ -38,16 +40,15 @@ impl Daemon {
     pub async fn run(self) -> Result<()> {
         let wm = Arc::clone(&self.watch_manager);
         let fvc = self.file_visit_cache;
+        control::ensure_no_active_daemon().await?;
+        control::cleanup_stale_runtime_files()?;
+        let _pid_guard = control::write_pid_file_for_current_process()?;
 
         // --- MCP socket (raw JSON-RPC) ---
         let mcp_path = socket_path();
         if let Some(parent) = mcp_path.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("create MCP socket dir {}", parent.display()))?;
-        }
-        if mcp_path.exists() {
-            fs::remove_file(&mcp_path)
-                .with_context(|| format!("remove stale socket {}", mcp_path.display()))?;
         }
         let mcp_listener = UnixListener::bind(&mcp_path)
             .with_context(|| format!("bind MCP socket {}", mcp_path.display()))?;
@@ -58,10 +59,6 @@ impl Daemon {
         if let Some(parent) = ctrl_path.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("create ctrl socket dir {}", parent.display()))?;
-        }
-        if ctrl_path.exists() {
-            fs::remove_file(&ctrl_path)
-                .with_context(|| format!("remove stale ctrl socket {}", ctrl_path.display()))?;
         }
         let ctrl_listener = UnixListener::bind(&ctrl_path)
             .with_context(|| format!("bind ctrl socket {}", ctrl_path.display()))?;

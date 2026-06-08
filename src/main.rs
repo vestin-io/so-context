@@ -90,6 +90,12 @@ enum Commands {
     /// Run the background daemon: binds a Unix socket and serves the MCP HTTP server.
     /// Start this once; it stays alive across multiple agent sessions.
     Daemon,
+    /// Start the daemon in the background.
+    Start,
+    /// Stop the background daemon.
+    Stop,
+    /// Restart the background daemon.
+    Restart,
     /// Start the MCP stdio bridge for an agent session.
     /// Connects to the running daemon and forwards MCP messages over stdio.
     /// This is the command to register in Claude / OpenCode / Codex configs.
@@ -182,6 +188,9 @@ async fn main() -> Result<()> {
             }
             Daemon::new().run().await
         }
+        Commands::Start => daemon::start_background(&resolve_binary(None)).await,
+        Commands::Stop => daemon::stop_background().await,
+        Commands::Restart => daemon::restart_background(&resolve_binary(None)).await,
         Commands::Mcp => mcp::run_mcp_bridge().await,
         Commands::Hook { event } => match event {
             HookCommands::PreTool => hook::run_pre_tool_use_hook(),
