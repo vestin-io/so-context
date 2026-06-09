@@ -1,5 +1,7 @@
 use super::MetricsWindow;
-use super::query::{EventRow, classify_shell_command, is_savings_eligible};
+use super::query::{
+    EventRow, classify_shell_command, is_compression_hit_eligible, is_savings_eligible,
+};
 use super::render::progress_bar_for_tests;
 
 #[test]
@@ -62,4 +64,22 @@ fn read_outline_is_savings_eligible() {
     };
 
     assert!(is_savings_eligible(&row));
+}
+
+#[test]
+fn search_is_not_compression_hit_eligible() {
+    let row = EventRow {
+        tool: "so_search".to_string(),
+        result_ok: true,
+        duration_ms: 0,
+        estimated_origin_tokens: 10,
+        actual_tokens: 3,
+        estimated_origin_size: 0,
+        actual_size: 0,
+        read_mode: None,
+        shell_params: None,
+    };
+
+    assert!(is_savings_eligible(&row));
+    assert!(!is_compression_hit_eligible(&row));
 }

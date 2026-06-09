@@ -50,6 +50,32 @@ fn summarizes_find_paths() {
 }
 
 #[test]
+fn preserves_exact_find_paths() {
+    let result = ShellResult {
+        invocation: ShellInvocation::new(vec![
+            "find".into(),
+            "/Users/jiatwork/spotto/ui/dist/apps/plugin".into(),
+            "-maxdepth".into(),
+            "2".into(),
+            "-type".into(),
+            "f".into(),
+        ]),
+        stdout: "/Users/jiatwork/spotto/ui/dist/apps/plugin/assets/generated/locales/enterprise/en.json\n".into(),
+        stderr: String::new(),
+        exit_code: 0,
+        capture: CaptureMetadata::default(),
+    };
+
+    let summary = summarize_find(&result);
+    assert!(summary.summary.contains("1 paths in 1 dirs"));
+    assert_eq!(summary.details.len(), 1);
+    assert_eq!(
+        summary.details[0],
+        "/Users/jiatwork/spotto/ui/dist/apps/plugin/assets/generated/locales/enterprise/en.json"
+    );
+}
+
+#[test]
 fn summarizes_grep_hits() {
     let result = ShellResult {
         invocation: ShellInvocation::new(vec![
@@ -109,6 +135,33 @@ fn summarizes_text_excerpt_as_verbatim_lines() {
 }
 
 #[test]
+fn preserves_full_text_excerpt_when_range_is_explicit() {
+    let stdout = (1..=120)
+        .map(|index| format!("line {index}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let result = ShellResult {
+        invocation: ShellInvocation::new(vec![
+            "sed".into(),
+            "-n".into(),
+            "1,220p".into(),
+            "README.md".into(),
+        ]),
+        stdout: format!("{stdout}\n"),
+        stderr: String::new(),
+        exit_code: 0,
+        capture: CaptureMetadata::default(),
+    };
+
+    let summary = summarize_text_excerpt(&result);
+    assert_eq!(summary.summary, "");
+    assert_eq!(summary.details[0], "line 1");
+    assert_eq!(summary.details[79], "line 80");
+    assert_eq!(summary.details[119], "line 120");
+    assert_eq!(summary.details.len(), 120);
+}
+
+#[test]
 fn summarizes_search_hits_with_omitted_tail() {
     let stdout = (0..202)
         .map(|index| format!("src/file{index}.rs:{}: TODO item {index}", index + 1))
@@ -160,7 +213,7 @@ fn caps_search_hits_per_file_before_global_limit() {
 
 #[test]
 fn keeps_long_search_hit_lines_verbatim() {
-    let long_snippet = "session-viewer/src/main.ts:412: const summary = buildInvestigationFinding(session_id, events_db_path, history_jsonl_path, session_index_path);";
+    let long_snippet = "session-viewer/src/main.ts:412: const summary = buildInvestigationFinding(session_id, events_db_path, history_jsonl_path, session_index_path, project_root_path, browser_snapshot_manifest_path, release_notes_markdown_path, recommendation_payload_json_path);";
     let result = ShellResult {
         invocation: ShellInvocation::new(vec!["rg".into(), "session_id".into()]),
         stdout: format!("{long_snippet}\n"),
@@ -171,7 +224,32 @@ fn keeps_long_search_hit_lines_verbatim() {
 
     let summary = summarize_rg(&result);
     assert_eq!(summary.summary, "");
-    assert_eq!(summary.details, vec![long_snippet.to_string()]);
+    assert_eq!(summary.details.len(), 1);
+    assert!(summary.details[0].starts_with("session-viewer/src/main.ts:412:"));
+    assert!(summary.details[0].contains("session_id"));
+    assert!(summary.details[0].len() < long_snippet.len());
+}
+
+#[test]
+fn truncates_long_search_hits_around_query() {
+    let result = ShellResult {
+        invocation: ShellInvocation::new(vec!["rg".into(), "needle".into()]),
+        stdout: format!(
+            "src/huge.ts:88:{}needle{}\n",
+            "a".repeat(200),
+            "b".repeat(200)
+        ),
+        stderr: String::new(),
+        exit_code: 0,
+        capture: CaptureMetadata::default(),
+    };
+
+    let summary = summarize_rg(&result);
+    assert_eq!(summary.summary, "");
+    assert_eq!(summary.details.len(), 1);
+    assert!(summary.details[0].starts_with("src/huge.ts:88:"));
+    assert!(summary.details[0].contains("needle"));
+    assert!(summary.details[0].contains("..."));
 }
 
 #[test]

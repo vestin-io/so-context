@@ -82,7 +82,8 @@ fn summarize_search_output(result: &ShellResult, pattern: ShellPattern) -> Compr
         .filter(|line| !line.trim().is_empty())
         .map(|line| line.to_string())
         .collect::<Vec<_>>();
-    let SummaryDetails { summary, details } = summarize_search_hits(&hits);
+    let query = extract_search_query(result.invocation.args());
+    let SummaryDetails { summary, details } = summarize_search_hits(&hits, query.as_deref());
 
     CompressionSummary::plain(pattern, summary, details, preview(&result.stderr), result)
 }
@@ -273,6 +274,33 @@ fn summarize_stream_like(result: &ShellResult, pattern: ShellPattern) -> Compres
         sample_lines(stderr_lines, 5),
         result,
     )
+}
+
+fn extract_search_query(args: &[String]) -> Option<String> {
+    let mut skip_next = false;
+    for arg in args {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+
+        match arg.as_str() {
+            "-e" | "--regexp" | "-f" | "--file" | "-g" | "--glob" | "-t" | "--type" | "-A"
+            | "-B" | "-C" | "-m" | "--max-count" => {
+                skip_next = true;
+                continue;
+            }
+            _ => {}
+        }
+
+        if arg.starts_with('-') {
+            continue;
+        }
+
+        return Some(arg.trim().to_string());
+    }
+
+    None
 }
 
 fn looks_like_json(text: &str) -> bool {
