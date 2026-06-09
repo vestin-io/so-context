@@ -22,6 +22,7 @@ use std::time::{Duration, Instant};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher, recommended_watcher};
 
 use crate::core_graph::GraphDb;
+use crate::core_graph::GitIgnoreFilter;
 use crate::core_graph::watch::is_meaningful_change;
 
 // ---------------------------------------------------------------------------
@@ -311,6 +312,8 @@ fn watch_loop(
     eprintln!("[watch] {summary}");
     *state.lock().unwrap() = WatchState::Running;
 
+    let ignore_filter = GitIgnoreFilter::new(project_root)?;
+
     let (tx, rx) = std::sync::mpsc::channel();
     let mut watcher: RecommendedWatcher = recommended_watcher(move |res| {
         let _ = tx.send(res);
@@ -335,7 +338,7 @@ fn watch_loop(
 
         match rx.recv_timeout(Duration::from_secs(WATCH_POLL_SECS)) {
             Ok(Ok(event)) => {
-                if !is_meaningful_change(&event)
+                if !is_meaningful_change(&event, &ignore_filter)
                     || last_sync.elapsed() < Duration::from_millis(REINDEX_DEBOUNCE_MS)
                 {
                     continue;

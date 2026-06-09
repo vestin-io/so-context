@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher, recommended_watcher};
 
 use super::db::{GraphDb, validate_project_root};
+use super::util::GitIgnoreFilter;
 use super::{REINDEX_DEBOUNCE_MS, WATCH_POLL_SECS};
 
 // ---------------------------------------------------------------------------
@@ -24,6 +25,8 @@ pub fn watch_project(project_path: &str) -> Result<(), String> {
     println!("{first}");
     println!("Watching for file changes: {}", project_root.display());
 
+    let ignore_filter = GitIgnoreFilter::new(&project_root)?;
+
     let (tx, rx) = std::sync::mpsc::channel();
     let mut watcher: RecommendedWatcher = recommended_watcher(move |res| {
         let _ = tx.send(res);
@@ -38,7 +41,7 @@ pub fn watch_project(project_path: &str) -> Result<(), String> {
     loop {
         match rx.recv_timeout(Duration::from_secs(WATCH_POLL_SECS)) {
             Ok(Ok(event)) => {
-                if !is_meaningful_change(&event)
+                if !is_meaningful_change(&event, &ignore_filter)
                     || last_sync.elapsed() < Duration::from_millis(REINDEX_DEBOUNCE_MS)
                 {
                     continue;
@@ -63,7 +66,7 @@ pub fn watch_project(project_path: &str) -> Result<(), String> {
 // ---------------------------------------------------------------------------
 
 /// Returns whether a filesystem event should trigger a sync.
-pub fn is_meaningful_change(event: &Event) -> bool {
+pub fn is_meaningful_change(event: &Event, filter: &GitIgnoreFilter) -> bool {
     match event.kind {
         EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_) => {}
         _ => return false,
@@ -71,12 +74,10 @@ pub fn is_meaningful_change(event: &Event) -> bool {
     event
         .paths
         .iter()
-        .any(|p| !should_ignore_path(&p.to_string_lossy()))
+        .any(|p| !should_ignore_path(p, filter))
 }
 
-fn should_ignore_path(s: &str) -> bool {
-    s.contains("/.git/")
-        || s.contains("/node_modules/")
-        || s.contains("/target/")
-        || s.contains("/.so-context/")
+fn should_ignore_path(path: &std::path::Path, filter: &GitIgnoreFilter) -> bool {
+    let s = path.to_string_lossy();
+    s.contains("/.so-context/") || filter.is_ignored(path)
 }

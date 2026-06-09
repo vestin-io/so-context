@@ -17,6 +17,7 @@ mod index;
 mod symbols;
 mod sync;
 mod util;
+pub(crate) use util::GitIgnoreFilter;
 pub mod watch;
 
 pub use db::{FileOutline, GraphDb, ReferenceEntry, validate_project_root};

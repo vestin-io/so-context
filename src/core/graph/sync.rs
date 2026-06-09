@@ -5,10 +5,10 @@ use std::fs;
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 
+use ignore::WalkBuilder;
 use rusqlite::{Transaction, params};
 use tree_sitter::Parser;
 use tree_sitter_language_pack::{detect_language_from_path, get_language};
-use walkdir::WalkDir;
 
 use super::index::{insert_file_record_full, purge_file_data, reindex_file};
 use super::symbols::collect_symbols;
@@ -98,12 +98,13 @@ pub(super) fn sync_files(
     let mut seen_paths: HashMap<String, ()> = HashMap::new();
     let mut parser = Parser::new();
 
-    for entry in WalkDir::new(project_root)
-        .into_iter()
+    for entry in WalkBuilder::new(project_root)
+        .standard_filters(true)
+        .build()
         .filter_map(Result::ok)
     {
         let path = entry.path();
-        if !entry.file_type().is_file() || should_skip(path) {
+        if !entry.file_type().is_some_and(|ft| ft.is_file()) || should_skip(path) {
             continue;
         }
 

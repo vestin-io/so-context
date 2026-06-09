@@ -3,10 +3,10 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use ignore::WalkBuilder;
 use rmcp::handler::server::router::tool::ToolRoute;
 use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::model::{CallToolResult, Content, JsonObject, Tool};
-use walkdir::WalkDir;
 
 use super::BuiltinServer;
 use super::resolve_project_path_arg;
@@ -148,10 +148,13 @@ fn fallback_search_project_with_stats(
     let mut results = Vec::new();
     let mut matched_paths = HashSet::new();
 
-    for entry in WalkDir::new(project_path)
-        .follow_links(false)
-        .into_iter()
-        .filter_entry(|entry| !should_skip_path(entry.path()))
+    for entry in WalkBuilder::new(project_path)
+        .standard_filters(true)
+        .filter_entry(|entry| {
+            let s = entry.path().to_string_lossy();
+            !s.contains("/.so-context/")
+        })
+        .build()
     {
         if results.len() >= limit {
             break;
@@ -161,7 +164,7 @@ fn fallback_search_project_with_stats(
             Ok(entry) => entry,
             Err(_) => continue,
         };
-        if !entry.file_type().is_file() {
+        if !entry.file_type().is_some_and(|ft| ft.is_file()) {
             continue;
         }
 
@@ -226,15 +229,6 @@ fn line_matches_terms(line: &str, terms: &[String]) -> bool {
     terms
         .iter()
         .any(|needle| !needle.is_empty() && line.contains(needle))
-}
-
-fn should_skip_path(path: &std::path::Path) -> bool {
-    path.components().any(|component| {
-        matches!(
-            component.as_os_str().to_str(),
-            Some(".git" | "node_modules" | "dist" | "build" | "target" | ".next")
-        )
-    })
 }
 
 fn count_search_results(output: &str) -> usize {

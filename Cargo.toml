@@ -30,7 +30,7 @@ tokio = { version = "1.48", features = ["macros", "rt-multi-thread", "net", "pro
 tiktoken-rs = "0.11.0"
 tree-sitter = "0.26"
 tree-sitter-language-pack = "1.8.0"
-walkdir = "2.5"
 notify = "8.2"
 url = "2.5.8"
 uuid = { version = "1.23.1", features = ["v4"] }
+ignore = "0.4.26"

@@ -7,7 +7,7 @@ use std::time::UNIX_EPOCH;
 use rusqlite::{Transaction, params};
 use tree_sitter::Parser;
 use tree_sitter_language_pack::{detect_language_from_path, get_language};
-use walkdir::WalkDir;
+use ignore::WalkBuilder;
 
 use super::symbols::collect_symbols;
 use super::util::{content_hash, should_skip};
@@ -28,12 +28,13 @@ pub(super) fn index_files(
     let mut file_count = 0_i64;
     let mut symbol_count = 0_i64;
 
-    for entry in WalkDir::new(project_root)
-        .into_iter()
+    for entry in WalkBuilder::new(project_root)
+        .standard_filters(true)
+        .build()
         .filter_map(Result::ok)
     {
         let path = entry.path();
-        if !entry.file_type().is_file() || should_skip(path) {
+        if !entry.file_type().is_some_and(|ft| ft.is_file()) || should_skip(path) {
             continue;
         }
 

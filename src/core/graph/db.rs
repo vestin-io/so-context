@@ -692,6 +692,12 @@ pub(super) fn refresh_fts(tx: &Transaction<'_>, project_id: i64) -> Result<(), S
     .map_err(|e| format!("failed to clear project fts rows: {e}"))?;
 
     tx.execute(
+        "DELETE FROM nodes_fts WHERE rowid NOT IN (SELECT id FROM nodes)",
+        [],
+    )
+    .map_err(|e| format!("failed to clear orphan fts rows: {e}"))?;
+
+    tx.execute(
         "INSERT INTO nodes_fts(rowid, name, fq_name, signature, doc, path)
          SELECT n.id, n.name, COALESCE(n.fq_name, ''), COALESCE(n.signature, ''),
                 COALESCE(n.doc, ''), f.path
