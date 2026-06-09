@@ -111,7 +111,7 @@ pub(crate) fn render_status_text(wm: &WatchManager) -> String {
                 WatchState::Failed(e) => format!("failed: {e}"),
             };
             let mut consumers = s.consumers.clone();
-            consumers.sort_by(|a, b| a.key().cmp(&b.key()));
+            consumers.sort_by_key(|a| a.key());
             let consumer_str = if consumers.is_empty() {
                 "none".to_string()
             } else {

@@ -78,42 +78,49 @@ fn handler(
         let line_count = raw_content.lines().count();
         let current_hash = hash_content(&raw_content);
 
-        if excerpt.is_none() {
-            if let Some(entry) = fvc.get_file(&connection_id, &session_id, path) {
-                if entry.content_hash == current_hash {
-                    let short = std::path::Path::new(path)
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or(path);
-                    let msg = format!(
-                        "{short} [unchanged, {line_count}L, use cached context]\n\
-                         File unchanged since last read. Reuse existing context instead of re-reading."
-                    );
+        if excerpt.is_none()
+            && let Some(entry) = fvc.get_file(&connection_id, &session_id, path)
+            && entry.content_hash == current_hash
+        {
+            let short = std::path::Path::new(path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(path);
+            let msg = format!(
+                "{short} [unchanged, {line_count}L, use cached context]\n\
+                 File unchanged since last read. Reuse existing context instead of re-reading."
+            );
 
-                    let mut ev = EventRecord::new(&session_id, "so_read");
-                    ev.client = client.clone();
-                    ev.client_version = client_version.clone();
-                    ev.client_source = "client_info".to_string();
-                    ev.session_source = session_source.to_string();
-                    ev.project = project.clone();
-                    ev.params = Some(serde_json::json!({ "path": path, "mode": mode }).to_string());
-                    ev.duration_ms = Some(timer.elapsed_ms());
-                    ev.estimated_origin_tokens = Some(count_tokens(&raw_content));
-                    ev.estimated_origin_size = Some(raw_content.len() as i64);
-                    ev.actual_tokens = Some(count_tokens(&msg));
-                    ev.actual_size = Some(msg.len() as i64);
-                    ev.result_ok = true;
-                    enqueue(ev);
+            let mut ev = EventRecord::new(&session_id, "so_read");
+            ev.client = client.clone();
+            ev.client_version = client_version.clone();
+            ev.client_source = "client_info".to_string();
+            ev.session_source = session_source.to_string();
+            ev.project = project.clone();
+            ev.params = Some(serde_json::json!({ "path": path, "mode": mode }).to_string());
+            ev.duration_ms = Some(timer.elapsed_ms());
+            ev.estimated_origin_tokens = Some(count_tokens(&raw_content));
+            ev.estimated_origin_size = Some(raw_content.len() as i64);
+            ev.actual_tokens = Some(count_tokens(&msg));
+            ev.actual_size = Some(msg.len() as i64);
+            ev.result_ok = true;
+            enqueue(ev);
 
-                    let mut tool_result = CallToolResult::success(vec![Content::text(msg)]);
-                    if !client_prefers_plain_text {
-                        tool_result.structured_content = Some(build_read_structured_content(
-                            path, mode, line_count, false, false, true, None, false,
-                        ));
-                    }
-                    return Ok(tool_result);
-                }
+            let mut tool_result = CallToolResult::success(vec![Content::text(msg)]);
+            if !client_prefers_plain_text {
+                tool_result.structured_content =
+                    Some(build_read_structured_content(&ReadStructuredContent {
+                        path,
+                        mode,
+                        line_count,
+                        current_text_is_authoritative: false,
+                        current_text_contains_full_file: false,
+                        cached_notice_only: true,
+                        excerpt_range: None,
+                        line_numbers: false,
+                    }));
             }
+            return Ok(tool_result);
         }
 
         let output = if let Some(excerpt) = &excerpt {
@@ -158,21 +165,22 @@ fn handler(
 
         let mut tool_result = CallToolResult::success(vec![Content::text(output)]);
         if !client_prefers_plain_text {
-            tool_result.structured_content = Some(build_read_structured_content(
-                path,
-                mode,
-                line_count,
-                true,
-                excerpt.is_none(),
-                false,
-                excerpt
-                    .as_ref()
-                    .map(|request| request.start_line..=request.end_line),
-                excerpt
-                    .as_ref()
-                    .map(|request| request.line_numbers)
-                    .unwrap_or(false),
-            ));
+            tool_result.structured_content =
+                Some(build_read_structured_content(&ReadStructuredContent {
+                    path,
+                    mode,
+                    line_count,
+                    current_text_is_authoritative: true,
+                    current_text_contains_full_file: excerpt.is_none(),
+                    cached_notice_only: false,
+                    excerpt_range: excerpt
+                        .as_ref()
+                        .map(|request| request.start_line..=request.end_line),
+                    line_numbers: excerpt
+                        .as_ref()
+                        .map(|request| request.line_numbers)
+                        .unwrap_or(false),
+                }));
         }
         return Ok(tool_result);
     }
@@ -202,16 +210,17 @@ fn handler(
 
         let mut tool_result = CallToolResult::success(vec![Content::text(output)]);
         if !client_prefers_plain_text {
-            tool_result.structured_content = Some(build_read_structured_content(
-                path,
-                mode,
-                raw_content.lines().count(),
-                true,
-                false,
-                false,
-                None,
-                false,
-            ));
+            tool_result.structured_content =
+                Some(build_read_structured_content(&ReadStructuredContent {
+                    path,
+                    mode,
+                    line_count: raw_content.lines().count(),
+                    current_text_is_authoritative: true,
+                    current_text_contains_full_file: false,
+                    cached_notice_only: false,
+                    excerpt_range: None,
+                    line_numbers: false,
+                }));
         }
         return Ok(tool_result);
     }
@@ -289,42 +298,44 @@ fn render_excerpt(content: &str, excerpt: &ExcerptRequest) -> String {
         .join("\n")
 }
 
-fn build_read_structured_content(
-    path: &str,
-    mode: &str,
+struct ReadStructuredContent<'a> {
+    path: &'a str,
+    mode: &'a str,
     line_count: usize,
     current_text_is_authoritative: bool,
     current_text_contains_full_file: bool,
     cached_notice_only: bool,
     excerpt_range: Option<RangeInclusive<usize>>,
     line_numbers: bool,
-) -> serde_json::Value {
+}
+
+fn build_read_structured_content(content: &ReadStructuredContent<'_>) -> serde_json::Value {
     serde_json::json!({
-        "path": path,
-        "mode": mode,
-        "content_kind": if cached_notice_only {
+        "path": content.path,
+        "mode": content.mode,
+        "content_kind": if content.cached_notice_only {
             "cached_read_notice"
-        } else if excerpt_range.is_some() {
+        } else if content.excerpt_range.is_some() {
             "file_excerpt"
-        } else if mode == "outline" {
+        } else if content.mode == "outline" {
             "file_outline"
         } else {
             "file_content"
         },
-        "line_count": line_count,
-        "current_text_is_authoritative": current_text_is_authoritative,
-        "current_text_contains_full_file": current_text_contains_full_file,
-        "preferred_response_source": if current_text_is_authoritative {
+        "line_count": content.line_count,
+        "current_text_is_authoritative": content.current_text_is_authoritative,
+        "current_text_contains_full_file": content.current_text_contains_full_file,
+        "preferred_response_source": if content.current_text_is_authoritative {
             "current_text_content"
         } else {
             "cached_context"
         },
         "reread_not_needed_if_text_sufficient": true,
-        "result_complete": !cached_notice_only,
-        "cached_notice_only": cached_notice_only,
-        "excerpt_start_line": excerpt_range.as_ref().map(|range| *range.start()),
-        "excerpt_end_line": excerpt_range.as_ref().map(|range| *range.end()),
-        "line_numbers": line_numbers,
+        "result_complete": !content.cached_notice_only,
+        "cached_notice_only": content.cached_notice_only,
+        "excerpt_start_line": content.excerpt_range.as_ref().map(|range| *range.start()),
+        "excerpt_end_line": content.excerpt_range.as_ref().map(|range| *range.end()),
+        "line_numbers": content.line_numbers,
     })
 }
 
@@ -356,21 +367,22 @@ mod tests {
     use rmcp::model::JsonObject;
 
     use super::{
-        ExcerptRequest, build_read_structured_content, parse_excerpt_request, render_excerpt,
+        ExcerptRequest, ReadStructuredContent, build_read_structured_content,
+        parse_excerpt_request, render_excerpt,
     };
 
     #[test]
     fn full_read_is_marked_authoritative() {
-        let content = build_read_structured_content(
-            "/tmp/example.rs",
-            "full",
-            42,
-            true,
-            true,
-            false,
-            None,
-            false,
-        );
+        let content = build_read_structured_content(&ReadStructuredContent {
+            path: "/tmp/example.rs",
+            mode: "full",
+            line_count: 42,
+            current_text_is_authoritative: true,
+            current_text_contains_full_file: true,
+            cached_notice_only: false,
+            excerpt_range: None,
+            line_numbers: false,
+        });
 
         assert_eq!(content["content_kind"], "file_content");
         assert_eq!(content["current_text_is_authoritative"], true);
@@ -380,16 +392,16 @@ mod tests {
 
     #[test]
     fn cached_notice_is_not_marked_as_full_file_text() {
-        let content = build_read_structured_content(
-            "/tmp/example.rs",
-            "full",
-            42,
-            false,
-            false,
-            true,
-            None,
-            false,
-        );
+        let content = build_read_structured_content(&ReadStructuredContent {
+            path: "/tmp/example.rs",
+            mode: "full",
+            line_count: 42,
+            current_text_is_authoritative: false,
+            current_text_contains_full_file: false,
+            cached_notice_only: true,
+            excerpt_range: None,
+            line_numbers: false,
+        });
 
         assert_eq!(content["content_kind"], "cached_read_notice");
         assert_eq!(content["current_text_is_authoritative"], false);

@@ -23,44 +23,43 @@ pub(super) fn collect_symbols(
     while let Some(node) = stack.pop() {
         let kind = node.kind();
 
-        if is_symbol_kind(kind) {
-            if let Some(name_node) = node.child_by_field_name("name") {
-                if let Ok(name) = name_node.utf8_text(content.as_bytes()) {
-                    let p = node.start_position();
-                    let end = node.end_position();
-                    tx.execute(
-                        "INSERT INTO nodes(
-                            project_id, file_id, kind, name, start_line, start_col, end_line, end_col
-                        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                        params![
-                            project_id,
-                            file_id,
-                            kind,
-                            name,
-                            p.row as i64 + 1,
-                            p.column as i64 + 1,
-                            end.row as i64 + 1,
-                            end.column as i64 + 1
-                        ],
-                    )
-                    .map_err(|e| format!("failed to insert symbol row: {e}"))?;
-                    let symbol_id = tx.last_insert_rowid();
+        if is_symbol_kind(kind)
+            && let Some(name_node) = node.child_by_field_name("name")
+            && let Ok(name) = name_node.utf8_text(content.as_bytes())
+        {
+            let p = node.start_position();
+            let end = node.end_position();
+            tx.execute(
+                "INSERT INTO nodes(
+                    project_id, file_id, kind, name, start_line, start_col, end_line, end_col
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    project_id,
+                    file_id,
+                    kind,
+                    name,
+                    p.row as i64 + 1,
+                    p.column as i64 + 1,
+                    end.row as i64 + 1,
+                    end.column as i64 + 1
+                ],
+            )
+            .map_err(|e| format!("failed to insert symbol row: {e}"))?;
+            let symbol_id = tx.last_insert_rowid();
 
-                    tx.execute(
-                        "INSERT INTO edges(project_id, from_node_id, to_node_id, kind, line, col)
-                         VALUES (?1, ?2, ?3, 'contains', ?4, ?5)",
-                        params![
-                            project_id,
-                            file_node_id,
-                            symbol_id,
-                            p.row as i64 + 1,
-                            p.column as i64 + 1
-                        ],
-                    )
-                    .map_err(|e| format!("failed to insert contains edge: {e}"))?;
-                    count += 1;
-                }
-            }
+            tx.execute(
+                "INSERT INTO edges(project_id, from_node_id, to_node_id, kind, line, col)
+                 VALUES (?1, ?2, ?3, 'contains', ?4, ?5)",
+                params![
+                    project_id,
+                    file_node_id,
+                    symbol_id,
+                    p.row as i64 + 1,
+                    p.column as i64 + 1
+                ],
+            )
+            .map_err(|e| format!("failed to insert contains edge: {e}"))?;
+            count += 1;
         }
 
         if let Some(ref_kind) = relation_kind(kind) {

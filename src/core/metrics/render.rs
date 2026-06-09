@@ -191,19 +191,26 @@ fn progress_bar(ratio: f64, width: usize) -> String {
 }
 
 fn truncate_middle(value: &str, max_len: usize) -> String {
-    if value.len() <= max_len {
+    let chars: Vec<char> = value.chars().collect();
+    if chars.len() <= max_len {
         return value.to_string();
     }
     if max_len <= 3 {
         return "...".to_string();
     }
     let keep = (max_len - 3) / 2;
-    let start = &value[..keep];
-    let end = &value[value.len() - (max_len - 3 - keep)..];
+    let tail_len = max_len - 3 - keep;
+    let start: String = chars[..keep].iter().collect();
+    let end: String = chars[chars.len() - tail_len..].iter().collect();
     format!("{start}...{end}")
 }
 
 #[cfg(test)]
 pub(super) fn progress_bar_for_tests(ratio: f64, width: usize) -> String {
     progress_bar(ratio, width)
+}
+
+#[cfg(test)]
+pub(super) fn truncate_middle_for_tests(value: &str, max_len: usize) -> String {
+    truncate_middle(value, max_len)
 }

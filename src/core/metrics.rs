@@ -11,8 +11,8 @@ mod render;
 pub use render::render_metrics_text;
 
 use query::{
-    EventRow, classify_shell_command, is_savings_eligible, load_event_rows, saved_bytes,
-    saved_tokens,
+    EventRow, classify_shell_command, is_compression_hit_eligible, is_savings_eligible,
+    load_event_rows, saved_bytes, saved_tokens,
 };
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -153,8 +153,10 @@ fn aggregate_usage(rows: &[EventRow]) -> UsageAgg {
         if is_savings_eligible(row) {
             let row_saved_tokens = saved_tokens(row);
             let row_saved_bytes = saved_bytes(row);
-            usage.eligible_calls += 1;
-            if row_saved_tokens > 0 {
+            if is_compression_hit_eligible(row) {
+                usage.eligible_calls += 1;
+            }
+            if is_compression_hit_eligible(row) && row_saved_tokens > 0 {
                 usage.compression_hits += 1;
             }
             usage.tokens_saved += row_saved_tokens;

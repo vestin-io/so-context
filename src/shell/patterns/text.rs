@@ -58,3 +58,11 @@ pub(super) fn preferred_output(result: &ShellResult) -> String {
         (true, true) => String::new(),
     }
 }
+
+pub(super) fn exact_non_empty_lines(output: &str) -> Vec<String> {
+    output
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(|line| line.to_string())
+        .collect()
+}

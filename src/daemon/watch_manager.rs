@@ -13,7 +13,7 @@
 //! single import point.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -301,12 +301,12 @@ fn run_watch_thread(
 }
 
 fn watch_loop(
-    project_root: &PathBuf,
+    project_root: &Path,
     state: &Arc<Mutex<WatchState>>,
     stop_rx: &mpsc::Receiver<StopSignal>,
 ) -> Result<(), String> {
     eprintln!("[watch] initial index start: {}", project_root.display());
-    let mut db = GraphDb::open(project_root.clone())?;
+    let mut db = GraphDb::open(project_root.to_path_buf())?;
 
     let summary = db.index()?;
     eprintln!("[watch] {summary}");
@@ -399,12 +399,11 @@ pub fn resolve_project_root(path: &str) -> Option<PathBuf> {
 
 /// Converts a `file://` URI to a filesystem path string.
 pub fn file_uri_to_path(uri: &str) -> String {
-    if let Ok(url) = url::Url::parse(uri) {
-        if url.scheme() == "file" {
-            if let Ok(path) = url.to_file_path() {
-                return path.to_string_lossy().to_string();
-            }
-        }
+    if let Ok(url) = url::Url::parse(uri)
+        && url.scheme() == "file"
+        && let Ok(path) = url.to_file_path()
+    {
+        return path.to_string_lossy().to_string();
     }
     uri.trim_start_matches("file://").to_string()
 }

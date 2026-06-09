@@ -7,7 +7,8 @@ use self::listing::summarize_ls_entries;
 use self::search::summarize_search_hits;
 use super::super::types::{CompressionSummary, ShellPattern, ShellResult};
 use super::text::{
-    append_omitted_line, non_empty_lines, preferred_output, preview, sample_lines, truncate_text,
+    append_omitted_line, exact_non_empty_lines, non_empty_lines, preferred_output, preview,
+    sample_lines, truncate_text,
 };
 
 const FALLBACK_PASSTHROUGH_THRESHOLD: usize = 40;
@@ -30,7 +31,7 @@ fn summarize_ls(result: &ShellResult) -> CompressionSummary {
 }
 
 fn summarize_find(result: &ShellResult) -> CompressionSummary {
-    let paths = non_empty_lines(&result.stdout);
+    let paths = exact_non_empty_lines(&result.stdout);
     let SummaryDetails { summary, details } = summarize_find_paths(&paths);
 
     CompressionSummary::new(
@@ -82,7 +83,8 @@ fn summarize_search_output(result: &ShellResult, pattern: ShellPattern) -> Compr
         .filter(|line| !line.trim().is_empty())
         .map(|line| line.to_string())
         .collect::<Vec<_>>();
-    let SummaryDetails { summary, details } = summarize_search_hits(&hits);
+    let query = extract_search_query(&result.invocation.argv);
+    let SummaryDetails { summary, details } = summarize_search_hits(&hits, query.as_deref());
 
     CompressionSummary::plain(pattern, summary, details, preview(&result.stderr), result)
 }
@@ -150,10 +152,11 @@ fn summarize_tail(result: &ShellResult) -> CompressionSummary {
 }
 
 fn summarize_text_excerpt(result: &ShellResult) -> CompressionSummary {
+    let output = authoritative_text_output(result);
     CompressionSummary::plain(
         ShellPattern::TextExcerpt,
         String::new(),
-        exact_output_lines(&preferred_output(result)),
+        exact_output_lines(&output),
         preview(&result.stderr),
         result,
     )
@@ -273,6 +276,34 @@ fn summarize_stream_like(result: &ShellResult, pattern: ShellPattern) -> Compres
         sample_lines(stderr_lines, 5),
         result,
     )
+}
+
+fn extract_search_query(argv: &[String]) -> Option<String> {
+    let args = argv.get(1..).unwrap_or(&[]);
+    let mut skip_next = false;
+    for arg in args {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+
+        match arg.as_str() {
+            "-e" | "--regexp" | "-f" | "--file" | "-g" | "--glob" | "-t" | "--type" | "-A"
+            | "-B" | "-C" | "-m" | "--max-count" => {
+                skip_next = true;
+                continue;
+            }
+            _ => {}
+        }
+
+        if arg.starts_with('-') {
+            continue;
+        }
+
+        return Some(arg.trim().to_string());
+    }
+
+    None
 }
 
 fn looks_like_json(text: &str) -> bool {
@@ -448,7 +479,8 @@ fn summarize_file_excerpt(
     pattern: ShellPattern,
     label: &str,
 ) -> CompressionSummary {
-    let lines = non_empty_lines(&preferred_output(result));
+    let output = authoritative_text_output(result);
+    let lines = non_empty_lines(&output);
 
     CompressionSummary::new(
         pattern,
@@ -461,6 +493,14 @@ fn summarize_file_excerpt(
         preview(&result.stderr),
         result,
     )
+}
+
+fn authoritative_text_output(result: &ShellResult) -> String {
+    if !result.stdout.is_empty() {
+        result.stdout.clone()
+    } else {
+        preferred_output(result)
+    }
 }
 
 #[cfg(test)]

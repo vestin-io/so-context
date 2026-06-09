@@ -43,7 +43,7 @@ pub(super) fn index_files(
             continue;
         };
 
-        let language = get_language(&lang_name)
+        let language = get_language(lang_name)
             .map_err(|e| format!("failed to load tree-sitter language '{lang_name}': {e}"))?;
         parser
             .set_language(&language)
@@ -63,7 +63,7 @@ pub(super) fn index_files(
             project_root,
             path,
             project_id,
-            &lang_name,
+            lang_name,
             size,
             mtime,
             &hash,

@@ -85,6 +85,14 @@ pub(super) fn is_savings_eligible(row: &EventRow) -> bool {
     }
 }
 
+pub(super) fn is_compression_hit_eligible(row: &EventRow) -> bool {
+    match row.tool.as_str() {
+        "so_shell" => true,
+        "so_read" => row.read_mode.as_deref() != Some("full"),
+        _ => false,
+    }
+}
+
 pub(super) fn saved_tokens(row: &EventRow) -> i64 {
     (row.estimated_origin_tokens - row.actual_tokens).max(0)
 }

@@ -27,8 +27,8 @@ pub use watch::watch_project;
 // Constants (shared across sub-modules via `super::`)
 // ---------------------------------------------------------------------------
 
-pub(self) const REINDEX_DEBOUNCE_MS: u64 = 700;
-pub(self) const WATCH_POLL_SECS: u64 = 1;
+const REINDEX_DEBOUNCE_MS: u64 = 700;
+const WATCH_POLL_SECS: u64 = 1;
 
 // ---------------------------------------------------------------------------
 // Public free functions (one-shot CLI use — open, run, drop)
