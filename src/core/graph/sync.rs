@@ -132,11 +132,12 @@ pub(super) fn sync_files(
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
 
-        if let Some(rec) = tracked.get(&rel_path) {
-            if rec.size == size && rec.mtime == mtime {
-                counts.unchanged += 1;
-                continue;
-            }
+        if let Some(rec) = tracked.get(&rel_path)
+            && rec.size == size
+            && rec.mtime == mtime
+        {
+            counts.unchanged += 1;
+            continue;
         }
 
         // Read + hash to confirm a real content change.
@@ -165,7 +166,7 @@ pub(super) fn sync_files(
                     path,
                     project_id,
                     rec.id,
-                    &lang_name,
+                    lang_name,
                     &content,
                     size,
                     mtime,
@@ -181,13 +182,13 @@ pub(super) fn sync_files(
                 project_root,
                 path,
                 project_id,
-                &lang_name,
+                lang_name,
                 size,
                 mtime,
                 &hash,
                 token_count,
             )?;
-            let language = get_language(&lang_name)
+            let language = get_language(lang_name)
                 .map_err(|e| format!("failed to load tree-sitter language '{lang_name}': {e}"))?;
             parser
                 .set_language(&language)

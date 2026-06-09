@@ -76,6 +76,20 @@ fn preserves_exact_find_paths() {
 }
 
 #[test]
+fn preserves_find_paths_with_significant_whitespace() {
+    let result = ShellResult {
+        invocation: ShellInvocation::new(vec!["find".into(), ".".into()]),
+        stdout: "  spaced name.txt  \n".into(),
+        stderr: String::new(),
+        exit_code: 0,
+        capture: CaptureMetadata::default(),
+    };
+
+    let summary = summarize_find(&result);
+    assert_eq!(summary.details, vec!["  spaced name.txt  "]);
+}
+
+#[test]
 fn summarizes_grep_hits() {
     let result = ShellResult {
         invocation: ShellInvocation::new(vec![
@@ -159,6 +173,26 @@ fn preserves_full_text_excerpt_when_range_is_explicit() {
     assert_eq!(summary.details[79], "line 80");
     assert_eq!(summary.details[119], "line 120");
     assert_eq!(summary.details.len(), 120);
+}
+
+#[test]
+fn text_excerpt_keeps_stderr_out_of_body() {
+    let result = ShellResult {
+        invocation: ShellInvocation::new(vec![
+            "sed".into(),
+            "-n".into(),
+            "1,2p".into(),
+            "README.md".into(),
+        ]),
+        stdout: "line 1\nline 2\n".into(),
+        stderr: "warning: skipped binary tail\n".into(),
+        exit_code: 0,
+        capture: CaptureMetadata::default(),
+    };
+
+    let summary = summarize_text_excerpt(&result);
+    assert_eq!(summary.details, vec!["line 1", "line 2"]);
+    assert_eq!(summary.stderr_preview, vec!["warning: skipped binary tail"]);
 }
 
 #[test]
@@ -253,6 +287,12 @@ fn truncates_long_search_hits_around_query() {
 }
 
 #[test]
+fn extracts_search_query_from_args_not_program_name() {
+    let argv = vec!["rg".into(), "-n".into(), "needle".into(), ".".into()];
+    assert_eq!(extract_search_query(&argv), Some("needle".to_string()));
+}
+
+#[test]
 fn summarizes_head_excerpt() {
     let result = ShellResult {
         invocation: ShellInvocation::new(vec![
@@ -270,6 +310,22 @@ fn summarizes_head_excerpt() {
     let summary = summarize_head(&result);
     assert!(summary.summary.contains("head_lines=2"));
     assert_eq!(summary.details[0], "# so-context");
+}
+
+#[test]
+fn file_excerpt_keeps_stderr_out_of_body() {
+    let result = ShellResult {
+        invocation: ShellInvocation::new(vec!["cat".into(), "README.md".into()]),
+        stdout: "line one\nline two\n".into(),
+        stderr: "cat: note: metadata changed\n".into(),
+        exit_code: 0,
+        capture: CaptureMetadata::default(),
+    };
+
+    let summary = summarize_cat(&result);
+    assert_eq!(summary.details[0], "line one");
+    assert_eq!(summary.details[1], "line two");
+    assert_eq!(summary.stderr_preview, vec!["cat: note: metadata changed"]);
 }
 
 #[test]

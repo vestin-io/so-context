@@ -62,6 +62,7 @@ pub fn prefers_plain_text_tool_output(client: Option<&str>) -> bool {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::prefers_plain_text_tool_output;
 
@@ -471,15 +472,50 @@ impl ServerHandler for BuiltinServer {
 
     // Post-handshake — hook 2: roots/list from client
 
-    fn on_initialized(
-        &self,
-        context: NotificationContext<RoleServer>,
-    ) -> impl std::future::Future<Output = ()> + MaybeSendFuture + '_ {
-        async move {
-            if !self
-                .client_supports_roots
-                .load(std::sync::atomic::Ordering::Relaxed)
-            {
+    async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
+        if !self
+            .client_supports_roots
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            if let Ok(cwd) = std::env::current_dir() {
+                self.wm.ensure_watching(
+                    cwd.to_string_lossy().as_ref(),
+                    self.client().as_deref(),
+                    Some(&self.connection_id()),
+                );
+            }
+            return;
+        }
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(ROOTS_LIST_TIMEOUT_MS),
+            context.peer.list_roots(),
+        )
+        .await;
+
+        match result {
+            Ok(Ok(roots_result)) => {
+                if roots_result.roots.is_empty() {
+                    eprintln!("[mcp] client returned no roots; falling back to cwd");
+                    if let Ok(cwd) = std::env::current_dir() {
+                        self.wm.ensure_watching(
+                            cwd.to_string_lossy().as_ref(),
+                            self.client().as_deref(),
+                            Some(&self.connection_id()),
+                        );
+                    }
+                } else {
+                    for root in &roots_result.roots {
+                        self.wm.ensure_watching(
+                            &file_uri_to_path(&root.uri),
+                            self.client().as_deref(),
+                            Some(&self.connection_id()),
+                        );
+                    }
+                }
+            }
+            Ok(Err(e)) => {
+                eprintln!("[mcp] roots/list failed: {e}; falling back to cwd");
                 if let Ok(cwd) = std::env::current_dir() {
                     self.wm.ensure_watching(
                         cwd.to_string_lossy().as_ref(),
@@ -487,55 +523,15 @@ impl ServerHandler for BuiltinServer {
                         Some(&self.connection_id()),
                     );
                 }
-                return;
             }
-
-            let result = tokio::time::timeout(
-                std::time::Duration::from_millis(ROOTS_LIST_TIMEOUT_MS),
-                context.peer.list_roots(),
-            )
-            .await;
-
-            match result {
-                Ok(Ok(roots_result)) => {
-                    if roots_result.roots.is_empty() {
-                        eprintln!("[mcp] client returned no roots; falling back to cwd");
-                        if let Ok(cwd) = std::env::current_dir() {
-                            self.wm.ensure_watching(
-                                cwd.to_string_lossy().as_ref(),
-                                self.client().as_deref(),
-                                Some(&self.connection_id()),
-                            );
-                        }
-                    } else {
-                        for root in &roots_result.roots {
-                            self.wm.ensure_watching(
-                                &file_uri_to_path(&root.uri),
-                                self.client().as_deref(),
-                                Some(&self.connection_id()),
-                            );
-                        }
-                    }
-                }
-                Ok(Err(e)) => {
-                    eprintln!("[mcp] roots/list failed: {e}; falling back to cwd");
-                    if let Ok(cwd) = std::env::current_dir() {
-                        self.wm.ensure_watching(
-                            cwd.to_string_lossy().as_ref(),
-                            self.client().as_deref(),
-                            Some(&self.connection_id()),
-                        );
-                    }
-                }
-                Err(_timeout) => {
-                    eprintln!("[mcp] roots/list timed out; falling back to cwd");
-                    if let Ok(cwd) = std::env::current_dir() {
-                        self.wm.ensure_watching(
-                            cwd.to_string_lossy().as_ref(),
-                            self.client().as_deref(),
-                            Some(&self.connection_id()),
-                        );
-                    }
+            Err(_timeout) => {
+                eprintln!("[mcp] roots/list timed out; falling back to cwd");
+                if let Ok(cwd) = std::env::current_dir() {
+                    self.wm.ensure_watching(
+                        cwd.to_string_lossy().as_ref(),
+                        self.client().as_deref(),
+                        Some(&self.connection_id()),
+                    );
                 }
             }
         }
@@ -543,17 +539,14 @@ impl ServerHandler for BuiltinServer {
 
     // Tool dispatch — hook 3: cwd last-resort before every tool call
 
-    fn call_tool(
+    async fn call_tool(
         &self,
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> impl std::future::Future<Output = Result<CallToolResult, ErrorData>> + MaybeSendFuture + '_
-    {
-        async move {
-            self.tool_router
-                .call(ToolCallContext::new(self, request, context))
-                .await
-        }
+    ) -> Result<CallToolResult, ErrorData> {
+        self.tool_router
+            .call(ToolCallContext::new(self, request, context))
+            .await
     }
 
     // Metadata
@@ -590,17 +583,14 @@ Tools:\n\
         )
     }
 
-    fn list_tools(
+    async fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
-    ) -> impl std::future::Future<Output = Result<ListToolsResult, ErrorData>> + MaybeSendFuture + '_
-    {
-        async move {
-            Ok(ListToolsResult {
-                tools: self.tool_router.list_all(),
-                ..Default::default()
-            })
-        }
+    ) -> Result<ListToolsResult, ErrorData> {
+        Ok(ListToolsResult {
+            tools: self.tool_router.list_all(),
+            ..Default::default()
+        })
     }
 }

@@ -14,7 +14,6 @@ pub mod file_visit_cache;
 mod hook;
 mod mcp;
 
-use libc;
 mod setup;
 mod shell;
 mod socket;

@@ -92,13 +92,10 @@ fn deny_native_shell_if_needed(input: &Value) -> Option<Value> {
         .and_then(|value| value.as_str())
     {
         command
-    } else if let Some(command) = input
-        .pointer("/tool_input/cmd")
-        .and_then(|value| value.as_str())
-    {
-        command
     } else {
-        return None;
+        input
+            .pointer("/tool_input/cmd")
+            .and_then(|value| value.as_str())?
     };
 
     let command = command.trim();

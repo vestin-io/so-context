@@ -5,7 +5,7 @@
 //! Writes:
 //!   - `[mcp_servers.so-context]`      — MCP stdio bridge
 //!   - `[[hooks.PreToolUse]]`          — injects `_so_session_id` into so-context tool calls
-//!                                       and reroutes selected native read/shell calls through so-context tools
+//!     and reroutes selected native read/shell calls through so-context tools
 //!   - `[[hooks.PostCompact]]`         — resets file-visit cache after context compaction
 //!   - `~/.codex/AGENTS.md` snippet    — prefer `so_read`/`so_shell` over native read/shell tools
 //!

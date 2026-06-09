@@ -5,7 +5,7 @@
 //! Writes:
 //!   - `mcpServers.so-context`          — MCP stdio bridge
 //!   - `hooks.PreToolUse[].hooks[]`     — injects `_so_session_id` into so-context tool calls
-//!                                        and reroutes selected native read/shell calls through so-context tools
+//!     and reroutes selected native read/shell calls through so-context tools
 //!   - `hooks.PostCompact[].hooks[]`    — resets file-visit cache after context compaction
 //!   - `~/.claude/CLAUDE.md` snippet    — prefer `so_read`/`so_shell` over native read/shell tools
 //!
@@ -253,7 +253,7 @@ fn is_so_context_hook_value(hook: &Value, hook_name: &str) -> bool {
         .and_then(|a| a.as_array())
         .map(|args| {
             args.len() == 2
-                && args.get(0).and_then(|v| v.as_str()) == Some("hook")
+                && args.first().and_then(|v| v.as_str()) == Some("hook")
                 && args.get(1).and_then(|v| v.as_str()) == Some(hook_name)
         })
         .unwrap_or(false);
