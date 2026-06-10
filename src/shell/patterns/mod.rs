@@ -5,8 +5,11 @@ mod generic;
 mod gh;
 mod git;
 mod k8s;
+mod lint;
 mod node;
+mod python;
 mod rust;
+mod testing;
 mod text;
 
 use super::types::{CompressionSummary, ShellPattern, ShellResult};
@@ -108,6 +111,18 @@ fn family_handlers() -> &'static [FamilyHandler] {
         FamilyHandler {
             classify: docker::classify,
             summarize: docker::summarize_pattern,
+        },
+        FamilyHandler {
+            classify: python::classify,
+            summarize: python::summarize_pattern,
+        },
+        FamilyHandler {
+            classify: lint::classify,
+            summarize: lint::summarize_pattern,
+        },
+        FamilyHandler {
+            classify: testing::classify,
+            summarize: testing::summarize_pattern,
         },
         FamilyHandler {
             classify: node::classify,
