@@ -185,6 +185,12 @@ cargo check
 so-context daemon
 ```
 
+## Community
+
+- Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request
+- Report sensitive issues through [SECURITY.md](SECURITY.md)
+- Participate respectfully under [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+
 ## Maintainer release flow
 
 1. Bump `Cargo.toml` version.
@@ -222,3 +228,6 @@ If `HOMEBREW_TAP_TOKEN` is not set, the release still succeeds; only the tap syn
 ## License
 
 MIT
+
+Copyright (c) 2026 Vestin Limited, New Zealand.
+See [LICENSE](LICENSE).
