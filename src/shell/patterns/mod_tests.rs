@@ -34,6 +34,79 @@ fn classifies_docker_compose_alias_subcommands() {
 #[test]
 fn classifies_new_shell_families() {
     assert_eq!(
+        classify_only(&result(&["python", "-m", "pytest", "-q"])),
+        ShellPattern::PythonPytest
+    );
+    assert_eq!(
+        classify_only(&result(&["uv", "run", "pytest", "-q"])),
+        ShellPattern::PythonPytest
+    );
+    assert_eq!(
+        classify_only(&result(&["python3", "-m", "pip", "install", "httpx"])),
+        ShellPattern::PythonPip
+    );
+    assert_eq!(
+        classify_only(&result(&["poetry", "install"])),
+        ShellPattern::PythonPoetry
+    );
+    assert_eq!(
+        classify_only(&result(&["poetry", "run", "mypy", "src"])),
+        ShellPattern::PythonMypy
+    );
+    assert_eq!(
+        classify_only(&result(&["ruff", "check", "."])),
+        ShellPattern::PythonRuff
+    );
+    assert_eq!(
+        classify_only(&result(&["vitest", "run"])),
+        ShellPattern::Vitest
+    );
+    assert_eq!(classify_only(&result(&["npx", "jest"])), ShellPattern::Jest);
+    assert_eq!(
+        classify_only(&result(&["playwright", "test"])),
+        ShellPattern::PlaywrightTest
+    );
+    assert_eq!(
+        classify_only(&result(&["go", "test", "./..."])),
+        ShellPattern::GoTest
+    );
+    assert_eq!(
+        classify_only(&result(&["bundle", "exec", "rspec"])),
+        ShellPattern::Rspec
+    );
+    assert_eq!(
+        classify_only(&result(&["ruby", "-Itest", "test/models/user_test.rb"])),
+        ShellPattern::Minitest
+    );
+    assert_eq!(
+        classify_only(&result(&["eslint", "."])),
+        ShellPattern::LintEslint
+    );
+    assert_eq!(
+        classify_only(&result(&["npx", "eslint", "."])),
+        ShellPattern::LintEslint
+    );
+    assert_eq!(
+        classify_only(&result(&["npm", "exec", "eslint", "."])),
+        ShellPattern::LintEslint
+    );
+    assert_eq!(
+        classify_only(&result(&["pnpm", "exec", "prettier", "--check", "."])),
+        ShellPattern::LintPrettier
+    );
+    assert_eq!(
+        classify_only(&result(&["bunx", "biome", "check", "."])),
+        ShellPattern::LintBiome
+    );
+    assert_eq!(
+        classify_only(&result(&["bun", "x", "prettier", "--check", "."])),
+        ShellPattern::LintPrettier
+    );
+    assert_eq!(
+        classify_only(&result(&["golangci-lint", "run"])),
+        ShellPattern::LintGolangci
+    );
+    assert_eq!(
         classify_only(&result(&["npm", "install"])),
         ShellPattern::NodeNpm
     );
