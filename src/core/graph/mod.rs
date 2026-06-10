@@ -12,15 +12,18 @@
 //!   `~/.local/share/so-context/graphs/<hash>.db`
 //! where `<hash>` is a 64-bit hash of the canonical project root path.
 
+mod content;
 mod db;
 mod index;
+mod path_filter;
+mod query;
 mod symbols;
 mod sync;
-mod util;
-pub(crate) use util::GitIgnoreFilter;
+pub(crate) use path_filter::GitIgnoreFilter;
 pub mod watch;
 
-pub use db::{FileOutline, GraphDb, ReferenceEntry, validate_project_root};
+pub use db::{GraphDb, validate_project_root};
+pub use query::{FileOutline, ReferenceEntry};
 pub use watch::watch_project;
 
 // ---------------------------------------------------------------------------

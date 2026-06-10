@@ -1,102 +1,130 @@
-use super::*;
+use crate::shell::types::{CaptureMetadata, ShellInvocation, ShellResult};
+
+use super::super::{
+    summarize_find, summarize_grep, summarize_ls, summarize_rg, summarize_rg_files,
+};
 
 #[test]
-fn passthrough_shows_every_entry_for_small_listings() {
-    let entries: Vec<String> = (0..10)
-        .map(|index| format!("entry{index:02}.txt"))
-        .collect();
-    let summary = summarize_ls_entries(&entries, &[]);
+fn summarizes_rg_hits() {
+    let result = ShellResult {
+        invocation: ShellInvocation::new(vec!["rg".into(), "todo".into()]),
+        stdout: "src/main.rs:10: TODO one\nsrc/lib.rs:7: TODO two\n".into(),
+        stderr: String::new(),
+        exit_code: 0,
+        capture: CaptureMetadata::default(),
+    };
 
-    assert_eq!(summary.summary, "entries=10");
-    assert_eq!(summary.details.len(), 10);
-    assert_eq!(summary.details[0], "entry00.txt");
-    assert_eq!(summary.details[9], "entry09.txt");
-    assert!(!summary.details.iter().any(|line| line.starts_with('+')));
+    let summary = summarize_rg(&result);
+    assert_eq!(summary.summary, "");
+    assert_eq!(summary.details[0], "src/main.rs:10: TODO one");
+    assert_eq!(summary.details[1], "src/lib.rs:7: TODO two");
 }
 
 #[test]
-fn orders_directories_before_files() {
-    let entries = vec![
-        "README.md".to_string(),
-        "src".to_string(),
-        "Cargo.toml".to_string(),
-    ];
-    let summary = summarize_ls_entries(&entries, &[]);
+fn summarizes_ls_entries() {
+    let result = ShellResult {
+        invocation: ShellInvocation::new(vec!["ls".into()]),
+        stdout: "Cargo.toml\nREADME.md\nsrc\n".into(),
+        stderr: String::new(),
+        exit_code: 0,
+        capture: CaptureMetadata::default(),
+    };
 
+    let summary = summarize_ls(&result);
+    assert!(summary.summary.contains("entries=3"));
     assert_eq!(summary.details[0], "src/");
-    assert_eq!(summary.details[1], "Cargo.toml");
-    assert_eq!(summary.details[2], "README.md");
+    assert_eq!(summary.details.len(), 3);
 }
 
 #[test]
-fn lists_omitted_entry_names_instead_of_only_a_counter() {
-    let entries: Vec<String> = (0..25)
-        .map(|index| format!("entry{index:02}.txt"))
-        .collect();
-    let summary = summarize_ls_entries(&entries, &[]);
+fn summarizes_find_paths() {
+    let result = ShellResult {
+        invocation: ShellInvocation::new(vec!["find".into(), "src".into()]),
+        stdout: "src/main.rs\nsrc/shell/mod.rs\n".into(),
+        stderr: String::new(),
+        exit_code: 0,
+        capture: CaptureMetadata::default(),
+    };
 
-    assert_eq!(summary.details.len(), 25);
-    assert_eq!(summary.details[19], "entry19.txt");
-    assert_eq!(summary.details[20], "entry20.txt");
-    assert_eq!(summary.details[24], "entry24.txt");
-    assert!(!summary.details.iter().any(|line| line.starts_with("+ ")));
+    let summary = summarize_find(&result);
+    assert_eq!(summary.summary, "2 paths in 2 dirs (2 .rs)");
+    assert_eq!(summary.details[0], "src/main.rs");
+    assert_eq!(summary.details[1], "src/shell/mod.rs");
 }
 
 #[test]
-fn caps_very_large_omitted_name_lists() {
-    let entries: Vec<String> = (0..100)
-        .map(|index| format!("entry{index:03}.txt"))
-        .collect();
-    let summary = summarize_ls_entries(&entries, &[]);
+fn preserves_exact_find_paths() {
+    let result = ShellResult {
+        invocation: ShellInvocation::new(vec![
+            "find".into(),
+            "/Users/jiatwork/spotto/ui/dist/apps/plugin".into(),
+            "-maxdepth".into(),
+            "2".into(),
+            "-type".into(),
+            "f".into(),
+        ]),
+        stdout: "/Users/jiatwork/spotto/ui/dist/apps/plugin/assets/generated/locales/enterprise/en.json\n".into(),
+        stderr: String::new(),
+        exit_code: 0,
+        capture: CaptureMetadata::default(),
+    };
 
-    assert_eq!(summary.details.len(), 36);
-    assert_eq!(summary.details[19], "entry019.txt");
-    assert_eq!(summary.details[20], "entry020.txt");
-    assert_eq!(summary.details[34], "entry034.txt");
-    assert_eq!(summary.details[35], "+ 65 more entries");
-}
-
-#[test]
-fn summarizes_long_listing_as_inventory() {
-    let entries = vec![
-        "total 184".to_string(),
-        "drwxr-xr-x  16 jiatwork  staff    512 May 31 12:37 .".to_string(),
-        "drwxr-xr-x  28 jiatwork  staff    896 May 28 11:36 ..".to_string(),
-        "drwxr-xr-x@ 17 jiatwork  staff    544 May 31 11:40 .git".to_string(),
-        "drwxr-xr-x@  3 jiatwork  staff     96 May 29 15:25 docs".to_string(),
-        "-rw-r--r--@  1 jiatwork  staff     62 May 30 22:34 .gitignore".to_string(),
-        "-rw-r--r--@  1 jiatwork  staff    999 May 29 14:27 Cargo.toml".to_string(),
-    ];
-
-    let summary = summarize_ls_entries(&entries, &["-la".to_string()]);
-
+    let summary = summarize_find(&result);
+    assert!(summary.summary.contains("1 paths in 1 dirs"));
+    assert_eq!(summary.details.len(), 1);
     assert_eq!(
-        summary.summary,
-        "Summary: 2 files, 2 dirs (2 hidden) (1 .toml)"
+        summary.details[0],
+        "/Users/jiatwork/spotto/ui/dist/apps/plugin/assets/generated/locales/enterprise/en.json"
     );
-    assert_eq!(summary.details[0], ".git/");
-    assert_eq!(summary.details[1], "docs/");
-    assert_eq!(summary.details[2], ".gitignore  62B");
-    assert_eq!(summary.details[3], "Cargo.toml  999B");
-    assert!(!summary.details.iter().any(|line| line == "total 184"));
-    assert!(!summary.details.iter().any(|line| line.contains(" .")));
-    assert!(!summary.details.iter().any(|line| line.contains(" ..")));
 }
 
 #[test]
-fn keeps_all_medium_long_listing_entries() {
-    let mut entries = vec!["total 200".to_string()];
-    for index in 0..30 {
-        entries.push(format!(
-            "-rw-r--r--@  1 user  staff  {} Jun  4 10:00 file{index:02}.txt",
-            100 + index
-        ));
-    }
+fn preserves_find_paths_with_significant_whitespace() {
+    let result = ShellResult {
+        invocation: ShellInvocation::new(vec!["find".into(), ".".into()]),
+        stdout: "  spaced name.txt  \n".into(),
+        stderr: String::new(),
+        exit_code: 0,
+        capture: CaptureMetadata::default(),
+    };
 
-    let summary = summarize_ls_entries(&entries, &["-l".to_string()]);
+    let summary = summarize_find(&result);
+    assert_eq!(summary.details, vec!["  spaced name.txt  "]);
+}
 
-    assert_eq!(summary.details.len(), 30);
-    assert_eq!(summary.details[0], "file00.txt  100B");
-    assert_eq!(summary.details[29], "file29.txt  129B");
-    assert!(!summary.details.iter().any(|line| line.starts_with("+ ")));
+#[test]
+fn summarizes_grep_hits() {
+    let result = ShellResult {
+        invocation: ShellInvocation::new(vec![
+            "grep".into(),
+            "-R".into(),
+            "todo".into(),
+            ".".into(),
+        ]),
+        stdout: "./src/main.rs:10: TODO one\n./src/lib.rs:7: TODO two\n".into(),
+        stderr: String::new(),
+        exit_code: 0,
+        capture: CaptureMetadata::default(),
+    };
+
+    let summary = summarize_grep(&result);
+    assert_eq!(summary.summary, "");
+    assert_eq!(summary.details[0], "./src/main.rs:10: TODO one");
+    assert_eq!(summary.details[1], "./src/lib.rs:7: TODO two");
+}
+
+#[test]
+fn summarizes_rg_files_as_plain_listing() {
+    let result = ShellResult {
+        invocation: ShellInvocation::new(vec!["rg".into(), "--files".into(), "src".into()]),
+        stdout: "src/main.rs\nsrc/lib.rs\nsrc/shell/mod.rs\n".into(),
+        stderr: String::new(),
+        exit_code: 0,
+        capture: CaptureMetadata::default(),
+    };
+
+    let summary = summarize_rg_files(&result);
+    assert_eq!(summary.summary, "");
+    assert_eq!(summary.details[0], "src/main.rs");
+    assert_eq!(summary.details[2], "src/shell/mod.rs");
 }

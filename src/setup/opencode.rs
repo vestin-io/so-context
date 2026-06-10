@@ -13,16 +13,16 @@ use crate::shell::native_shell_policy_json;
 
 const SERVER_NAME: &str = "so-context";
 
-pub fn config_dir() -> PathBuf {
+fn config_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_default();
     PathBuf::from(home).join(".config").join("opencode")
 }
 
-pub fn config_path() -> PathBuf {
+fn config_path() -> PathBuf {
     config_dir().join("opencode.json")
 }
 
-pub fn plugin_path() -> PathBuf {
+fn plugin_path() -> PathBuf {
     config_dir().join("plugins").join("so-context.ts")
 }
 

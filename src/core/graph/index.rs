@@ -9,8 +9,9 @@ use tree_sitter::Parser;
 use tree_sitter_language_pack::{detect_language_from_path, get_language};
 use ignore::WalkBuilder;
 
+use super::content::content_hash;
+use super::path_filter::should_skip;
 use super::symbols::collect_symbols;
-use super::util::{content_hash, should_skip};
 use crate::core_tokens::count_tokens;
 
 // ---------------------------------------------------------------------------
@@ -54,7 +55,7 @@ pub(super) fn index_files(
             continue;
         };
 
-        let (size, mtime) = file_stat(path);
+        let stat = file_stat(path);
         let hash = content_hash(&content);
         let token_count = count_tokens(&content);
 
@@ -64,8 +65,8 @@ pub(super) fn index_files(
             path,
             project_id,
             lang_name,
-            size,
-            mtime,
+            stat.size,
+            stat.mtime,
             &hash,
             token_count,
         )?;
@@ -191,19 +192,27 @@ pub(super) fn reindex_file(
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-pub(super) fn file_stat(path: &Path) -> (i64, i64) {
+pub(super) struct FileStat {
+    pub(super) size: i64,
+    pub(super) mtime: i64,
+}
+
+pub(super) fn file_stat(path: &Path) -> FileStat {
     let meta = match fs::metadata(path) {
         Ok(m) => m,
-        Err(_) => return (0, 0),
+        Err(_) => {
+            return FileStat { size: 0, mtime: 0 };
+        }
     };
-    let size = meta.len() as i64;
-    let mtime = meta
+    FileStat {
+        size: meta.len() as i64,
+        mtime: meta
         .modified()
         .ok()
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
         .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-    (size, mtime)
+        .unwrap_or(0),
+    }
 }
 
 /// Resolve relative path from project root, returning a string.

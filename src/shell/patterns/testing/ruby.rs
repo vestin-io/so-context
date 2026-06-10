@@ -2,11 +2,12 @@ use regex::Regex;
 
 use super::super::super::types::ShellResult;
 use super::super::text::{non_empty_lines, preferred_output};
-use super::common::{
+use super::parsing::{
     extract_json_object, format_test_totals, numbered_failure_marker, parse_duration_ms,
-    strip_ansi, FailureRecord, TestPresentation,
+    strip_ansi,
 };
 use super::models::RspecOutput;
+use super::presentation::{FailureRecord, TestPresentation};
 
 pub(super) fn summarize_rspec(result: &ShellResult) -> TestPresentation {
     let output = strip_rspec_noise(&strip_ansi(&preferred_output(result)));
@@ -152,7 +153,7 @@ pub(super) fn summarize_minitest(result: &ShellResult) -> TestPresentation {
             index += 1;
         }
 
-        failures.push(super::common::FailureRecord {
+        failures.push(FailureRecord {
             name,
             message_lines,
         });

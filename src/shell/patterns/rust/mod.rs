@@ -1,3 +1,9 @@
+mod diagnostics;
+
+use self::diagnostics::{
+    build_like_details, build_like_stderr_preview, count_error_lines, count_warning_lines,
+    filter_test_actionable_lines,
+};
 use super::super::types::{CompressionSummary, ShellPattern, ShellResult};
 use super::argv::first_positional;
 use super::text::append_omitted_line;
@@ -447,77 +453,6 @@ fn test_stderr_preview(
     } else {
         sample_lines(actionable, 6)
     }
-}
-
-fn build_like_details(lines: &[String], errors: usize, warnings: usize) -> Vec<String> {
-    if errors == 0 && warnings == 0 {
-        lines
-            .iter()
-            .find(|line| line.contains("Finished"))
-            .cloned()
-            .into_iter()
-            .collect()
-    } else {
-        sample_lines(filter_actionable_lines(lines), 6)
-    }
-}
-
-fn build_like_stderr_preview(
-    result: &ShellResult,
-    lines: &[String],
-    errors: usize,
-    warnings: usize,
-) -> Vec<String> {
-    if result.exit_code == 0 && errors == 0 && warnings == 0 {
-        return Vec::new();
-    }
-
-    let actionable: Vec<String> = lines
-        .iter()
-        .filter(|line| line.starts_with("error") || line.starts_with("warning"))
-        .cloned()
-        .collect();
-    if actionable.is_empty() {
-        preview(&result.stderr)
-    } else {
-        sample_lines(actionable, 6)
-    }
-}
-
-fn filter_actionable_lines(lines: &[String]) -> Vec<String> {
-    lines
-        .iter()
-        .filter(|line| {
-            line.starts_with("error")
-                || line.starts_with("warning")
-                || line.contains("Finished")
-                || line.contains("Installed package")
-        })
-        .cloned()
-        .collect()
-}
-
-fn filter_test_actionable_lines(lines: &[String]) -> Vec<String> {
-    let blocks = collect_error_blocks(lines);
-    if !blocks.is_empty() {
-        return blocks;
-    }
-
-    filter_actionable_lines(lines)
-}
-
-fn count_error_lines(lines: &[String]) -> usize {
-    lines
-        .iter()
-        .filter(|line| line.starts_with("error") || line.contains(": error["))
-        .count()
-}
-
-fn count_warning_lines(lines: &[String]) -> usize {
-    lines
-        .iter()
-        .filter(|line| line.starts_with("warning") || line.contains(": warning["))
-        .count()
 }
 
 #[cfg(test)]

@@ -2,57 +2,13 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 
-use crate::shell::types::{CompressionSummary, ShellPattern, ShellResult};
+use super::presentation::FailureRecord;
+use super::super::text::{compact_whitespace, non_empty_lines};
 
-use super::super::text::{compact_whitespace, non_empty_lines, truncate_text};
-
-const FAILURE_LIMIT: usize = 5;
-
-#[derive(Debug, Clone)]
-pub(super) struct FailureRecord {
-    pub(super) name: String,
-    pub(super) message_lines: Vec<String>,
-}
-
-pub(super) struct TestPresentation {
-    pub(super) summary: String,
-    pub(super) failures: Vec<FailureRecord>,
-    pub(super) duration_ms: Option<u64>,
-}
-
-pub(super) fn render_test_presentation(
-    pattern: ShellPattern,
-    presentation: TestPresentation,
-    result: &ShellResult,
-) -> CompressionSummary {
-    let mut details = Vec::new();
-
-    for (index, failure) in presentation.failures.iter().take(FAILURE_LIMIT).enumerate() {
-        details.push(format!(
-            "{}. {}",
-            index + 1,
-            truncate_text(&failure.name, 140)
-        ));
-        for line in &failure.message_lines {
-            details.push(format!("   {line}"));
-        }
-    }
-
-    if presentation.failures.len() > FAILURE_LIMIT {
-        details.push(format!(
-            "... +{} more failures",
-            presentation.failures.len() - FAILURE_LIMIT
-        ));
-    }
-
-    if let Some(duration_ms) = presentation.duration_ms {
-        if !details.is_empty() {
-            details.push(String::new());
-        }
-        details.push(format!("Time: {duration_ms}ms"));
-    }
-
-    CompressionSummary::plain(pattern, presentation.summary, details, Vec::new(), result)
+pub(super) struct TestCountSummary {
+    pub(super) passed: usize,
+    pub(super) failed: usize,
+    pub(super) skipped: usize,
 }
 
 pub(super) fn collect_block_failures<FStart, FStop>(
@@ -134,23 +90,27 @@ pub(super) fn format_test_totals(passed: usize, failed: usize, skipped: usize) -
 pub(super) fn find_test_counts(
     lines: &[String],
     patterns: &[Regex],
-) -> Option<(usize, usize, usize)> {
+) -> Option<TestCountSummary> {
     for line in lines {
         for pattern in patterns {
-            if let Some(caps) = pattern.captures(line) {
-                let failed = caps
+            if let Some(captures) = pattern.captures(line) {
+                let failed = captures
                     .get(1)
                     .and_then(|value| value.as_str().parse::<usize>().ok())
                     .unwrap_or(0);
-                let passed = caps
+                let passed = captures
                     .get(2)
                     .and_then(|value| value.as_str().parse::<usize>().ok())
                     .unwrap_or(0);
-                let skipped = caps
+                let skipped = captures
                     .get(3)
                     .and_then(|value| value.as_str().parse::<usize>().ok())
                     .unwrap_or(0);
-                return Some((passed, failed, skipped));
+                return Some(TestCountSummary {
+                    passed,
+                    failed,
+                    skipped,
+                });
             }
         }
     }
@@ -158,34 +118,33 @@ pub(super) fn find_test_counts(
     None
 }
 
-pub(super) fn find_keyword_counts(output: &str, keywords: &[&str]) -> (usize, usize, usize) {
+pub(super) fn find_keyword_counts(output: &str, keywords: &[&str]) -> TestCountSummary {
     let count_for = |keyword: &str| {
         let regex = Regex::new(&format!(r"(\d+)\s+{keyword}")).expect("valid keyword regex");
         regex
             .captures_iter(output)
-            .filter_map(|caps| caps[1].parse::<usize>().ok())
+            .filter_map(|captures| captures[1].parse::<usize>().ok())
             .last()
             .unwrap_or(0)
     };
 
-    (
-        count_for(keywords[0]),
-        count_for(keywords[1]),
-        count_for(keywords[2]),
-    )
+    TestCountSummary {
+        passed: count_for(keywords[0]),
+        failed: count_for(keywords[1]),
+        skipped: count_for(keywords[2]),
+    }
 }
 
 pub(super) fn parse_duration_ms(output: &str) -> Option<u64> {
     static DURATION_RE: OnceLock<Regex> = OnceLock::new();
-    let regex = DURATION_RE.get_or_init(|| {
-        Regex::new(r"(?i)(\d+(?:\.\d+)?)\s*(ms|s|m)\b").expect("valid duration regex")
-    });
+    let regex = DURATION_RE
+        .get_or_init(|| Regex::new(r"(?i)(\d+(?:\.\d+)?)\s*(ms|s|m)\b").expect("valid duration regex"));
 
     regex
         .captures_iter(output)
-        .filter_map(|caps| {
-            let value = caps[1].parse::<f64>().ok()?;
-            match &caps[2] {
+        .filter_map(|captures| {
+            let value = captures[1].parse::<f64>().ok()?;
+            match &captures[2] {
                 "ms" | "MS" => Some(value as u64),
                 "s" | "S" => Some((value * 1000.0) as u64),
                 "m" | "M" => Some((value * 60_000.0) as u64),

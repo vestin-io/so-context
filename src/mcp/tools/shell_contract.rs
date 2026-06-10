@@ -4,8 +4,8 @@ use serde_json::{Map, Value};
 
 use crate::shell::{RunOutput, ShellOutputMode, SpooledShellOutput};
 
-pub const SHELL_OUTPUT_FOLLOW_UP_TOOL: &str = "so_shell_output";
-pub const RAW_OUTPUT_USE_POLICY: &str =
+const SHELL_OUTPUT_FOLLOW_UP_TOOL: &str = "so_shell_output";
+const RAW_OUTPUT_USE_POLICY: &str =
     "only_if_user_explicitly_requests_verbatim_output_or_summary_is_missing_required_detail";
 pub const RAW_OUTPUT_FETCH_POLICY: &str =
     "only_for_verbatim_user_request_or_missing_required_detail";

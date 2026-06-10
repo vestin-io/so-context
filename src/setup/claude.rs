@@ -46,7 +46,7 @@ const NATIVE_SHELL_MATCHERS: &[&str] = &[
     "run_shell_command",
 ];
 
-pub fn config_path() -> PathBuf {
+fn config_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_default();
     PathBuf::from(home).join(".claude").join("settings.json")
 }

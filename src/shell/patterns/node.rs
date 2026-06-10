@@ -94,5 +94,5 @@ fn looks_like_progress(line: &str) -> bool {
 }
 
 #[cfg(test)]
-#[path = "tests.rs"]
+#[path = "node_tests.rs"]
 mod tests;

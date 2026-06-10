@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-pub const CAPTURE_STRATEGY_BOUNDED: &str = "bounded";
+const CAPTURE_STRATEGY_BOUNDED: &str = "bounded";
 
 #[derive(Debug, Clone)]
 pub struct ShellInvocation {

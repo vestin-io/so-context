@@ -11,7 +11,7 @@ use super::shell_contract::{RAW_OUTPUT_FETCH_POLICY, build_shell_output_structur
 use crate::core_events::{EventRecord, Timer, enqueue};
 use crate::core_tokens::count_tokens;
 use crate::mcp::prefers_plain_text_tool_output;
-use crate::shell::get_spooled_output;
+use crate::shell::spooled_output;
 
 pub fn route() -> ToolRoute<BuiltinServer> {
     ToolRoute::new_dyn(
@@ -62,7 +62,7 @@ fn handler(ctx: ToolCallContext<'_, BuiltinServer>) -> Result<CallToolResult, rm
     }
 
     let timer = Timer::start();
-    let result = match get_spooled_output(&run_id, &session_id, client.as_deref()) {
+    let result = match spooled_output(&run_id, &session_id, client.as_deref()) {
         Some(output) => {
             let text = render_cached_output(&output.full_output, output.exit_code);
             let mut tool_result = if output.exit_code == 0 {

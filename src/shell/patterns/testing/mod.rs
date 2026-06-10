@@ -1,12 +1,13 @@
 mod classify;
-mod common;
 mod go;
 mod javascript;
 mod models;
+mod parsing;
+mod presentation;
 mod ruby;
 
 use super::super::types::{CompressionSummary, ShellPattern, ShellResult};
-use common::render_test_presentation;
+use presentation::render_test_presentation;
 
 pub(super) fn classify(program: &str, args: &[String]) -> Option<ShellPattern> {
     classify::classify(program, args)

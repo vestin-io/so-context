@@ -2,9 +2,10 @@ use std::collections::BTreeMap;
 
 use super::super::super::types::ShellResult;
 use super::super::text::{non_empty_lines, preferred_output};
-use super::common::{
-    FailureRecord, TestPresentation, format_test_totals, parse_duration_ms, result_failed,
-    strip_ansi,
+use super::parsing::{format_test_totals, parse_duration_ms, result_failed, strip_ansi};
+use super::presentation::{
+    FailureRecord,
+    TestPresentation,
 };
 use super::models::GoTestEvent;
 

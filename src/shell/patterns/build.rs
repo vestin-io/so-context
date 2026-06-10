@@ -221,5 +221,5 @@ fn tool_label(pattern: ShellPattern) -> &'static str {
 }
 
 #[cfg(test)]
-#[path = "tests.rs"]
+#[path = "build_tests.rs"]
 mod tests;

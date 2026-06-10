@@ -142,5 +142,5 @@ fn empty_summary(pattern: ShellPattern) -> &'static str {
 }
 
 #[cfg(test)]
-#[path = "tests.rs"]
+#[path = "gh_tests.rs"]
 mod tests;

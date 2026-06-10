@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher, recommended_watcher};
 
 use super::db::{GraphDb, validate_project_root};
-use super::util::GitIgnoreFilter;
+use super::path_filter::GitIgnoreFilter;
 use super::{REINDEX_DEBOUNCE_MS, WATCH_POLL_SECS};
 
 // ---------------------------------------------------------------------------

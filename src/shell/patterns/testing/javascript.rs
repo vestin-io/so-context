@@ -2,12 +2,13 @@ use regex::Regex;
 
 use super::super::super::types::ShellResult;
 use super::super::text::{exact_non_empty_lines, non_empty_lines, preferred_output};
-use super::common::{
+use super::parsing::{
     collect_block_failures, collect_message_lines, extract_json_object, find_keyword_counts,
     find_test_counts, format_failure_block, format_test_totals, parse_duration_ms, result_failed,
-    strip_ansi, FailureRecord, TestPresentation,
+    strip_ansi, TestCountSummary,
 };
 use super::models::{JsTestJsonOutput, PlaywrightJsonOutput, PlaywrightSuite};
+use super::presentation::{FailureRecord, TestPresentation};
 
 const PLAYWRIGHT_TEXT_LINE_LIMIT: usize = 12;
 
@@ -78,8 +79,11 @@ fn summarize_js_test_text(output: &str, label: &str) -> TestPresentation {
         )
         .expect("valid js test count regex"),
     ];
-    let (passed, failed, skipped) =
-        find_test_counts(&lines, &patterns).unwrap_or((0, usize::from(result_failed(output)), 0));
+    let counts = find_test_counts(&lines, &patterns).unwrap_or(TestCountSummary {
+        passed: 0,
+        failed: usize::from(result_failed(output)),
+        skipped: 0,
+    });
     let failures = collect_block_failures(
         &lines,
         |line| {
@@ -98,10 +102,10 @@ fn summarize_js_test_text(output: &str, label: &str) -> TestPresentation {
     );
 
     TestPresentation {
-        summary: if passed == 0 && failed == 0 && skipped == 0 {
+        summary: if counts.passed == 0 && counts.failed == 0 && counts.skipped == 0 {
             format!("{label}: no tests found")
         } else {
-            format_test_totals(passed, failed, skipped)
+            format_test_totals(counts.passed, counts.failed, counts.skipped)
         },
         failures,
         duration_ms: parse_duration_ms(output),
@@ -113,10 +117,10 @@ fn summarize_playwright_text(output: &str) -> TestPresentation {
     let failures = extract_playwright_failures_regex(output);
 
     TestPresentation {
-        summary: if counts.0 == 0 && counts.1 == 0 && counts.2 == 0 {
+        summary: if counts.passed == 0 && counts.failed == 0 && counts.skipped == 0 {
             "Playwright: no tests found".to_string()
         } else {
-            format_test_totals(counts.0, counts.1, counts.2)
+            format_test_totals(counts.passed, counts.failed, counts.skipped)
         },
         failures,
         duration_ms: parse_duration_ms(output),
