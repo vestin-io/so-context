@@ -31,6 +31,11 @@ pub fn log_path() -> PathBuf {
     runtime_dir().join("so-context.log")
 }
 
+/// Runtime cache file for the latest GitHub release lookup.
+pub fn github_release_cache_path() -> PathBuf {
+    runtime_dir().join("so-context-github-release.json")
+}
+
 /// Unix socket the daemon serves MCP (streamable HTTP) over — agents only.
 pub fn socket_path() -> PathBuf {
     runtime_dir().join("so-context.sock")

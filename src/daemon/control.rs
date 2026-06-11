@@ -1,5 +1,6 @@
 use std::fs::{self, OpenOptions};
 use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -8,6 +9,7 @@ use tokio::net::UnixStream;
 use tokio::time::sleep;
 
 use crate::socket::{ctrl_socket_path, log_path, pid_path, socket_path};
+use crate::version::binary_version;
 
 const START_TIMEOUT: Duration = Duration::from_secs(5);
 const STOP_TIMEOUT: Duration = Duration::from_secs(5);
@@ -88,6 +90,32 @@ pub async fn stop_background() -> Result<()> {
 pub async fn restart_background(binary: &str) -> Result<()> {
     stop_background().await?;
     start_background(binary).await
+}
+
+pub async fn daemon_version_mismatch(binary: &str) -> Result<Option<DaemonVersionMismatch>> {
+    if !daemon_is_running().await? {
+        return Ok(None);
+    }
+
+    let Some(info) = running_daemon_info()? else {
+        return Ok(None);
+    };
+
+    let current_version = binary_version(Path::new(binary))?;
+    let Some(daemon_version) = info.version else {
+        return Ok(None);
+    };
+
+    if daemon_version == current_version {
+        return Ok(None);
+    }
+
+    Ok(Some(DaemonVersionMismatch {
+        daemon_version,
+        session_version: current_version,
+        daemon_binary: info.binary,
+        session_binary: PathBuf::from(binary),
+    }))
 }
 
 pub(crate) async fn ensure_no_active_daemon() -> Result<()> {
@@ -225,16 +253,7 @@ fn signal_pid(pid: u32, signal: i32) -> Result<()> {
 }
 
 fn process_matches_daemon(pid: u32) -> Result<bool> {
-    let output = Command::new("ps")
-        .args(["-p", &pid.to_string(), "-o", "command="])
-        .output()
-        .with_context(|| format!("inspect daemon pid {pid} with ps"))?;
-    if !output.status.success() {
-        return Ok(false);
-    }
-
-    let command = String::from_utf8_lossy(&output.stdout);
-    Ok(command_line_matches_daemon(command.trim()))
+    Ok(running_daemon_info_for_pid(pid)?.is_some())
 }
 
 fn command_line_matches_daemon(command: &str) -> bool {
@@ -249,6 +268,58 @@ fn command_line_matches_daemon(command: &str) -> bool {
         }
     }
     false
+}
+
+pub struct DaemonVersionMismatch {
+    pub daemon_version: String,
+    pub session_version: String,
+    pub daemon_binary: PathBuf,
+    pub session_binary: PathBuf,
+}
+
+struct RunningDaemonInfo {
+    binary: PathBuf,
+    version: Option<String>,
+}
+
+fn running_daemon_info() -> Result<Option<RunningDaemonInfo>> {
+    let Some(pid) = read_pid_file()? else {
+        return Ok(None);
+    };
+    running_daemon_info_for_pid(pid)
+}
+
+fn running_daemon_info_for_pid(pid: u32) -> Result<Option<RunningDaemonInfo>> {
+    let output = Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "command="])
+        .output()
+        .with_context(|| format!("inspect daemon pid {pid} with ps"))?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let command = String::from_utf8_lossy(&output.stdout);
+    let command = command.trim();
+    if !command_line_matches_daemon(command) {
+        return Ok(None);
+    }
+
+    let Some(binary) = daemon_binary_from_command_line(command) else {
+        return Ok(None);
+    };
+
+    Ok(Some(RunningDaemonInfo {
+        version: binary_version(&binary).ok(),
+        binary,
+    }))
+}
+
+fn daemon_binary_from_command_line(command: &str) -> Option<PathBuf> {
+    command
+        .split_whitespace()
+        .next()
+        .filter(|token| token.contains("so-context"))
+        .map(PathBuf::from)
 }
 
 fn remove_if_exists(path: &std::path::Path) -> Result<()> {

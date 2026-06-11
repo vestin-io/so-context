@@ -17,6 +17,8 @@ mod mcp;
 mod setup;
 mod shell;
 mod socket;
+mod update;
+mod version;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
@@ -95,6 +97,8 @@ enum Commands {
     Stop,
     /// Restart the background daemon.
     Restart,
+    /// Update the current so-context binary to the latest release.
+    Update,
     /// Start the MCP stdio bridge for an agent session.
     /// Connects to the running daemon and forwards MCP messages over stdio.
     /// This is the command to register in Claude / OpenCode / Codex configs.
@@ -190,6 +194,7 @@ async fn main() -> Result<()> {
         Commands::Start => daemon::start_background(&resolve_binary(None)).await,
         Commands::Stop => daemon::stop_background().await,
         Commands::Restart => daemon::restart_background(&resolve_binary(None)).await,
+        Commands::Update => update::update_current_binary().await,
         Commands::Mcp => mcp::run_mcp_bridge().await,
         Commands::Hook { event } => match event {
             HookCommands::PreTool => hook::run_pre_tool_use_hook(),

@@ -21,7 +21,7 @@ use crate::file_visit_cache::FileVisitCache;
 use crate::mcp::BuiltinServer;
 use crate::mcp::tools::status::render_status_text;
 use crate::socket::{ctrl_socket_path, socket_path};
-pub use control::{restart_background, start_background, stop_background};
+pub use control::{daemon_version_mismatch, restart_background, start_background, stop_background};
 
 /// The daemon runtime.
 pub struct Daemon {

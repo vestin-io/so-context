@@ -1,7 +1,9 @@
 use anyhow::Result;
 
 use crate::core_metrics::{MetricsSummary, MetricsWindow};
+use crate::daemon::daemon_version_mismatch;
 use crate::socket::{ctrl_socket_path, socket_path};
+use crate::version::{cached_latest_release_mismatch, latest_release_mismatch};
 
 const CTRL_QUERY_TIMEOUT_MS: u64 = 5_000;
 
@@ -216,6 +218,41 @@ async fn send_ctrl_message(msg: &serde_json::Value, silent_if_missing: bool) -> 
 pub async fn run_mcp_bridge() -> Result<()> {
     use tokio::net::UnixStream;
 
+    let session_binary = std::env::current_exe()
+        .ok()
+        .map(|path| path.to_string_lossy().to_string());
+    let mut release_warning_emitted = false;
+
+    if let Some(binary) = session_binary.clone() {
+        if let Some(mismatch) = daemon_version_mismatch(&binary).await? {
+            eprintln!(
+                "so-context: detected local daemon/session version mismatch; continuing without restart.\n\
+daemon: {} ({})\n\
+session: {} ({})\n\
+If you want to align the daemon to this session, run: {} restart",
+                mismatch.daemon_version,
+                mismatch.daemon_binary.display(),
+                mismatch.session_version,
+                mismatch.session_binary.display(),
+                mismatch.session_binary.display()
+            );
+        }
+
+        if let Some(mismatch) = cached_latest_release_mismatch(&binary)? {
+            eprintln!(
+                "so-context: detected a newer release.\n\
+current: {} ({})\n\
+latest: {} ({})\n\
+The current so-context binary is behind the latest release. Run `so-context update` or switch binaries when convenient.",
+                mismatch.current_version,
+                mismatch.current_binary.display(),
+                mismatch.latest_version,
+                mismatch.release_url
+            );
+            release_warning_emitted = true;
+        }
+    }
+
     let sock = socket_path();
     let stream = {
         let mut last_err = String::new();
@@ -241,6 +278,23 @@ pub async fn run_mcp_bridge() -> Result<()> {
             )
         })?
     };
+
+    if let Some(binary) = session_binary.filter(|_| !release_warning_emitted) {
+        tokio::spawn(async move {
+            if let Ok(Some(mismatch)) = latest_release_mismatch(&binary).await {
+                eprintln!(
+                    "so-context: detected a newer release.\n\
+current: {} ({})\n\
+latest: {} ({})\n\
+The current so-context binary is behind the latest release. Run `so-context update` or switch binaries when convenient.",
+                    mismatch.current_version,
+                    mismatch.current_binary.display(),
+                    mismatch.latest_version,
+                    mismatch.release_url
+                );
+            }
+        });
+    }
 
     let (mut sock_read, mut sock_write) = tokio::io::split(stream);
     let stdin_to_sock = tokio::spawn(async move {
