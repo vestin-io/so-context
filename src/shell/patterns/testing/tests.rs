@@ -24,14 +24,18 @@ fn summarizes_vitest_json_failures() {
     assert_eq!(summary.pattern, ShellPattern::Vitest);
     assert_eq!(summary.summary, "PASS (4) FAIL (1)");
     assert_eq!(summary.details[0], "1. auth login works");
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("Call log:")));
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("- POST /login")));
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("Call log:"))
+    );
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("- POST /login"))
+    );
 }
 
 #[test]
@@ -45,22 +49,30 @@ fn summarizes_playwright_json_failures() {
 
     assert_eq!(summary.pattern, ShellPattern::PlaywrightTest);
     assert_eq!(summary.summary, "PASS (2) FAIL (1)");
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("login works")));
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("Expected true to be false")));
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("waiting for locator")));
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("Time: 3519ms")));
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("login works"))
+    );
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("Expected true to be false"))
+    );
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("waiting for locator"))
+    );
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("Time: 3519ms"))
+    );
 }
 
 #[test]
@@ -74,33 +86,45 @@ fn summarizes_playwright_text_failures() {
 
     assert_eq!(summary.pattern, ShellPattern::PlaywrightTest);
     assert_eq!(summary.summary, "PASS (2) FAIL (1)");
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("tests/auth.spec.ts > login works")));
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("expect(received).toContain(expected)")));
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("Expected substring: \"Login\"")));
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("Received string: \"Sign in\"")));
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("tests/auth.spec.ts > login works"))
+    );
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("expect(received).toContain(expected)"))
+    );
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("Expected substring: \"Login\""))
+    );
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("Received string: \"Sign in\""))
+    );
     assert!(summary.details.iter().any(|line| {
         line.contains("> 13 | await expect(page.getByRole('button')).toContainText('Login')")
     }));
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("waiting for locator('text=Login')")));
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("/tmp/playwright/auth-failure.png")));
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("waiting for locator('text=Login')"))
+    );
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("/tmp/playwright/auth-failure.png"))
+    );
 }
 
 #[test]
@@ -115,10 +139,12 @@ fn summarizes_go_test_text_failures() {
     assert_eq!(summary.pattern, ShellPattern::GoTest);
     assert_eq!(summary.summary, "PASS (0) FAIL (1)");
     assert_eq!(summary.details[0], "1. TestHealth");
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("Time: 123ms")));
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("Time: 123ms"))
+    );
 }
 
 #[test]
@@ -133,22 +159,30 @@ fn summarizes_rspec_text_failures() {
     assert_eq!(summary.pattern, ShellPattern::Rspec);
     assert_eq!(summary.summary, "PASS (1) FAIL (1)");
     assert_eq!(summary.details[0], "1. Auth login works");
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("Failure/Error: expect(response.status).to eq(200)")));
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("# ./spec/requests/auth_spec.rb:12")));
-    assert!(!summary
-        .details
-        .iter()
-        .any(|line| line.contains("gems/rspec-expectations")));
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("[screenshot: /tmp/capybara/auth-failure.png]")));
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("Failure/Error: expect(response.status).to eq(200)"))
+    );
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("# ./spec/requests/auth_spec.rb:12"))
+    );
+    assert!(
+        !summary
+            .details
+            .iter()
+            .any(|line| line.contains("gems/rspec-expectations"))
+    );
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("[screenshot: /tmp/capybara/auth-failure.png]"))
+    );
 }
 
 #[test]
@@ -162,10 +196,12 @@ fn summarizes_minitest_failures() {
 
     assert_eq!(summary.pattern, ShellPattern::Minitest);
     assert_eq!(summary.summary, "PASS (2) FAIL (1)");
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("UserTest#test_valid")));
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("UserTest#test_valid"))
+    );
 }
 
 #[test]
@@ -220,8 +256,10 @@ fn summarizes_rspec_errors_outside_examples() {
     assert_eq!(summary.pattern, ShellPattern::Rspec);
     assert_eq!(summary.summary, "PASS (0) FAIL (1)");
     assert_eq!(summary.details[0], "1. RSpec errors outside of examples");
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("loader/runtime error prevented specs from running")));
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("loader/runtime error prevented specs from running"))
+    );
 }

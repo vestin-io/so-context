@@ -88,18 +88,24 @@ fn summarizes_eslint_problems() {
     assert_eq!(summary.pattern, ShellPattern::LintEslint);
     assert_eq!(summary.summary, "ESLint: 1 error, 0 warnings in 1 file");
     assert_eq!(summary.details[0], "Top rules:");
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("no-unused-vars")));
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("Top files:")));
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("app.js (1 issues)")));
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("no-unused-vars"))
+    );
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("Top files:"))
+    );
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("app.js (1 issues)"))
+    );
 }
 
 #[test]
@@ -176,14 +182,18 @@ fn summarizes_biome_issues() {
     assert_eq!(summary.pattern, ShellPattern::LintBiome);
     assert_eq!(summary.summary, "Biome: 2 issues in 2 files");
     assert_eq!(summary.details[0], "Top rules:");
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("lint/correctness/noUnusedVariables")));
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("Top files:")));
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("lint/correctness/noUnusedVariables"))
+    );
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("Top files:"))
+    );
 }
 
 #[test]
@@ -198,22 +208,30 @@ fn summarizes_golangci_lint_with_navigation_details() {
     assert_eq!(summary.pattern, ShellPattern::LintGolangci);
     assert_eq!(summary.summary, "golangci-lint: 3 issues in 2 files");
     assert_eq!(summary.details[0], "Top linters:");
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("errcheck (1x)")));
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("Top files:")));
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("internal/api/server.go (2 issues)")));
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("-> Error return value not checked")));
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("errcheck (1x)"))
+    );
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("Top files:"))
+    );
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("internal/api/server.go (2 issues)"))
+    );
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("-> Error return value not checked"))
+    );
 }
 
 #[test]
@@ -227,18 +245,24 @@ fn summarizes_golangci_json_with_source_lines() {
 
     assert_eq!(summary.pattern, ShellPattern::LintGolangci);
     assert_eq!(summary.summary, "golangci-lint: 2 issues in 2 files");
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("errcheck (1x)")));
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("internal/api/server.go (1 issues)")));
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("if err := foo(); err != nil {")));
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("errcheck (1x)"))
+    );
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("internal/api/server.go (1 issues)"))
+    );
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("if err := foo(); err != nil {"))
+    );
 }
 
 #[test]

@@ -2,12 +2,12 @@ use regex::Regex;
 
 use super::super::super::types::ShellResult;
 use super::super::text::{exact_non_empty_lines, non_empty_lines, preferred_output};
-use super::parsing::{
-    collect_block_failures, collect_message_lines, extract_json_object, find_keyword_counts,
-    find_test_counts, format_failure_block, format_test_totals, parse_duration_ms, result_failed,
-    strip_ansi, TestCountSummary,
-};
 use super::models::{JsTestJsonOutput, PlaywrightJsonOutput, PlaywrightSuite};
+use super::parsing::{
+    TestCountSummary, collect_block_failures, collect_message_lines, extract_json_object,
+    find_keyword_counts, find_test_counts, format_failure_block, format_test_totals,
+    parse_duration_ms, result_failed, strip_ansi,
+};
 use super::presentation::{FailureRecord, TestPresentation};
 
 const PLAYWRIGHT_TEXT_LINE_LIMIT: usize = 12;

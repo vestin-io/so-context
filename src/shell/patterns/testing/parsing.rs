@@ -2,8 +2,8 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 
-use super::presentation::FailureRecord;
 use super::super::text::{compact_whitespace, non_empty_lines};
+use super::presentation::FailureRecord;
 
 pub(super) struct TestCountSummary {
     pub(super) passed: usize,
@@ -87,10 +87,7 @@ pub(super) fn format_test_totals(passed: usize, failed: usize, skipped: usize) -
     summary
 }
 
-pub(super) fn find_test_counts(
-    lines: &[String],
-    patterns: &[Regex],
-) -> Option<TestCountSummary> {
+pub(super) fn find_test_counts(lines: &[String], patterns: &[Regex]) -> Option<TestCountSummary> {
     for line in lines {
         for pattern in patterns {
             if let Some(captures) = pattern.captures(line) {
@@ -137,8 +134,9 @@ pub(super) fn find_keyword_counts(output: &str, keywords: &[&str]) -> TestCountS
 
 pub(super) fn parse_duration_ms(output: &str) -> Option<u64> {
     static DURATION_RE: OnceLock<Regex> = OnceLock::new();
-    let regex = DURATION_RE
-        .get_or_init(|| Regex::new(r"(?i)(\d+(?:\.\d+)?)\s*(ms|s|m)\b").expect("valid duration regex"));
+    let regex = DURATION_RE.get_or_init(|| {
+        Regex::new(r"(?i)(\d+(?:\.\d+)?)\s*(ms|s|m)\b").expect("valid duration regex")
+    });
 
     regex
         .captures_iter(output)

@@ -10,10 +10,10 @@ use rusqlite::{Transaction, params};
 use tree_sitter::Parser;
 use tree_sitter_language_pack::{detect_language_from_path, get_language};
 
-use super::index::{insert_file_record_full, purge_file_data, reindex_file};
-use super::symbols::collect_symbols;
 use super::content::content_hash;
+use super::index::{insert_file_record_full, purge_file_data, reindex_file};
 use super::path_filter::should_skip;
+use super::symbols::collect_symbols;
 use crate::core_tokens::count_tokens;
 
 // ---------------------------------------------------------------------------

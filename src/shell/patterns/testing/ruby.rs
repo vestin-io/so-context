@@ -2,11 +2,10 @@ use regex::Regex;
 
 use super::super::super::types::ShellResult;
 use super::super::text::{non_empty_lines, preferred_output};
-use super::parsing::{
-    extract_json_object, format_test_totals, numbered_failure_marker, parse_duration_ms,
-    strip_ansi,
-};
 use super::models::RspecOutput;
+use super::parsing::{
+    extract_json_object, format_test_totals, numbered_failure_marker, parse_duration_ms, strip_ansi,
+};
 use super::presentation::{FailureRecord, TestPresentation};
 
 pub(super) fn summarize_rspec(result: &ShellResult) -> TestPresentation {
@@ -317,9 +316,5 @@ fn is_gem_backtrace(line: &str) -> bool {
 }
 
 fn noun<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a str {
-    if count == 1 {
-        singular
-    } else {
-        plural
-    }
+    if count == 1 { singular } else { plural }
 }

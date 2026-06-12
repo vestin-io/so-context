@@ -21,8 +21,8 @@ use std::time::{Duration, Instant};
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher, recommended_watcher};
 
-use crate::core_graph::GraphDb;
 use crate::core_graph::GitIgnoreFilter;
+use crate::core_graph::GraphDb;
 use crate::core_graph::watch::is_meaningful_change;
 
 // ---------------------------------------------------------------------------

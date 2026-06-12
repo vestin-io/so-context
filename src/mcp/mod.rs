@@ -25,8 +25,8 @@
 //! 3. `call_tool()` pre-hook — last resort: if still no project is registered,
 //!    falls back to `std::env::current_dir()` before dispatching the tool.
 
-mod transport;
 pub mod tools;
+mod transport;
 
 use std::sync::Arc;
 

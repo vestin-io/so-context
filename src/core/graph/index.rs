@@ -4,10 +4,10 @@ use std::fs;
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 
+use ignore::WalkBuilder;
 use rusqlite::{Transaction, params};
 use tree_sitter::Parser;
 use tree_sitter_language_pack::{detect_language_from_path, get_language};
-use ignore::WalkBuilder;
 
 use super::content::content_hash;
 use super::path_filter::should_skip;
@@ -207,11 +207,11 @@ pub(super) fn file_stat(path: &Path) -> FileStat {
     FileStat {
         size: meta.len() as i64,
         mtime: meta
-        .modified()
-        .ok()
-        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0),
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0),
     }
 }
 

@@ -2,12 +2,9 @@ use std::collections::BTreeMap;
 
 use super::super::super::types::ShellResult;
 use super::super::text::{non_empty_lines, preferred_output};
-use super::parsing::{format_test_totals, parse_duration_ms, result_failed, strip_ansi};
-use super::presentation::{
-    FailureRecord,
-    TestPresentation,
-};
 use super::models::GoTestEvent;
+use super::parsing::{format_test_totals, parse_duration_ms, result_failed, strip_ansi};
+use super::presentation::{FailureRecord, TestPresentation};
 
 pub(super) fn summarize_go_test(result: &ShellResult) -> TestPresentation {
     let output = preferred_output(result);

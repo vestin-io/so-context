@@ -114,7 +114,6 @@ impl GraphDb {
             counts.added, counts.modified, counts.removed, counts.unchanged
         ))
     }
-
 }
 
 // ---------------------------------------------------------------------------

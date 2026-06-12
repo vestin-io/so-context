@@ -71,10 +71,7 @@ pub fn is_meaningful_change(event: &Event, filter: &GitIgnoreFilter) -> bool {
         EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_) => {}
         _ => return false,
     }
-    event
-        .paths
-        .iter()
-        .any(|p| !should_ignore_path(p, filter))
+    event.paths.iter().any(|p| !should_ignore_path(p, filter))
 }
 
 fn should_ignore_path(path: &std::path::Path, filter: &GitIgnoreFilter) -> bool {

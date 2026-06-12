@@ -37,10 +37,12 @@ fn summarizes_pytest_failures() {
     assert_eq!(summary.pattern, ShellPattern::PythonPytest);
     assert_eq!(summary.summary, "Pytest: 4 passed, 1 failed");
     assert_eq!(summary.details[0], "Failures:");
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("test_health")));
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("test_health"))
+    );
 }
 
 #[test]
@@ -55,10 +57,12 @@ fn summarizes_ruff_output() {
     assert_eq!(summary.pattern, ShellPattern::PythonRuff);
     assert_eq!(summary.summary, "Ruff: 2 issues in 1 file");
     assert!(summary.details.iter().any(|line| line == "Top rules:"));
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("F401 (1x)")));
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("F401 (1x)"))
+    );
     assert!(summary.details.iter().any(|line| line == "Violations:"));
 }
 
@@ -123,14 +127,18 @@ fn summarizes_ruff_format_check() {
     );
 
     assert_eq!(summary.summary, "Ruff format: 2 files need formatting");
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("src/main.py")));
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("tests/test_utils.py")));
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("src/main.py"))
+    );
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("tests/test_utils.py"))
+    );
 }
 
 #[test]
@@ -143,20 +151,28 @@ fn summarizes_mypy_grouped_errors() {
     );
 
     assert_eq!(summary.summary, "mypy: 2 errors in 2 files");
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("Top codes:")));
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("src/server/auth.py (1 errors)")));
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("[return-value]")));
-    assert!(summary
-        .details
-        .iter()
-        .any(|line| line.contains("Expected type \"int\"")));
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("Top codes:"))
+    );
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("src/server/auth.py (1 errors)"))
+    );
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("[return-value]"))
+    );
+    assert!(
+        summary
+            .details
+            .iter()
+            .any(|line| line.contains("Expected type \"int\""))
+    );
 }

@@ -1,6 +1,5 @@
 use super::{
-    build_search_structured_content, count_search_results, line_matches_terms,
-    parse_fallback_terms,
+    build_search_structured_content, count_search_results, line_matches_terms, parse_fallback_terms,
 };
 
 #[test]
