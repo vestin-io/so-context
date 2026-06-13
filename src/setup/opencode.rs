@@ -7,34 +7,23 @@
 use anyhow::{Context, Result};
 use serde_json::{Map, Value};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use crate::shell::native_shell_policy_json;
+use crate::host_adapter::{HostKind, capability_profile};
+use crate::routing_session::{NATIVE_READ_TOOL_NAMES, NATIVE_SEARCH_TOOL_NAMES};
+use crate::shell::NATIVE_SHELL_TOOL_NAMES;
 
 const SERVER_NAME: &str = "so-context";
 
-fn config_dir() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_default();
-    PathBuf::from(home).join(".config").join("opencode")
-}
-
-fn config_path() -> PathBuf {
-    config_dir().join("opencode.json")
-}
-
-fn plugin_path() -> PathBuf {
-    config_dir().join("plugins").join("so-context.ts")
-}
-
-pub fn install(binary: &str) -> Result<()> {
-    install_mcp(binary)?;
-    install_plugin(binary)?;
+pub(crate) fn install_into_home(home: &Path, binary: &str) -> Result<()> {
+    install_mcp_at(&config_path_for(home), binary)?;
+    install_plugin_at(&plugin_path_for(home), binary)?;
     Ok(())
 }
 
-pub fn uninstall() -> Result<()> {
-    uninstall_mcp()?;
-    uninstall_plugin()?;
+pub(crate) fn uninstall_from_home(home: &Path) -> Result<()> {
+    uninstall_mcp_at(&config_path_for(home))?;
+    uninstall_plugin_at(&plugin_path_for(home))?;
     Ok(())
 }
 
@@ -42,13 +31,13 @@ pub fn uninstall() -> Result<()> {
 // MCP server entry
 // ---------------------------------------------------------------------------
 
-fn install_mcp(binary: &str) -> Result<()> {
-    let path = config_path();
+fn install_mcp_at(path: &Path, binary: &str) -> Result<()> {
+    let profile = capability_profile(HostKind::OpenCode);
     fs::create_dir_all(path.parent().unwrap())
         .with_context(|| format!("create dir {}", path.parent().unwrap().display()))?;
 
     let mut root: Value = if path.exists() {
-        let text = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+        let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
         serde_json::from_str(&text).unwrap_or(Value::Object(Map::new()))
     } else {
         Value::Object(Map::new())
@@ -72,8 +61,12 @@ fn install_mcp(binary: &str) -> Result<()> {
     );
 
     let text = serde_json::to_string_pretty(&root)?;
-    fs::write(&path, text).with_context(|| format!("write {}", path.display()))?;
-    println!("OpenCode: wrote MCP entry to {}", path.display());
+    fs::write(path, text).with_context(|| format!("write {}", path.display()))?;
+    println!(
+        "{}: wrote MCP entry to {}",
+        profile.display_name,
+        path.display()
+    );
     Ok(())
 }
 
@@ -81,14 +74,17 @@ fn install_mcp(binary: &str) -> Result<()> {
 // Uninstall
 // ---------------------------------------------------------------------------
 
-fn uninstall_mcp() -> Result<()> {
-    let path = config_path();
+fn uninstall_mcp_at(path: &Path) -> Result<()> {
+    let profile = capability_profile(HostKind::OpenCode);
     if !path.exists() {
-        println!("OpenCode: config not found, nothing to remove");
+        println!(
+            "{}: config not found, nothing to remove",
+            profile.display_name
+        );
         return Ok(());
     }
 
-    let text = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+    let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     let mut root: Value = serde_json::from_str(&text).unwrap_or(Value::Object(Map::new()));
 
     if let Some(mcp) = root
@@ -100,44 +96,86 @@ fn uninstall_mcp() -> Result<()> {
     }
 
     let text = serde_json::to_string_pretty(&root)?;
-    fs::write(&path, text).with_context(|| format!("write {}", path.display()))?;
-    println!("OpenCode: removed MCP entry from {}", path.display());
+    fs::write(path, text).with_context(|| format!("write {}", path.display()))?;
+    println!(
+        "{}: removed MCP entry from {}",
+        profile.display_name,
+        path.display()
+    );
     Ok(())
 }
 
-fn uninstall_plugin() -> Result<()> {
-    let path = plugin_path();
+fn uninstall_plugin_at(path: &Path) -> Result<()> {
+    let profile = capability_profile(HostKind::OpenCode);
     if path.exists() {
-        fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
-        println!("OpenCode: removed plugin {}", path.display());
+        fs::remove_file(path).with_context(|| format!("remove {}", path.display()))?;
+        println!(
+            "{}: removed plugin {}",
+            profile.display_name,
+            path.display()
+        );
     } else {
-        println!("OpenCode: plugin not found, nothing to remove");
+        println!(
+            "{}: plugin not found, nothing to remove",
+            profile.display_name
+        );
     }
     Ok(())
 }
 
-fn install_plugin(binary: &str) -> Result<()> {
-    let path = plugin_path();
+fn install_plugin_at(path: &Path, binary: &str) -> Result<()> {
+    let profile = capability_profile(HostKind::OpenCode);
     fs::create_dir_all(path.parent().unwrap())
         .with_context(|| format!("create dir {}", path.parent().unwrap().display()))?;
 
-    let escaped_binary = binary.replace('\\', "\\\\").replace('"', "\\\"");
-    let policy = native_shell_policy_json();
-    let shell_tool_names = serde_json::to_string(
-        policy
-            .get("shell_tool_names")
-            .cloned()
-            .unwrap_or_else(|| Value::Array(Vec::new()))
-            .as_array()
-            .cloned()
-            .unwrap_or_default()
-            .as_slice(),
-    )?;
-    let source = include_str!("so-context.ts")
-        .replace("__SO_CONTEXT_BINARY__", &escaped_binary)
-        .replace("__SO_CONTEXT_NATIVE_SHELL_TOOL_NAMES__", &shell_tool_names)
-        .replace("__SO_CONTEXT_NATIVE_SHELL_POLICY__", &policy.to_string());
-    fs::write(&path, source).with_context(|| format!("write {}", path.display()))?;
-    println!("OpenCode: wrote plugin to {}", path.display());
+    let source = render_plugin_source(binary)?;
+    fs::write(path, source).with_context(|| format!("write {}", path.display()))?;
+    println!(
+        "{}: wrote plugin to {}",
+        profile.display_name,
+        path.display()
+    );
     Ok(())
 }
+
+fn render_plugin_source(binary: &str) -> Result<String> {
+    let profile = capability_profile(HostKind::OpenCode);
+    let escaped_binary = binary.replace('\\', "\\\\").replace('"', "\\\"");
+    let tool_prefix = profile.self_tool_naming.tool_prefix;
+    let session_id_paths = serde_json::to_string(profile.identity_paths.session_id_paths)?;
+    let native_read_tool_names = serde_json::to_string(&NATIVE_READ_TOOL_NAMES)?;
+    let native_search_tool_names = serde_json::to_string(&NATIVE_SEARCH_TOOL_NAMES)?;
+    let native_shell_tool_names = serde_json::to_string(&NATIVE_SHELL_TOOL_NAMES)?;
+    Ok(include_str!("so-context.ts")
+        .replace("__SO_CONTEXT_BINARY__", &escaped_binary)
+        .replace("__SO_CONTEXT_TOOL_PREFIX__", tool_prefix)
+        .replace("__SO_CONTEXT_SESSION_ID_PATHS__", &session_id_paths)
+        .replace(
+            "__SO_CONTEXT_NATIVE_READ_TOOL_NAMES__",
+            &native_read_tool_names,
+        )
+        .replace(
+            "__SO_CONTEXT_NATIVE_SEARCH_TOOL_NAMES__",
+            &native_search_tool_names,
+        )
+        .replace(
+            "__SO_CONTEXT_NATIVE_SHELL_TOOL_NAMES__",
+            &native_shell_tool_names,
+        ))
+}
+
+fn config_dir_for(home: &Path) -> PathBuf {
+    home.join(".config").join("opencode")
+}
+
+fn config_path_for(home: &Path) -> PathBuf {
+    config_dir_for(home).join("opencode.json")
+}
+
+fn plugin_path_for(home: &Path) -> PathBuf {
+    config_dir_for(home).join("plugins").join("so-context.ts")
+}
+
+#[cfg(test)]
+#[path = "opencode_tests.rs"]
+mod tests;

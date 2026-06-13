@@ -1,0 +1,61 @@
+{
+  "schema_version": "1",
+  "initiative": "context-runtime-architecture-refactor",
+  "features": [
+    {
+      "module": "host-adapter",
+      "feature": "capability-profile",
+      "state": "unstarted"
+    },
+    {
+      "module": "host-adapter",
+      "feature": "lifecycle-binding",
+      "state": "unstarted"
+    },
+    {
+      "module": "routing-session",
+      "feature": "command-interception",
+      "state": "unstarted"
+    },
+    {
+      "module": "routing-session",
+      "feature": "session-lifecycle",
+      "state": "unstarted"
+    },
+    {
+      "module": "routing-session",
+      "feature": "identity-model",
+      "state": "unstarted"
+    },
+    {
+      "module": "routing-session",
+      "feature": "compact-reset-contract",
+      "state": "unstarted"
+    },
+    {
+      "module": "setup-renderer",
+      "feature": "host-config-rendering",
+      "state": "unstarted"
+    },
+    {
+      "module": "setup-renderer",
+      "feature": "instruction-injection",
+      "state": "unstarted"
+    },
+    {
+      "module": "shared-core-integration",
+      "feature": "tool-surface-compatibility",
+      "state": "unstarted"
+    },
+    {
+      "module": "shared-core-integration",
+      "feature": "host-extension-surface",
+      "state": "unstarted"
+    },
+    {
+      "module": "shared-core-integration",
+      "feature": "future-capability-hooks",
+      "state": "unstarted"
+    }
+  ]
+}

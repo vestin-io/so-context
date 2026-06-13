@@ -1,0 +1,196 @@
+{
+  "schema_version": "1",
+  "initiative": "context-runtime-architecture-refactor",
+  "modules": [
+    {
+      "id": "host-adapter",
+      "name": "Host Adapter",
+      "module_path": ".vestin/specs/host-adapter/",
+      "module_spec_path": ".vestin/specs/host-adapter/module.md",
+      "features": [
+        {
+          "id": "capability-profile",
+          "name": "Host Capability Profile",
+          "spec_path": ".vestin/specs/host-adapter/features/capability-profile.md"
+        },
+        {
+          "id": "lifecycle-binding",
+          "name": "Lifecycle Binding",
+          "spec_path": ".vestin/specs/host-adapter/features/lifecycle-binding.md",
+          "depends_on": [
+            {
+              "module": "host-adapter",
+              "feature": "capability-profile"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "routing-session",
+      "name": "Routing And Session Services",
+      "module_path": ".vestin/specs/routing-session/",
+      "module_spec_path": ".vestin/specs/routing-session/module.md",
+      "features": [
+        {
+          "id": "command-interception",
+          "name": "Command Interception",
+          "spec_path": ".vestin/specs/routing-session/features/command-interception.md"
+        },
+        {
+          "id": "session-lifecycle",
+          "name": "Session Lifecycle",
+          "spec_path": ".vestin/specs/routing-session/features/session-lifecycle.md"
+        },
+        {
+          "id": "identity-model",
+          "name": "Identity Model",
+          "spec_path": ".vestin/specs/routing-session/features/identity-model.md"
+        },
+        {
+          "id": "compact-reset-contract",
+          "name": "Compact Reset Contract",
+          "spec_path": ".vestin/specs/routing-session/features/compact-reset-contract.md",
+          "depends_on": [
+            {
+              "module": "routing-session",
+              "feature": "session-lifecycle"
+            },
+            {
+              "module": "routing-session",
+              "feature": "identity-model"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "setup-renderer",
+      "name": "Setup Renderer",
+      "module_path": ".vestin/specs/setup-renderer/",
+      "module_spec_path": ".vestin/specs/setup-renderer/module.md",
+      "features": [
+        {
+          "id": "host-config-rendering",
+          "name": "Host Config Rendering",
+          "spec_path": ".vestin/specs/setup-renderer/features/host-config-rendering.md",
+          "depends_on": [
+            {
+              "module": "host-adapter",
+              "feature": "capability-profile"
+            }
+          ]
+        },
+        {
+          "id": "instruction-injection",
+          "name": "Instruction Injection",
+          "spec_path": ".vestin/specs/setup-renderer/features/instruction-injection.md",
+          "depends_on": [
+            {
+              "module": "setup-renderer",
+              "feature": "host-config-rendering"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "shared-core-integration",
+      "name": "Shared Core Integration",
+      "module_path": ".vestin/specs/shared-core-integration/",
+      "module_spec_path": ".vestin/specs/shared-core-integration/module.md",
+      "features": [
+        {
+          "id": "tool-surface-compatibility",
+          "name": "Tool Surface Compatibility",
+          "spec_path": ".vestin/specs/shared-core-integration/features/tool-surface-compatibility.md",
+          "depends_on": [
+            {
+              "module": "routing-session",
+              "feature": "command-interception"
+            }
+          ]
+        },
+        {
+          "id": "host-extension-surface",
+          "name": "Host Extension Surface",
+          "spec_path": ".vestin/specs/shared-core-integration/features/host-extension-surface.md",
+          "depends_on": [
+            {
+              "module": "host-adapter",
+              "feature": "capability-profile"
+            }
+          ]
+        },
+        {
+          "id": "future-capability-hooks",
+          "name": "Future Capability Hooks",
+          "spec_path": ".vestin/specs/shared-core-integration/features/future-capability-hooks.md",
+          "depends_on": [
+            {
+              "module": "shared-core-integration",
+              "feature": "tool-surface-compatibility"
+            },
+            {
+              "module": "shared-core-integration",
+              "feature": "host-extension-surface"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "glossary": {
+    "adapter": "A host-specific translation boundary that converts host lifecycle/tool events into runtime events.",
+    "setup-renderer": "A host-specific installer/uninstaller that materializes runtime metadata into host config surfaces.",
+    "routing-service": "The shared policy layer that classifies native commands and decides pass-through vs reroute.",
+    "session-service": "The shared layer that normalizes session identity and owns compact-reset continuity behavior.",
+    "tool-surface": "The externally exposed command/tool contract such as MCP or future transport bridges."
+  },
+  "invariants": [
+    {
+      "id": "INV-001",
+      "statement": "Shared command classification MUST have one canonical source of truth and MUST NOT be redefined independently inside each host integration.",
+      "verification": "Review adapter and setup modules to confirm matcher/alias metadata is sourced from one shared runtime authority."
+    },
+    {
+      "id": "INV-002",
+      "statement": "Compact/resume state MUST be modeled separately from shell output compression.",
+      "verification": "Review module boundaries and confirm compact/resume is specified under session/runtime services rather than shell compression contracts."
+    },
+    {
+      "id": "INV-003",
+      "statement": "The first migration stage MUST preserve current MCP tool contracts for so_read, so_search, so_references, so_shell, and so_status.",
+      "verification": "Compare documented external tool contracts before and after refactor planning."
+    },
+    {
+      "id": "INV-004",
+      "statement": "Adding a new host MUST require a new adapter and, if installed by setup, a new setup renderer, without forcing policy duplication in shared services.",
+      "verification": "Architecture review confirms new-host work is isolated to adapter/setup surfaces unless a new shared capability is introduced."
+    },
+    {
+      "id": "INV-005",
+      "statement": "Setup rendering MUST consume shared runtime metadata instead of embedding independent command routing policy.",
+      "verification": "Review setup specs and ensure they reference shared runtime metadata as an input."
+    },
+    {
+      "id": "INV-006",
+      "statement": "The first migration stage MUST keep the call chain minimal and MUST NOT require a central orchestration layer that only forwards calls.",
+      "verification": "Review target call paths and confirm host events route directly through AgentAdapter into RoutingService or SessionService."
+    },
+    {
+      "id": "INV-007",
+      "statement": "The runtime MUST preserve session, agent, and connection identity as distinct layers when hosts expose them.",
+      "verification": "Review identity specs and confirm normalized attribution does not collapse all identity to one opaque ID."
+    },
+    {
+      "id": "INV-008",
+      "statement": "Shared routing policy MUST be shareable across hosts even when hosts execute different implementation languages or runtimes.",
+      "verification": "Review architecture/specs and confirm policy sharing can occur through artifacts or metadata, not only through one executable path."
+    }
+  ],
+  "change_policy": {
+    "specs_are_stable": true,
+    "planning_lives_in": ".vestin/plans/"
+  }
+}

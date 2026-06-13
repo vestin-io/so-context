@@ -232,10 +232,10 @@ fn version_order(current: &str, latest: &str) -> Option<Ordering> {
 
 async fn cached_or_fetched_latest_release() -> Result<Option<LatestReleaseCache>> {
     let cached = read_latest_release_cache().ok().flatten();
-    if let Some(cache) = cached.as_ref() {
-        if cache.is_fresh() {
-            return Ok(Some(cache.clone()));
-        }
+    if let Some(cache) = cached.as_ref()
+        && cache.is_fresh()
+    {
+        return Ok(Some(cache.clone()));
     }
 
     match fetch_latest_release().await {

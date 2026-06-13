@@ -1,8 +1,13 @@
-use super::run_pre_tool_use_hook_value;
+use super::{run_pre_tool_use_hook_value, run_pre_tool_use_hook_value_for_test};
+use crate::host_adapter::HostKind;
 use serde_json::{Value, json};
 
 fn hook(input: Value) -> Option<Value> {
     run_pre_tool_use_hook_value(&input)
+}
+
+fn hook_for_host(host_kind: HostKind, input: Value) -> Option<Value> {
+    run_pre_tool_use_hook_value_for_test(host_kind, &input)
 }
 
 #[test]
@@ -137,6 +142,23 @@ fn preserves_excerpt_arguments_for_native_read_reroute() {
 }
 
 #[test]
+fn blocks_native_read_file_path_alias_and_suggests_so_read() {
+    let output = hook(json!({
+        "tool_name": "read_file",
+        "tool_input": { "file_path": "/tmp/example.rs" }
+    }))
+    .expect("expected deny output");
+
+    let reason = output
+        .pointer("/hookSpecificOutput/permissionDecisionReason")
+        .and_then(|value| value.as_str())
+        .unwrap();
+    assert!(reason.contains("mcp__so-context__so_read"));
+    assert!(reason.contains("\"path\":\"/tmp/example.rs\""));
+    assert!(!reason.contains("\"file_path\""));
+}
+
+#[test]
 fn blocks_native_search_and_suggests_so_search() {
     let output = hook(json!({
         "tool_name": "Grep",
@@ -158,6 +180,27 @@ fn blocks_native_search_and_suggests_so_search() {
     assert!(reason.contains("mcp__so-context__so_search"));
     assert!(reason.contains("\"query\":\"ConfigRepository\""));
     assert!(reason.contains("\"path\":\"/tmp/project\""));
+}
+
+#[test]
+fn blocks_native_search_directory_alias_and_suggests_so_search() {
+    let output = hook(json!({
+        "tool_name": "grep",
+        "tool_input": {
+            "pattern": "ConfigRepository",
+            "directory": "/tmp/project"
+        }
+    }))
+    .expect("expected deny output");
+
+    let reason = output
+        .pointer("/hookSpecificOutput/permissionDecisionReason")
+        .and_then(|value| value.as_str())
+        .unwrap();
+    assert!(reason.contains("mcp__so-context__so_search"));
+    assert!(reason.contains("\"query\":\"ConfigRepository\""));
+    assert!(reason.contains("\"path\":\"/tmp/project\""));
+    assert!(!reason.contains("\"directory\""));
 }
 
 #[test]
@@ -225,4 +268,41 @@ fn allows_cargo_run_to_pass_through() {
         "tool_input": { "command": "cargo run" }
     }));
     assert!(output.is_none());
+}
+
+#[test]
+fn opencode_host_injects_session_id_for_flattened_self_tool_names() {
+    let output = hook_for_host(
+        HostKind::OpenCode,
+        json!({
+            "tool_name": "so-context_so_read",
+            "session": { "id": "session-nested" },
+            "tool_input": { "path": "src/main.rs" }
+        }),
+    )
+    .expect("expected hook output");
+
+    assert_eq!(
+        output.pointer("/hookSpecificOutput/updatedInput/_so_session_id"),
+        Some(&Value::String("session-nested".into()))
+    );
+}
+
+#[test]
+fn opencode_host_uses_flattened_retry_tool_names() {
+    let output = hook_for_host(
+        HostKind::OpenCode,
+        json!({
+            "tool_name": "Read",
+            "tool_input": { "path": "/tmp/example.rs" }
+        }),
+    )
+    .expect("expected deny output");
+
+    let reason = output
+        .pointer("/hookSpecificOutput/permissionDecisionReason")
+        .and_then(|value| value.as_str())
+        .unwrap();
+    assert!(reason.contains("`so-context_so_read`"));
+    assert!(!reason.contains("mcp__so-context__so_read"));
 }

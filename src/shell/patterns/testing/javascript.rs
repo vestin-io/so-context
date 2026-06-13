@@ -14,35 +14,35 @@ const PLAYWRIGHT_TEXT_LINE_LIMIT: usize = 12;
 
 pub(super) fn summarize_js_test(result: &ShellResult, label: &str) -> TestPresentation {
     let output = preferred_output(result);
-    if let Some(json) = extract_json_object(&output) {
-        if let Ok(parsed) = serde_json::from_str::<JsTestJsonOutput>(json) {
-            let failures = parsed
-                .test_results
-                .iter()
-                .flat_map(|file| {
-                    file.assertion_results
-                        .iter()
-                        .filter(|test| test.status == "failed")
-                        .map(|test| FailureRecord {
-                            name: test.full_name.clone(),
-                            message_lines: collect_message_lines(&format_failure_block(
-                                &file.name,
-                                &test.failure_messages,
-                            )),
-                        })
-                })
-                .collect();
+    if let Some(json) = extract_json_object(&output)
+        && let Ok(parsed) = serde_json::from_str::<JsTestJsonOutput>(json)
+    {
+        let failures = parsed
+            .test_results
+            .iter()
+            .flat_map(|file| {
+                file.assertion_results
+                    .iter()
+                    .filter(|test| test.status == "failed")
+                    .map(|test| FailureRecord {
+                        name: test.full_name.clone(),
+                        message_lines: collect_message_lines(&format_failure_block(
+                            &file.name,
+                            &test.failure_messages,
+                        )),
+                    })
+            })
+            .collect();
 
-            return TestPresentation {
-                summary: format_test_totals(
-                    parsed.num_passed_tests,
-                    parsed.num_failed_tests,
-                    parsed.num_pending_tests,
-                ),
-                failures,
-                duration_ms: None,
-            };
-        }
+        return TestPresentation {
+            summary: format_test_totals(
+                parsed.num_passed_tests,
+                parsed.num_failed_tests,
+                parsed.num_pending_tests,
+            ),
+            failures,
+            duration_ms: None,
+        };
     }
 
     summarize_js_test_text(&strip_ansi(&output), label)
@@ -50,20 +50,20 @@ pub(super) fn summarize_js_test(result: &ShellResult, label: &str) -> TestPresen
 
 pub(super) fn summarize_playwright_test(result: &ShellResult) -> TestPresentation {
     let output = preferred_output(result);
-    if let Some(json) = extract_json_object(&output) {
-        if let Ok(parsed) = serde_json::from_str::<PlaywrightJsonOutput>(json) {
-            let mut failures = Vec::new();
-            collect_playwright_failures(&parsed.suites, &mut failures);
-            return TestPresentation {
-                summary: format_test_totals(
-                    parsed.stats.expected,
-                    parsed.stats.unexpected,
-                    parsed.stats.skipped,
-                ),
-                failures,
-                duration_ms: Some(parsed.stats.duration as u64),
-            };
-        }
+    if let Some(json) = extract_json_object(&output)
+        && let Ok(parsed) = serde_json::from_str::<PlaywrightJsonOutput>(json)
+    {
+        let mut failures = Vec::new();
+        collect_playwright_failures(&parsed.suites, &mut failures);
+        return TestPresentation {
+            summary: format_test_totals(
+                parsed.stats.expected,
+                parsed.stats.unexpected,
+                parsed.stats.skipped,
+            ),
+            failures,
+            duration_ms: Some(parsed.stats.duration as u64),
+        };
     }
 
     summarize_playwright_text(&strip_ansi(&output))
@@ -206,7 +206,7 @@ fn extract_playwright_failures_regex(output: &str) -> Vec<FailureRecord> {
         return collect_block_failures(
             &simple_lines,
             |line| line.starts_with('✘') || line.starts_with('×') || line.starts_with("Error:"),
-            |line| is_playwright_summary_line(line),
+            is_playwright_summary_line,
         );
     }
 

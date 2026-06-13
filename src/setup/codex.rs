@@ -13,46 +13,27 @@
 //! projects are registered on `initialize` and unwatched on connection close.
 //! No SessionStart/Stop hooks are needed.
 
+use super::hook_binding::{
+    HookEvent, toml_hook_command, toml_hook_command_matches_binary_or_legacy,
+};
 use super::instructions;
 use anyhow::{Context, Result};
 use std::fs;
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use toml_edit::{Array, DocumentMut, Item, Table, value};
 
+use crate::host_adapter::{HostKind, capability_profile};
+use crate::routing_session::{NATIVE_READ_TOOL_NAMES, NATIVE_SEARCH_TOOL_NAMES};
+use crate::shell::NATIVE_SHELL_TOOL_NAMES;
+
 const SERVER_NAME: &str = "so-context";
-const SO_CONTEXT_MCP_MATCHER: &str = "mcp__so-context__.*";
-const NATIVE_READ_MATCHERS: &[&str] = &["Read", "read", "View", "view", "read_file"];
-const NATIVE_SEARCH_MATCHERS: &[&str] = &[
-    "Grep",
-    "grep",
-    "rg",
-    "ripgrep",
-    "SearchFiles",
-    "search_files",
-];
-const NATIVE_SHELL_MATCHERS: &[&str] = &[
-    "Bash",
-    "bash",
-    "Shell",
-    "shell",
-    "runTerminalCommand",
-    "runInTerminal",
-    "run_in_terminal",
-    "terminal",
-    "shell_command",
-    "exec_command",
-    "local_shell",
-    "run_shell_command",
-];
+const NATIVE_READ_MATCHERS: &[&str] = NATIVE_READ_TOOL_NAMES;
+const NATIVE_SEARCH_MATCHERS: &[&str] = NATIVE_SEARCH_TOOL_NAMES;
+const NATIVE_SHELL_MATCHERS: &[&str] = NATIVE_SHELL_TOOL_NAMES;
 
-fn config_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_default();
-    PathBuf::from(home).join(".codex").join("config.toml")
-}
-
-pub fn install(binary: &str) -> Result<()> {
-    let path = config_path();
+pub(crate) fn install_into_home(home: &Path, binary: &str) -> Result<()> {
+    let profile = capability_profile(HostKind::Codex);
+    let path = config_path_for(home);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("create dir {}", parent.display()))?;
     }
@@ -89,15 +70,23 @@ pub fn install(binary: &str) -> Result<()> {
     install_post_compact_hook(&mut doc, binary);
 
     fs::write(&path, doc.to_string()).with_context(|| format!("write {}", path.display()))?;
-    instructions::install_codex_instructions(&instructions::home_dir())?;
-    println!("Codex: wrote MCP + hooks to {}", path.display());
+    instructions::install_codex_instructions(home)?;
+    println!(
+        "{}: wrote MCP + hooks to {}",
+        profile.display_name,
+        path.display()
+    );
     Ok(())
 }
 
-pub fn uninstall() -> Result<()> {
-    let path = config_path();
+pub(crate) fn uninstall_from_home(home: &Path, binary: &str) -> Result<()> {
+    let profile = capability_profile(HostKind::Codex);
+    let path = config_path_for(home);
     if !path.exists() {
-        println!("Codex: config not found, nothing to remove");
+        println!(
+            "{}: config not found, nothing to remove",
+            profile.display_name
+        );
         return Ok(());
     }
 
@@ -112,15 +101,23 @@ pub fn uninstall() -> Result<()> {
     }
 
     // Remove the PreToolUse hook group.
-    remove_pre_tool_use_hook(&mut doc);
+    remove_pre_tool_use_hook(&mut doc, binary);
 
     // Remove the PostCompact hook group.
-    remove_post_compact_hook(&mut doc);
+    remove_post_compact_hook(&mut doc, binary);
 
     fs::write(&path, doc.to_string()).with_context(|| format!("write {}", path.display()))?;
-    instructions::uninstall_codex_instructions(&instructions::home_dir())?;
-    println!("Codex: removed MCP + hooks from {}", path.display());
+    instructions::uninstall_codex_instructions(home)?;
+    println!(
+        "{}: removed MCP + hooks from {}",
+        profile.display_name,
+        path.display()
+    );
     Ok(())
+}
+
+fn config_path_for(home: &Path) -> PathBuf {
+    home.join(".codex").join("config.toml")
 }
 
 // ---------------------------------------------------------------------------
@@ -128,6 +125,8 @@ pub fn uninstall() -> Result<()> {
 // ---------------------------------------------------------------------------
 
 fn install_pre_tool_use_hook(doc: &mut DocumentMut, binary: &str) {
+    let profile = capability_profile(HostKind::Codex);
+    let self_tool_matcher = profile.self_tool_naming.hook_matcher();
     if doc.get("hooks").is_none() {
         doc["hooks"] = Item::Table(Table::new());
     }
@@ -144,8 +143,9 @@ fn install_pre_tool_use_hook(doc: &mut DocumentMut, binary: &str) {
 
     install_pre_tool_group(
         event_aot,
-        SO_CONTEXT_MCP_MATCHER,
+        &self_tool_matcher,
         make_pre_tool_handler(binary, "Tagging so-context call with session ID"),
+        binary,
     );
     for matcher in NATIVE_READ_MATCHERS {
         install_pre_tool_group(
@@ -155,6 +155,7 @@ fn install_pre_tool_use_hook(doc: &mut DocumentMut, binary: &str) {
                 binary,
                 "Native file read detected; routing to mcp__so-context__so_read",
             ),
+            binary,
         );
     }
     for matcher in NATIVE_SEARCH_MATCHERS {
@@ -165,6 +166,7 @@ fn install_pre_tool_use_hook(doc: &mut DocumentMut, binary: &str) {
                 binary,
                 "Native search detected; routing to mcp__so-context__so_search",
             ),
+            binary,
         );
     }
     for matcher in NATIVE_SHELL_MATCHERS {
@@ -175,11 +177,17 @@ fn install_pre_tool_use_hook(doc: &mut DocumentMut, binary: &str) {
                 binary,
                 "Short shell command detected; routing to mcp__so-context__so_shell",
             ),
+            binary,
         );
     }
 }
 
-fn install_pre_tool_group(event_aot: &mut toml_edit::ArrayOfTables, matcher: &str, handler: Table) {
+fn install_pre_tool_group(
+    event_aot: &mut toml_edit::ArrayOfTables,
+    matcher: &str,
+    handler: Table,
+    binary: &str,
+) {
     let group_idx = event_aot.iter().position(|group| {
         group
             .get("matcher")
@@ -194,7 +202,7 @@ fn install_pre_tool_group(event_aot: &mut toml_edit::ArrayOfTables, matcher: &st
             let to_remove: Vec<usize> = inner
                 .iter()
                 .enumerate()
-                .filter(|(_, h)| is_so_context_pre_tool_handler(h))
+                .filter(|(_, h)| is_so_context_pre_tool_handler(h, binary))
                 .map(|(i, _)| i)
                 .collect();
             for i in to_remove.into_iter().rev() {
@@ -215,111 +223,22 @@ fn install_pre_tool_group(event_aot: &mut toml_edit::ArrayOfTables, matcher: &st
 }
 
 fn make_pre_tool_handler(binary: &str, status_message: &str) -> Table {
+    let profile = capability_profile(HostKind::Codex);
     let mut handler = Table::new();
     handler["type"] = value("command");
-    handler["command"] = value(format!("{binary} hook pre-tool"));
+    handler["command"] = value(toml_hook_command(binary, HookEvent::PreTool, profile.kind));
     handler["statusMessage"] = value(status_message);
     handler
 }
 
-fn command_invokes_so_context_hook(command: &str, suffix: &str) -> bool {
-    let Some(binary) = command.strip_suffix(suffix) else {
-        return false;
-    };
-    Path::new(binary.trim_end())
-        .file_name()
-        .and_then(|name| name.to_str())
-        == Some("so-context")
-}
-
-fn is_legacy_so_context_hook(hook: &Table, hook_name: &str) -> bool {
-    let command_matches = hook
-        .get("command")
+fn is_so_context_pre_tool_handler(hook: &Table, binary: &str) -> bool {
+    hook.get("command")
         .and_then(|c| c.as_str())
         .map(|command| {
-            Path::new(command)
-                .file_name()
-                .and_then(|name| name.to_str())
-                == Some("so-context")
+            toml_hook_command_matches_binary_or_legacy(command, binary, HookEvent::PreTool)
         })
-        .unwrap_or(false);
-    let args_match = hook
-        .get("args")
-        .and_then(|a| a.as_array())
-        .map(|args| {
-            args.len() == 2
-                && args.get(0).and_then(|v| v.as_str()) == Some("hook")
-                && args.get(1).and_then(|v| v.as_str()) == Some(hook_name)
-        })
-        .unwrap_or(false);
-
-    command_matches && args_match
+        .unwrap_or(false)
 }
-
-fn is_so_context_pre_tool_handler(hook: &Table) -> bool {
-    let command_matches = hook
-        .get("command")
-        .and_then(|c| c.as_str())
-        .map(|command| command_invokes_so_context_hook(command, " hook pre-tool"))
-        .unwrap_or(false);
-
-    command_matches || is_legacy_so_context_hook(hook, "pre-tool")
-}
-
-fn remove_pre_tool_use_hook(doc: &mut DocumentMut) {
-    let hooks_table = match doc.get_mut("hooks").and_then(|v| v.as_table_mut()) {
-        Some(t) => t,
-        None => return,
-    };
-
-    let aot = match hooks_table
-        .get_mut("PreToolUse")
-        .and_then(|v| v.as_array_of_tables_mut())
-    {
-        Some(a) => a,
-        None => return,
-    };
-
-    let mut groups_to_remove = Vec::new();
-    for (idx, group) in aot.iter_mut().enumerate() {
-        let matches_group = group
-            .get("matcher")
-            .and_then(|m| m.as_str())
-            .map(|m| {
-                m == SO_CONTEXT_MCP_MATCHER
-                    || NATIVE_READ_MATCHERS.contains(&m)
-                    || NATIVE_SEARCH_MATCHERS.contains(&m)
-                    || NATIVE_SHELL_MATCHERS.contains(&m)
-            })
-            .unwrap_or(false);
-        if !matches_group {
-            continue;
-        }
-
-        if let Some(inner) = group["hooks"].as_array_of_tables_mut() {
-            let to_remove: Vec<usize> = inner
-                .iter()
-                .enumerate()
-                .filter(|(_, hook)| is_so_context_pre_tool_handler(hook))
-                .map(|(i, _)| i)
-                .collect();
-            for hook_idx in to_remove.into_iter().rev() {
-                inner.remove(hook_idx);
-            }
-            if inner.is_empty() {
-                groups_to_remove.push(idx);
-            }
-        }
-    }
-
-    for idx in groups_to_remove.into_iter().rev() {
-        aot.remove(idx);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// PostCompact hook
-// ---------------------------------------------------------------------------
 
 fn install_post_compact_hook(doc: &mut DocumentMut, binary: &str) {
     if doc.get("hooks").is_none() {
@@ -343,7 +262,9 @@ fn install_post_compact_hook(doc: &mut DocumentMut, binary: &str) {
         let Some(inner) = group["hooks"].as_array_of_tables_mut() else {
             continue;
         };
-        let had_so_context = inner.iter().any(is_so_context_post_compact_handler);
+        let had_so_context = inner
+            .iter()
+            .any(|hook| is_so_context_post_compact_handler(hook, binary));
         if !had_so_context {
             continue;
         }
@@ -354,7 +275,7 @@ fn install_post_compact_hook(doc: &mut DocumentMut, binary: &str) {
         let to_remove: Vec<usize> = inner
             .iter()
             .enumerate()
-            .filter(|(_, hook)| is_so_context_post_compact_handler(hook))
+            .filter(|(_, hook)| is_so_context_post_compact_handler(hook, binary))
             .map(|(i, _)| i)
             .collect();
         for hook_idx in to_remove.into_iter().rev() {
@@ -391,24 +312,81 @@ fn install_post_compact_hook(doc: &mut DocumentMut, binary: &str) {
 }
 
 fn make_post_compact_handler(binary: &str) -> Table {
+    let profile = capability_profile(HostKind::Codex);
     let mut handler = Table::new();
     handler["type"] = value("command");
-    handler["command"] = value(format!("{binary} hook post-compact"));
+    handler["command"] = value(toml_hook_command(
+        binary,
+        HookEvent::PostCompact,
+        profile.kind,
+    ));
     handler["statusMessage"] = value("Resetting so-context file cache after compaction");
     handler
 }
 
-fn is_so_context_post_compact_handler(hook: &Table) -> bool {
-    let command_matches = hook
-        .get("command")
+fn is_so_context_post_compact_handler(hook: &Table, binary: &str) -> bool {
+    hook.get("command")
         .and_then(|c| c.as_str())
-        .map(|command| command_invokes_so_context_hook(command, " hook post-compact"))
-        .unwrap_or(false);
-
-    command_matches || is_legacy_so_context_hook(hook, "post-compact")
+        .map(|command| {
+            toml_hook_command_matches_binary_or_legacy(command, binary, HookEvent::PostCompact)
+        })
+        .unwrap_or(false)
 }
 
-fn remove_post_compact_hook(doc: &mut DocumentMut) {
+fn remove_pre_tool_use_hook(doc: &mut DocumentMut, binary: &str) {
+    let profile = capability_profile(HostKind::Codex);
+    let self_tool_matcher = profile.self_tool_naming.hook_matcher();
+    let hooks_table = match doc.get_mut("hooks").and_then(|v| v.as_table_mut()) {
+        Some(t) => t,
+        None => return,
+    };
+
+    let aot = match hooks_table
+        .get_mut("PreToolUse")
+        .and_then(|v| v.as_array_of_tables_mut())
+    {
+        Some(a) => a,
+        None => return,
+    };
+
+    let mut groups_to_remove = Vec::new();
+    for (idx, group) in aot.iter_mut().enumerate() {
+        let matches_group = group
+            .get("matcher")
+            .and_then(|m| m.as_str())
+            .map(|m| {
+                m == self_tool_matcher
+                    || NATIVE_READ_MATCHERS.contains(&m)
+                    || NATIVE_SEARCH_MATCHERS.contains(&m)
+                    || NATIVE_SHELL_MATCHERS.contains(&m)
+            })
+            .unwrap_or(false);
+        if !matches_group {
+            continue;
+        }
+
+        if let Some(inner) = group["hooks"].as_array_of_tables_mut() {
+            let to_remove: Vec<usize> = inner
+                .iter()
+                .enumerate()
+                .filter(|(_, hook)| is_so_context_pre_tool_handler(hook, binary))
+                .map(|(i, _)| i)
+                .collect();
+            for hook_idx in to_remove.into_iter().rev() {
+                inner.remove(hook_idx);
+            }
+            if inner.is_empty() {
+                groups_to_remove.push(idx);
+            }
+        }
+    }
+
+    for idx in groups_to_remove.into_iter().rev() {
+        aot.remove(idx);
+    }
+}
+
+fn remove_post_compact_hook(doc: &mut DocumentMut, binary: &str) {
     let hooks_table = match doc.get_mut("hooks").and_then(|v| v.as_table_mut()) {
         Some(t) => t,
         None => return,
@@ -428,7 +406,7 @@ fn remove_post_compact_hook(doc: &mut DocumentMut) {
             let to_remove: Vec<usize> = inner
                 .iter()
                 .enumerate()
-                .filter(|(_, hook)| is_so_context_post_compact_handler(hook))
+                .filter(|(_, hook)| is_so_context_post_compact_handler(hook, binary))
                 .map(|(i, _)| i)
                 .collect();
             for hook_idx in to_remove.into_iter().rev() {

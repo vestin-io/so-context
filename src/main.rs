@@ -12,7 +12,9 @@ mod daemon;
 #[path = "core/file_visit_cache.rs"]
 pub mod file_visit_cache;
 mod hook;
+mod host_adapter;
 mod mcp;
+mod routing_session;
 
 mod setup;
 mod shell;
@@ -24,6 +26,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use core_metrics::{MetricsWindow, render_metrics_text};
 use daemon::Daemon;
+use host_adapter::HostKind;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -64,26 +67,49 @@ enum MetricsFormatArg {
 
 #[derive(Subcommand, Debug)]
 enum HookCommands {
-    /// PreToolUse hook handler for agent CLIs (Claude Code, Codex).
+    /// PreToolUse hook handler for supported agent hosts.
     ///
     /// Reads the hook JSON from stdin. For so-context MCP tools it injects
     /// `_so_session_id`. For selected native read and short, one-shot native
-    /// shell calls it blocks the tool call and tells the agent to retry with
-    /// `mcp__so-context__so_read` or `mcp__so-context__so_shell`.
+    /// shell calls it blocks the tool call and tells the host to retry with
+    /// the host-specific so-context read/search/shell tool names.
     /// Exit 0 with no output for everything else (agent continues normally).
     ///
-    /// Register as a PreToolUse hook with matchers `"mcp__so-context__.*"`
-    /// plus the read/shell-tool aliases this agent exposes (for example
-    /// `"Read"`, `"View"`, `"Bash"`, or `"runTerminalCommand"`).
-    PreTool,
-    /// PostCompact hook handler for Claude Code.
+    /// Register this on the host's pre-tool interception surface with the
+    /// so-context self-tool matcher plus the native read/search/shell aliases
+    /// that host exposes.
+    PreTool {
+        #[arg(long, value_enum)]
+        host: Option<HookHostArg>,
+    },
+    /// PostCompact / compact-reset hook handler for supported agent hosts.
     ///
-    /// Reads the PostCompact hook JSON from stdin and tells the running daemon
+    /// Reads the host compact payload from stdin and tells the running daemon
     /// to reset file-visit cache entries for the compacted session, so the
     /// agent receives full file content again after compaction.
     ///
-    /// Register as a PostCompact hook (no matcher needed).
-    PostCompact,
+    /// Register this on the host's compact/reset lifecycle surface.
+    PostCompact {
+        #[arg(long, value_enum)]
+        host: Option<HookHostArg>,
+    },
+}
+
+#[derive(Copy, Clone, Debug, ValueEnum)]
+enum HookHostArg {
+    Claude,
+    Codex,
+    Opencode,
+}
+
+impl From<HookHostArg> for HostKind {
+    fn from(value: HookHostArg) -> Self {
+        match value {
+            HookHostArg::Claude => HostKind::Claude,
+            HookHostArg::Codex => HostKind::Codex,
+            HookHostArg::Opencode => HostKind::OpenCode,
+        }
+    }
 }
 
 #[derive(Subcommand, Debug)]
@@ -103,7 +129,7 @@ enum Commands {
     /// Connects to the running daemon and forwards MCP messages over stdio.
     /// This is the command to register in Claude / OpenCode / Codex configs.
     Mcp,
-    /// Hook handlers for agent CLIs (Claude Code, Codex).
+    /// Hook handlers for supported agent hosts.
     ///
     /// Use `hook pre-tool` or `hook post-compact` depending on the event.
     Hook {
@@ -197,8 +223,15 @@ async fn main() -> Result<()> {
         Commands::Update => update::update_current_binary().await,
         Commands::Mcp => mcp::run_mcp_bridge().await,
         Commands::Hook { event } => match event {
-            HookCommands::PreTool => hook::run_pre_tool_use_hook(),
-            HookCommands::PostCompact => hook::run_post_compact_hook().await,
+            HookCommands::PreTool { host } => hook::run_pre_tool_use_hook_for_host(
+                host.map(Into::into).unwrap_or(HostKind::Unknown),
+            ),
+            HookCommands::PostCompact { host } => {
+                hook::run_post_compact_hook_for_host(
+                    host.map(Into::into).unwrap_or(HostKind::Unknown),
+                )
+                .await
+            }
         },
         Commands::Index { path, watch } => {
             if watch {

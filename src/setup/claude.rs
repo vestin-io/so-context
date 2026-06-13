@@ -13,46 +13,25 @@
 //! projects are registered on `initialize` and unwatched on connection close.
 //! No SessionStart/SessionEnd hooks are needed.
 
+use super::hook_binding::{HookEvent, json_hook_args, json_hook_value_matches_binary_or_legacy};
 use super::instructions;
 use anyhow::{Context, Result};
 use serde_json::{Map, Value, json};
 use std::fs;
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+use crate::host_adapter::{HostKind, capability_profile};
+use crate::routing_session::{NATIVE_READ_TOOL_NAMES, NATIVE_SEARCH_TOOL_NAMES};
+use crate::shell::NATIVE_SHELL_TOOL_NAMES;
 
 const SERVER_NAME: &str = "so-context";
-const SO_CONTEXT_MCP_MATCHER: &str = "mcp__so-context__.*";
-const NATIVE_READ_MATCHERS: &[&str] = &["Read", "read", "View", "view", "read_file"];
-const NATIVE_SEARCH_MATCHERS: &[&str] = &[
-    "Grep",
-    "grep",
-    "rg",
-    "ripgrep",
-    "SearchFiles",
-    "search_files",
-];
-const NATIVE_SHELL_MATCHERS: &[&str] = &[
-    "Bash",
-    "bash",
-    "Shell",
-    "shell",
-    "runTerminalCommand",
-    "runInTerminal",
-    "run_in_terminal",
-    "terminal",
-    "shell_command",
-    "exec_command",
-    "local_shell",
-    "run_shell_command",
-];
+const NATIVE_READ_MATCHERS: &[&str] = NATIVE_READ_TOOL_NAMES;
+const NATIVE_SEARCH_MATCHERS: &[&str] = NATIVE_SEARCH_TOOL_NAMES;
+const NATIVE_SHELL_MATCHERS: &[&str] = NATIVE_SHELL_TOOL_NAMES;
 
-fn config_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_default();
-    PathBuf::from(home).join(".claude").join("settings.json")
-}
-
-pub fn install(binary: &str) -> Result<()> {
-    let path = config_path();
+pub(crate) fn install_into_home(home: &Path, binary: &str) -> Result<()> {
+    let profile = capability_profile(HostKind::Claude);
+    let path = config_path_for(home);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("create dir {}", parent.display()))?;
     }
@@ -84,15 +63,23 @@ pub fn install(binary: &str) -> Result<()> {
 
     let text = serde_json::to_string_pretty(&root)?;
     fs::write(&path, text).with_context(|| format!("write {}", path.display()))?;
-    instructions::install_claude_instructions(&instructions::home_dir())?;
-    println!("Claude: wrote MCP + hooks to {}", path.display());
+    instructions::install_claude_instructions(home)?;
+    println!(
+        "{}: wrote MCP + hooks to {}",
+        profile.display_name,
+        path.display()
+    );
     Ok(())
 }
 
-pub fn uninstall(binary: &str) -> Result<()> {
-    let path = config_path();
+pub(crate) fn uninstall_from_home(home: &Path, binary: &str) -> Result<()> {
+    let profile = capability_profile(HostKind::Claude);
+    let path = config_path_for(home);
     if !path.exists() {
-        println!("Claude: config not found, nothing to remove");
+        println!(
+            "{}: config not found, nothing to remove",
+            profile.display_name
+        );
         return Ok(());
     }
 
@@ -113,9 +100,17 @@ pub fn uninstall(binary: &str) -> Result<()> {
 
     let text = serde_json::to_string_pretty(&root)?;
     fs::write(&path, text).with_context(|| format!("write {}", path.display()))?;
-    instructions::uninstall_claude_instructions(&instructions::home_dir())?;
-    println!("Claude: removed MCP + hooks from {}", path.display());
+    instructions::uninstall_claude_instructions(home)?;
+    println!(
+        "{}: removed MCP + hooks from {}",
+        profile.display_name,
+        path.display()
+    );
     Ok(())
+}
+
+fn config_path_for(home: &Path) -> PathBuf {
+    home.join(".claude").join("settings.json")
 }
 
 // ---------------------------------------------------------------------------
@@ -123,6 +118,8 @@ pub fn uninstall(binary: &str) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 fn install_pre_tool_use_hook(root: &mut Map<String, Value>, binary: &str) {
+    let profile = capability_profile(HostKind::Claude);
+    let self_tool_matcher = profile.self_tool_naming.hook_matcher();
     let hooks_obj = root
         .entry("hooks")
         .or_insert(json!({}))
@@ -137,7 +134,7 @@ fn install_pre_tool_use_hook(root: &mut Map<String, Value>, binary: &str) {
 
     install_pre_tool_group(
         event_arr,
-        SO_CONTEXT_MCP_MATCHER,
+        &self_tool_matcher,
         make_pre_tool_handler(binary, "Tagging so-context call with session ID"),
     );
     for matcher in NATIVE_READ_MATCHERS {
@@ -172,7 +169,9 @@ fn install_pre_tool_use_hook(root: &mut Map<String, Value>, binary: &str) {
     }
 }
 
-fn remove_pre_tool_use_hook(root: &mut Map<String, Value>, _binary: &str) {
+fn remove_pre_tool_use_hook(root: &mut Map<String, Value>, binary: &str) {
+    let profile = capability_profile(HostKind::Claude);
+    let self_tool_matcher = profile.self_tool_naming.hook_matcher();
     let arr = match root
         .get_mut("hooks")
         .and_then(|h| h.as_object_mut())
@@ -189,7 +188,7 @@ fn remove_pre_tool_use_hook(root: &mut Map<String, Value>, _binary: &str) {
             .get("matcher")
             .and_then(|m| m.as_str())
             .map(|m| {
-                m == SO_CONTEXT_MCP_MATCHER
+                m == self_tool_matcher
                     || NATIVE_READ_MATCHERS.contains(&m)
                     || NATIVE_SEARCH_MATCHERS.contains(&m)
                     || NATIVE_SHELL_MATCHERS.contains(&m)
@@ -200,7 +199,7 @@ fn remove_pre_tool_use_hook(root: &mut Map<String, Value>, _binary: &str) {
         }
 
         if let Some(hooks) = group.get_mut("hooks").and_then(|h| h.as_array_mut()) {
-            hooks.retain(|hook| !is_so_context_hook_value(hook, "pre-tool"));
+            hooks.retain(|hook| !is_so_context_hook_value(hook, binary, "pre-tool"));
             if hooks.is_empty() {
                 empty_groups.push(idx);
             }
@@ -226,7 +225,12 @@ fn install_pre_tool_group(event_arr: &mut Vec<Value>, matcher: &str, new_hook: V
             .and_then(|g| g.get_mut("hooks"))
             .and_then(|h| h.as_array_mut())
         {
-            inner.retain(|h| !is_so_context_hook_value(h, "pre-tool"));
+            let binary = new_hook
+                .get("command")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default()
+                .to_string();
+            inner.retain(|h| !is_so_context_hook_value(h, &binary, "pre-tool"));
             inner.push(new_hook);
         }
     } else {
@@ -237,35 +241,23 @@ fn install_pre_tool_group(event_arr: &mut Vec<Value>, matcher: &str, new_hook: V
     }
 }
 
-fn is_so_context_hook_value(hook: &Value, hook_name: &str) -> bool {
-    let command_matches = hook
-        .get("command")
-        .and_then(|c| c.as_str())
-        .map(|command| {
-            Path::new(command)
-                .file_name()
-                .and_then(|name| name.to_str())
-                == Some("so-context")
-        })
-        .unwrap_or(false);
-    let args_match = hook
-        .get("args")
-        .and_then(|a| a.as_array())
-        .map(|args| {
-            args.len() == 2
-                && args.first().and_then(|v| v.as_str()) == Some("hook")
-                && args.get(1).and_then(|v| v.as_str()) == Some(hook_name)
-        })
-        .unwrap_or(false);
-
-    command_matches && args_match
+fn is_so_context_hook_value(hook: &Value, binary: &str, hook_name: &str) -> bool {
+    match hook_name {
+        "pre-tool" => json_hook_value_matches_binary_or_legacy(hook, binary, HookEvent::PreTool),
+        "post-compact" => {
+            json_hook_value_matches_binary_or_legacy(hook, binary, HookEvent::PostCompact)
+        }
+        _ => false,
+    }
 }
 
 fn make_pre_tool_handler(binary: &str, status_message: &str) -> Value {
+    let profile = capability_profile(HostKind::Claude);
+
     json!({
         "type": "command",
         "command": binary,
-        "args": ["hook", "pre-tool"],
+        "args": json_hook_args(HookEvent::PreTool, profile.kind),
         "statusMessage": status_message
     })
 }
@@ -275,10 +267,11 @@ fn make_pre_tool_handler(binary: &str, status_message: &str) -> Value {
 // ---------------------------------------------------------------------------
 
 fn install_post_compact_hook(root: &mut Map<String, Value>, binary: &str) {
+    let profile = capability_profile(HostKind::Claude);
     let new_hook = json!({
         "type": "command",
         "command": binary,
-        "args": ["hook", "post-compact"],
+        "args": json_hook_args(HookEvent::PostCompact, profile.kind),
         "statusMessage": "Resetting so-context file cache after compaction"
     });
 
@@ -294,51 +287,53 @@ fn install_post_compact_hook(root: &mut Map<String, Value>, binary: &str) {
         .as_array_mut()
         .unwrap();
 
-    // There's only one group for PostCompact (no matcher filter needed).
-    // Find existing group that contains our binary and update it; otherwise append.
-    let pos = event_arr.iter().position(|g| {
-        g.get("hooks")
-            .and_then(|h| h.as_array())
-            .map(|hooks| {
-                hooks.iter().any(|h| {
-                    h.get("command")
-                        .and_then(|c| c.as_str())
-                        .map(|c| c == binary)
-                        .unwrap_or(false)
-                        && h.get("args")
-                            .and_then(|a| a.as_array())
-                            .map(|a| a.iter().any(|v| v.as_str() == Some("post-compact")))
-                            .unwrap_or(false)
-                })
-            })
-            .unwrap_or(false)
-    });
+    let mut target_group_idx: Option<usize> = None;
+    let mut groups_to_remove = Vec::new();
 
-    if let Some(idx) = pos {
-        // Replace to pick up any args change.
-        if let Some(inner) = event_arr[idx]
+    for (idx, group) in event_arr.iter_mut().enumerate() {
+        let Some(inner) = group
             .as_object_mut()
             .and_then(|g| g.get_mut("hooks"))
             .and_then(|h| h.as_array_mut())
-        {
-            inner.retain(|h| {
-                !(h.get("command")
-                    .and_then(|c| c.as_str())
-                    .map(|c| c == binary)
-                    .unwrap_or(false)
-                    && h.get("args")
-                        .and_then(|a| a.as_array())
-                        .map(|a| a.iter().any(|v| v.as_str() == Some("post-compact")))
-                        .unwrap_or(false))
-            });
-            inner.push(new_hook);
+        else {
+            continue;
+        };
+
+        let had_so_context = inner
+            .iter()
+            .any(|hook| is_so_context_hook_value(hook, binary, "post-compact"));
+        if !had_so_context {
+            continue;
         }
-    } else {
-        event_arr.push(json!({ "hooks": [new_hook] }));
+        if target_group_idx.is_none() {
+            target_group_idx = Some(idx);
+        }
+
+        inner.retain(|hook| !is_so_context_hook_value(hook, binary, "post-compact"));
+        if inner.is_empty() && Some(idx) != target_group_idx {
+            groups_to_remove.push(idx);
+        }
+    }
+
+    match target_group_idx {
+        Some(idx) => {
+            if let Some(inner) = event_arr[idx]
+                .as_object_mut()
+                .and_then(|g| g.get_mut("hooks"))
+                .and_then(|h| h.as_array_mut())
+            {
+                inner.push(new_hook);
+            }
+        }
+        None => event_arr.push(json!({ "hooks": [new_hook] })),
+    }
+
+    for idx in groups_to_remove.into_iter().rev() {
+        event_arr.remove(idx);
     }
 }
 
-fn remove_post_compact_hook(root: &mut Map<String, Value>, _binary: &str) {
+fn remove_post_compact_hook(root: &mut Map<String, Value>, binary: &str) {
     let arr = match root
         .get_mut("hooks")
         .and_then(|h| h.as_object_mut())
@@ -352,7 +347,7 @@ fn remove_post_compact_hook(root: &mut Map<String, Value>, _binary: &str) {
     let mut empty_groups = Vec::new();
     for (idx, group) in arr.iter_mut().enumerate() {
         if let Some(hooks) = group.get_mut("hooks").and_then(|h| h.as_array_mut()) {
-            hooks.retain(|hook| !is_so_context_hook_value(hook, "post-compact"));
+            hooks.retain(|hook| !is_so_context_hook_value(hook, binary, "post-compact"));
             if hooks.is_empty() {
                 empty_groups.push(idx);
             }

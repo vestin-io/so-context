@@ -1,5 +1,3 @@
-use serde_json::{Value, json};
-
 pub const NATIVE_SHELL_TOOL_NAMES: &[&str] = &[
     "Bash",
     "bash",
@@ -39,26 +37,6 @@ pub fn should_prefer_so_shell(argv: &[String]) -> bool {
     let args = &argv[program_index + 1..];
 
     !should_keep_native_shell(base_program_name(program), args)
-}
-
-pub fn native_shell_policy_json() -> Value {
-    json!({
-        "shell_tool_names": NATIVE_SHELL_TOOL_NAMES,
-        "follow_flags": FOLLOW_FLAGS,
-        "always_keep_native_programs": ALWAYS_KEEP_NATIVE_PROGRAMS,
-        "docker_keep_native_subcommands": DOCKER_KEEP_NATIVE_SUBCOMMANDS,
-        "docker_compose_keep_native_subcommands": DOCKER_COMPOSE_KEEP_NATIVE_SUBCOMMANDS,
-        "kubectl_keep_native_subcommands": KUBECTL_KEEP_NATIVE_SUBCOMMANDS,
-        "cargo_keep_native_subcommands": CARGO_KEEP_NATIVE_SUBCOMMANDS,
-        "js_runner_keep_native_subcommands": JS_RUNNER_KEEP_NATIVE_SUBCOMMANDS,
-        "js_runner_keep_native_run_subcommands": JS_RUNNER_KEEP_NATIVE_RUN_SUBCOMMANDS,
-        "python_interactive_flags": PYTHON_INTERACTIVE_FLAGS,
-        "python_keep_native_modules": PYTHON_KEEP_NATIVE_MODULES,
-        "python_keep_native_scripts": {
-            "manage.py": ["runserver"],
-        },
-        "node_keep_native_flags": NODE_KEEP_NATIVE_FLAGS,
-    })
 }
 
 fn should_keep_native_shell(program: &str, args: &[String]) -> bool {

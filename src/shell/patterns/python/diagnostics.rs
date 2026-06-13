@@ -323,12 +323,12 @@ fn parse_mypy_issues(lines: &[String]) -> (Vec<String>, Vec<MypyIssue>) {
                 .unwrap_or_default();
 
             if severity == "note" {
-                if let Some(last) = issues.last_mut() {
-                    if last.file == file {
-                        last.notes.push(message);
-                        index += 1;
-                        continue;
-                    }
+                if let Some(last) = issues.last_mut()
+                    && last.file == file
+                {
+                    last.notes.push(message);
+                    index += 1;
+                    continue;
                 }
                 fileless.push(line.clone());
                 index += 1;
@@ -344,19 +344,18 @@ fn parse_mypy_issues(lines: &[String]) -> (Vec<String>, Vec<MypyIssue>) {
             };
             index += 1;
             while index < lines.len() {
-                if let Some(note_caps) = regex.captures(&lines[index]) {
-                    if note_caps.get(3).map(|value| value.as_str()) == Some("note")
-                        && note_caps.get(1).map(|value| value.as_str()) == Some(issue.file.as_str())
-                    {
-                        issue.notes.push(
-                            note_caps
-                                .get(4)
-                                .map(|value| value.as_str().to_string())
-                                .unwrap_or_default(),
-                        );
-                        index += 1;
-                        continue;
-                    }
+                if let Some(note_caps) = regex.captures(&lines[index])
+                    && note_caps.get(3).map(|value| value.as_str()) == Some("note")
+                    && note_caps.get(1).map(|value| value.as_str()) == Some(issue.file.as_str())
+                {
+                    issue.notes.push(
+                        note_caps
+                            .get(4)
+                            .map(|value| value.as_str().to_string())
+                            .unwrap_or_default(),
+                    );
+                    index += 1;
+                    continue;
                 }
                 break;
             }

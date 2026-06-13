@@ -1,7 +1,5 @@
-use std::collections::HashSet;
-use std::path::Path;
-
 use rusqlite::{OptionalExtension, params};
+use std::collections::HashSet;
 
 use super::db::GraphDb;
 
@@ -285,11 +283,7 @@ impl GraphDb {
     pub fn query_file_outline(&self, file_path: &str) -> Result<Option<FileOutline>, String> {
         let rel_path = {
             let root = self.project_root.to_string_lossy();
-            let abs = if Path::new(file_path).is_absolute() {
-                file_path.to_string()
-            } else {
-                file_path.to_string()
-            };
+            let abs = file_path.to_string();
             if abs.starts_with(root.as_ref()) {
                 abs[root.len()..].trim_start_matches('/').to_string()
             } else {

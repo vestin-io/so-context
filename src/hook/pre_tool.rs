@@ -1,287 +1,56 @@
 use anyhow::Result;
 use serde_json::{Value, json};
 
-use crate::shell::{
-    NATIVE_SHELL_TOOL_NAMES, parse_simple_shell_command, rewrite_env_prefix, should_prefer_so_shell,
-};
+use crate::host_adapter::{HostKind, adapter_for_host};
+use crate::routing_session::{RoutingDecision, RoutingService, SessionService};
 
-const SO_CONTEXT_TOOL_PREFIX: &str = "mcp__so-context__";
 const PRE_TOOL_USE_EVENT: &str = "PreToolUse";
-const NATIVE_READ_TOOL_NAMES: &[&str] = &["Read", "read", "View", "view", "read_file"];
-const NATIVE_SEARCH_TOOL_NAMES: &[&str] = &[
-    "Grep",
-    "grep",
-    "rg",
-    "ripgrep",
-    "SearchFiles",
-    "search_files",
-];
-const SIMPLE_NATIVE_SEARCH_KEYS: &[&str] =
-    &["query", "pattern", "path", "directory", "root", "limit"];
 
-pub fn run_pre_tool_use_hook() -> Result<()> {
+pub fn run_pre_tool_use_hook_for_host(host_kind: HostKind) -> Result<()> {
     let input: Value = serde_json::from_reader(std::io::stdin()).unwrap_or(Value::Null);
 
-    if let Some(output) = run_pre_tool_use_hook_value(&input) {
+    if let Some(output) = evaluate_pre_tool_hook_for_host(host_kind, &input) {
         println!("{output}");
     }
 
     Ok(())
 }
 
+#[cfg(test)]
 fn run_pre_tool_use_hook_value(input: &Value) -> Option<Value> {
-    let tool_name = input
-        .get("tool_name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-
-    if tool_name.starts_with(SO_CONTEXT_TOOL_PREFIX) {
-        return inject_session_id(input);
-    }
-
-    if NATIVE_SHELL_TOOL_NAMES.contains(&tool_name) {
-        return deny_native_shell_if_needed(input);
-    }
-
-    if NATIVE_READ_TOOL_NAMES.contains(&tool_name) {
-        return deny_native_read_if_needed(input);
-    }
-
-    if NATIVE_SEARCH_TOOL_NAMES.contains(&tool_name) {
-        return deny_native_search_if_needed(input);
-    }
-
-    None
+    evaluate_pre_tool_hook_for_host(HostKind::Unknown, input)
 }
 
-fn inject_session_id(input: &Value) -> Option<Value> {
-    let context_id = input
-        .get("session_id")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            input
-                .get("agent_id")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())
-        })?;
-
-    let mut tool_input = input
-        .get("tool_input")
-        .and_then(|v| v.as_object())
-        .cloned()
-        .unwrap_or_default();
-
-    tool_input.insert(
-        "_so_session_id".to_string(),
-        Value::String(context_id.to_string()),
-    );
-
-    Some(json!({
-        "hookSpecificOutput": {
-            "hookEventName": PRE_TOOL_USE_EVENT,
-            "permissionDecision": "allow",
-            "updatedInput": tool_input,
-        }
-    }))
+#[cfg(test)]
+pub(crate) fn run_pre_tool_use_hook_value_for_test(
+    host_kind: HostKind,
+    input: &Value,
+) -> Option<Value> {
+    evaluate_pre_tool_hook_for_host(host_kind, input)
 }
 
-fn deny_native_shell_if_needed(input: &Value) -> Option<Value> {
-    let command = if let Some(command) = input
-        .pointer("/tool_input/command")
-        .and_then(|value| value.as_str())
-    {
-        command
-    } else {
-        input
-            .pointer("/tool_input/cmd")
-            .and_then(|value| value.as_str())?
-    };
+pub(crate) fn evaluate_pre_tool_hook_for_host(host_kind: HostKind, input: &Value) -> Option<Value> {
+    let adapter = adapter_for_host(host_kind);
+    let session_service = SessionService::new();
+    let request = adapter.normalize_pre_tool_call(&session_service, input);
 
-    let command = command.trim();
-    if command.is_empty() {
-        return None;
-    }
-
-    let argv = parse_simple_shell_command(command)?;
-    let inspected_argv = rewrite_env_prefix(argv);
-    if !should_prefer_so_shell(&inspected_argv) {
-        return None;
-    }
-
-    let reason = format!(
-        "I routed this short shell command through our context-aware `mcp__so-context__so_shell` tool to improve shared project context for the next steps. This is expected, not an error. Retry with `argv: {}`. Keep the native shell only for long-running, streaming, or interactive commands.",
-        serde_json::to_string(&inspected_argv).unwrap_or_else(|_| "[]".to_string())
-    );
-
-    Some(json!({
-        "hookSpecificOutput": {
-            "hookEventName": PRE_TOOL_USE_EVENT,
-            "permissionDecision": "deny",
-            "permissionDecisionReason": reason,
-        }
-    }))
-}
-
-fn deny_native_read_if_needed(input: &Value) -> Option<Value> {
-    let retry = preferred_so_read_args(input)?;
-    let reason = format!(
-        "I routed this native file read through `mcp__so-context__so_read` so the file content stays attributable and reusable in shared project context. This is expected, not an error. Retry with arguments: {}. Use `mode: \"outline\"` when you only need structure instead of full file text.",
-        retry
-    );
-
-    Some(json!({
-        "hookSpecificOutput": {
-            "hookEventName": PRE_TOOL_USE_EVENT,
-            "permissionDecision": "deny",
-            "permissionDecisionReason": reason,
-        }
-    }))
-}
-
-fn preferred_so_read_args(input: &Value) -> Option<Value> {
-    let tool_input = input.get("tool_input")?.as_object()?;
-    let path = tool_input
-        .get("path")
-        .and_then(|value| value.as_str())
-        .or_else(|| tool_input.get("file_path").and_then(|value| value.as_str()))?
-        .trim();
-    if path.is_empty() {
-        return None;
-    }
-
-    let mut retry = serde_json::Map::new();
-    retry.insert("path".to_string(), Value::String(path.to_string()));
-
-    if let Some(mode) = tool_input
-        .get("mode")
-        .and_then(|value| value.as_str())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        retry.insert("mode".to_string(), Value::String(mode.to_string()));
-    }
-
-    let mut has_excerpt = false;
-    if let Some(start_line) = tool_input
-        .get("start_line")
-        .and_then(|value| value.as_u64())
-        .filter(|value| *value > 0)
-    {
-        retry.insert("start_line".to_string(), Value::Number(start_line.into()));
-        has_excerpt = true;
-    }
-    if let Some(end_line) = tool_input
-        .get("end_line")
-        .and_then(|value| value.as_u64())
-        .filter(|value| *value > 0)
-    {
-        retry.insert("end_line".to_string(), Value::Number(end_line.into()));
-        has_excerpt = true;
-    }
-    if let Some(line_numbers) = tool_input
-        .get("line_numbers")
-        .and_then(|value| value.as_bool())
-    {
-        retry.insert("line_numbers".to_string(), Value::Bool(line_numbers));
-        has_excerpt = true;
-    }
-
-    if !retry.contains_key("mode") && !has_excerpt {
-        retry.insert("mode".to_string(), Value::String("full".to_string()));
-    }
-
-    Some(Value::Object(retry))
-}
-
-fn deny_native_search_if_needed(input: &Value) -> Option<Value> {
-    let retry = preferred_so_search_args(input)?;
-
-    let reason = format!(
-        "I routed this native search through `mcp__so-context__so_search` so the hits stay attributable and reusable in shared project context. This is expected, not an error. Retry with arguments: {}. Keep native grep-style tools only when you need raw grep semantics or the project is not indexed.",
-        Value::Object(retry)
-    );
-
-    Some(json!({
-        "hookSpecificOutput": {
-            "hookEventName": PRE_TOOL_USE_EVENT,
-            "permissionDecision": "deny",
-            "permissionDecisionReason": reason,
-        }
-    }))
-}
-
-fn preferred_so_search_args(input: &Value) -> Option<serde_json::Map<String, Value>> {
-    let tool_input = input.get("tool_input")?.as_object()?;
-    let query = tool_input
-        .get("query")
-        .and_then(|value| value.as_str())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .and_then(|value| {
-            if !uses_only_allowed_search_keys(tool_input) || !is_simple_literal_search_query(value)
-            {
-                return None;
+    match RoutingService::new().evaluate_tool_call(&request) {
+        RoutingDecision::PassThrough => None,
+        RoutingDecision::EnrichInput(updated_input) => Some(json!({
+            "hookSpecificOutput": {
+                "hookEventName": PRE_TOOL_USE_EVENT,
+                "permissionDecision": "allow",
+                "updatedInput": updated_input,
             }
-            Some(value.to_string())
-        })
-        .or_else(|| {
-            if tool_input.contains_key("regex") || tool_input.contains_key("regexp") {
-                return None;
+        })),
+        RoutingDecision::Deny { retry } => Some(json!({
+            "hookSpecificOutput": {
+                "hookEventName": PRE_TOOL_USE_EVENT,
+                "permissionDecision": "deny",
+                "permissionDecisionReason": retry.render_reason(request.host_kind),
             }
-
-            let pattern = tool_input
-                .get("pattern")
-                .and_then(|value| value.as_str())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())?;
-            if !uses_only_allowed_search_keys(tool_input)
-                || !is_simple_literal_search_query(pattern)
-            {
-                return None;
-            }
-
-            Some(pattern.to_string())
-        })?;
-
-    let path = tool_input
-        .get("path")
-        .and_then(|value| value.as_str())
-        .or_else(|| tool_input.get("directory").and_then(|value| value.as_str()))
-        .or_else(|| tool_input.get("root").and_then(|value| value.as_str()))
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-
-    let mut retry = serde_json::Map::new();
-    retry.insert("query".to_string(), Value::String(query));
-    if let Some(path) = path {
-        retry.insert("path".to_string(), Value::String(path.to_string()));
+        })),
     }
-    if let Some(limit) = tool_input
-        .get("limit")
-        .and_then(|value| value.as_u64())
-        .filter(|value| *value > 0)
-    {
-        retry.insert("limit".to_string(), Value::Number(limit.into()));
-    }
-
-    Some(retry)
-}
-
-fn uses_only_allowed_search_keys(tool_input: &serde_json::Map<String, Value>) -> bool {
-    tool_input
-        .keys()
-        .all(|key| SIMPLE_NATIVE_SEARCH_KEYS.contains(&key.as_str()))
-}
-
-fn is_simple_literal_search_query(query: &str) -> bool {
-    !query.is_empty()
-        && !query.chars().any(|ch| {
-            matches!(
-                ch,
-                '\\' | '^' | '$' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '|'
-            )
-        })
 }
 
 #[cfg(test)]

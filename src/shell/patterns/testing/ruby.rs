@@ -10,88 +10,82 @@ use super::presentation::{FailureRecord, TestPresentation};
 
 pub(super) fn summarize_rspec(result: &ShellResult) -> TestPresentation {
     let output = strip_rspec_noise(&strip_ansi(&preferred_output(result)));
-    if let Some(json) = extract_json_object(&output) {
-        if let Ok(parsed) = serde_json::from_str::<RspecOutput>(json) {
-            if parsed.summary.example_count == 0
-                && parsed.summary.errors_outside_of_examples_count == 0
-            {
-                return TestPresentation {
-                    summary: "RSpec: no examples found".to_string(),
-                    failures: Vec::new(),
-                    duration_ms: Some((parsed.summary.duration * 1000.0) as u64),
-                };
-            }
-
-            if parsed.summary.example_count == 0
-                && parsed.summary.errors_outside_of_examples_count > 0
-            {
-                return TestPresentation {
-                    summary: format_test_totals(
-                        0,
-                        parsed.summary.errors_outside_of_examples_count,
-                        0,
-                    ),
-                    failures: vec![FailureRecord {
-                        name: "RSpec errors outside of examples".to_string(),
-                        message_lines: vec![format!(
-                            "{} loader/runtime {} prevented specs from running",
-                            parsed.summary.errors_outside_of_examples_count,
-                            noun(
-                                parsed.summary.errors_outside_of_examples_count,
-                                "error",
-                                "errors"
-                            )
-                        )],
-                    }],
-                    duration_ms: Some((parsed.summary.duration * 1000.0) as u64),
-                };
-            }
-
-            let failures = parsed
-                .examples
-                .iter()
-                .filter(|example| example.status == "failed")
-                .map(|example| {
-                    let mut message_lines =
-                        vec![format!("{}:{}", example.file_path, example.line_number)];
-                    if let Some(exception) = &example.exception {
-                        let short_class = exception
-                            .class
-                            .split("::")
-                            .last()
-                            .unwrap_or(&exception.class);
-                        let first_line = exception.message.lines().next().unwrap_or_default();
-                        message_lines.push(format!("{short_class}: {first_line}"));
-                        if let Some(backtrace) = exception
-                            .backtrace
-                            .iter()
-                            .map(|line| line.trim())
-                            .find(|line| !is_gem_backtrace(line))
-                        {
-                            message_lines.push(backtrace.to_string());
-                        }
-                    }
-                    FailureRecord {
-                        name: example.full_description.clone(),
-                        message_lines,
-                    }
-                })
-                .collect();
-            let passed = parsed
-                .summary
-                .example_count
-                .saturating_sub(parsed.summary.failure_count + parsed.summary.pending_count);
-
+    if let Some(json) = extract_json_object(&output)
+        && let Ok(parsed) = serde_json::from_str::<RspecOutput>(json)
+    {
+        if parsed.summary.example_count == 0 && parsed.summary.errors_outside_of_examples_count == 0
+        {
             return TestPresentation {
-                summary: format_test_totals(
-                    passed,
-                    parsed.summary.failure_count,
-                    parsed.summary.pending_count,
-                ),
-                failures,
+                summary: "RSpec: no examples found".to_string(),
+                failures: Vec::new(),
                 duration_ms: Some((parsed.summary.duration * 1000.0) as u64),
             };
         }
+
+        if parsed.summary.example_count == 0 && parsed.summary.errors_outside_of_examples_count > 0
+        {
+            return TestPresentation {
+                summary: format_test_totals(0, parsed.summary.errors_outside_of_examples_count, 0),
+                failures: vec![FailureRecord {
+                    name: "RSpec errors outside of examples".to_string(),
+                    message_lines: vec![format!(
+                        "{} loader/runtime {} prevented specs from running",
+                        parsed.summary.errors_outside_of_examples_count,
+                        noun(
+                            parsed.summary.errors_outside_of_examples_count,
+                            "error",
+                            "errors"
+                        )
+                    )],
+                }],
+                duration_ms: Some((parsed.summary.duration * 1000.0) as u64),
+            };
+        }
+
+        let failures = parsed
+            .examples
+            .iter()
+            .filter(|example| example.status == "failed")
+            .map(|example| {
+                let mut message_lines =
+                    vec![format!("{}:{}", example.file_path, example.line_number)];
+                if let Some(exception) = &example.exception {
+                    let short_class = exception
+                        .class
+                        .split("::")
+                        .last()
+                        .unwrap_or(&exception.class);
+                    let first_line = exception.message.lines().next().unwrap_or_default();
+                    message_lines.push(format!("{short_class}: {first_line}"));
+                    if let Some(backtrace) = exception
+                        .backtrace
+                        .iter()
+                        .map(|line| line.trim())
+                        .find(|line| !is_gem_backtrace(line))
+                    {
+                        message_lines.push(backtrace.to_string());
+                    }
+                }
+                FailureRecord {
+                    name: example.full_description.clone(),
+                    message_lines,
+                }
+            })
+            .collect();
+        let passed = parsed
+            .summary
+            .example_count
+            .saturating_sub(parsed.summary.failure_count + parsed.summary.pending_count);
+
+        return TestPresentation {
+            summary: format_test_totals(
+                passed,
+                parsed.summary.failure_count,
+                parsed.summary.pending_count,
+            ),
+            failures,
+            duration_ms: Some((parsed.summary.duration * 1000.0) as u64),
+        };
     }
 
     summarize_rspec_text(&output)
