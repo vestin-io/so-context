@@ -1,8 +1,6 @@
-#[cfg(test)]
-use serde_json::json;
 use serde_json::{Map, Value};
 
-use crate::host_adapter::{HostKind, ToolNamespace, capability_profile};
+use crate::host_adapter::{HostKind, ToolNamespace};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct IdentityContext {
@@ -34,100 +32,31 @@ pub struct NormalizedToolCall {
     pub tool_namespace: ToolNamespace,
     pub tool_name: String,
     pub tool_input: Map<String, Value>,
-    pub routing_input: Map<String, Value>,
     pub identity: IdentityContext,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum RetryTool {
-    Read,
-    Search,
+pub struct ToolInputPatch {
+    pub updated_input: Map<String, Value>,
+    pub input_key_order: Vec<String>,
 }
 
-impl RetryTool {
-    pub fn tool_basename(&self) -> &'static str {
-        match self {
-            Self::Read => "so_read",
-            Self::Search => "so_search",
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct RetryDirective {
-    pub tool: RetryTool,
-    pub argument_label: &'static str,
-    pub arguments: Value,
-    pub rationale: &'static str,
-    pub usage_note: &'static str,
-}
-
-impl RetryDirective {
-    pub fn native_read(arguments: Value) -> Self {
+impl ToolInputPatch {
+    pub fn new(updated_input: Map<String, Value>) -> Self {
         Self {
-            tool: RetryTool::Read,
-            argument_label: "arguments",
-            arguments,
-            rationale: "I routed this native file read through {tool} so the file content stays attributable and reusable in shared project context",
-            usage_note: "Use `mode: \"outline\"` when you only need structure instead of full file text.",
+            updated_input,
+            input_key_order: Vec::new(),
         }
     }
 
-    pub fn native_search(arguments: Value) -> Self {
-        Self {
-            tool: RetryTool::Search,
-            argument_label: "arguments",
-            arguments,
-            rationale: "I routed this native search through {tool} so the hits stay attributable and reusable in shared project context",
-            usage_note: "Keep native grep-style tools only when you need raw grep semantics or the project is not indexed.",
-        }
-    }
-
-    pub fn render_tool_name(&self, host_kind: HostKind) -> String {
-        capability_profile(host_kind)
-            .self_tool_naming
-            .tool_name(self.tool.tool_basename())
-    }
-
-    pub fn render_rationale(&self, host_kind: HostKind) -> String {
-        let tool_name = self.render_tool_name(host_kind);
-        self.rationale.replace("{tool}", &format!("`{tool_name}`"))
-    }
-
-    pub fn render_reason(&self, host_kind: HostKind) -> String {
-        let rationale = self.render_rationale(host_kind);
-        format!(
-            "{}. This is expected, not an error. Retry with `{}`: {}. {}",
-            rationale, self.argument_label, self.arguments, self.usage_note
-        )
-    }
-
-    #[cfg(test)]
-    pub fn policy_json(&self, host_kind: HostKind) -> Value {
-        json!({
-            "tool_name": self.render_tool_name(host_kind),
-            "argument_label": self.argument_label,
-            "rationale": self.render_rationale(host_kind),
-            "usage_note": self.usage_note,
-        })
+    pub fn with_input_key_order(mut self, input_key_order: Vec<String>) -> Self {
+        self.input_key_order = input_key_order;
+        self
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum RoutingDecision {
     PassThrough,
-    EnrichInput(Map<String, Value>),
-    Deny { retry: RetryDirective },
+    PatchInput(ToolInputPatch),
 }
-
-#[cfg(test)]
-pub fn retry_policy_json(host_kind: HostKind) -> Value {
-    json!({
-        "read": RetryDirective::native_read(Value::Null).policy_json(host_kind),
-        "search": RetryDirective::native_search(Value::Null).policy_json(host_kind),
-    })
-}
-
-#[cfg(test)]
-#[path = "types_tests.rs"]
-mod tests;

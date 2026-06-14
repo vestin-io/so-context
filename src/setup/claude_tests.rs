@@ -112,7 +112,7 @@ fn remove_pre_tool_use_hook_supports_custom_binary_names() {
 }
 
 #[test]
-fn install_pre_tool_use_hook_adds_native_read_matcher_group() {
+fn install_pre_tool_use_hook_adds_native_shell_matcher_group() {
     let mut root = json!({
         "hooks": {}
     });
@@ -120,14 +120,14 @@ fn install_pre_tool_use_hook_adds_native_read_matcher_group() {
     install_pre_tool_use_hook(root.as_object_mut().unwrap(), "/opt/bin/so-context");
 
     let groups = root["hooks"]["PreToolUse"].as_array().unwrap();
-    let read_group = groups
+    let shell_group = groups
         .iter()
-        .find(|group| group["matcher"].as_str() == Some("Read"))
-        .expect("expected Read matcher group");
-    let hooks = read_group["hooks"].as_array().unwrap();
+        .find(|group| group["matcher"].as_str() == Some("Bash"))
+        .expect("expected Bash matcher group");
+    let hooks = shell_group["hooks"].as_array().unwrap();
     assert!(hooks.iter().any(|hook| {
         hook["statusMessage"].as_str()
-            == Some("Native file read detected; routing to mcp__so-context__so_read")
+            == Some("Short shell command detected; routing through so-context shell CLI")
     }));
 }
 

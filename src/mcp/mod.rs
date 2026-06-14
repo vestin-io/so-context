@@ -266,12 +266,10 @@ Projects are auto-discovered from workspace roots on connect — no setup needed
 \n\
 Prefer so_read over native read tools for source and config files.\n\
 Use so_read for exact file contents in shared project context instead of native Read/View.\n\
-If a native file-read attempt is denied, immediately retry with so_read instead of retrying the native tool.\n\
 Do not reread the same file in a native read tool just to confirm text already returned by so_read.\n\
 \n\
 Prefer so_search over native grep-style tools when indexed project search is enough.\n\
 Use so_search for attributable project hits instead of native Grep/rg when raw grep semantics are not required.\n\
-If a native search attempt is denied, immediately retry with so_search instead of retrying the native tool.\n\
 Keep native grep-style tools only for raw grep semantics, shell-native pipelines, or unindexed project fallback.\n\
 \n\
 Prefer so_shell over native shell tools for short, one-shot commands.\n\

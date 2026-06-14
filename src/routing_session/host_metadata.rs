@@ -8,6 +8,3 @@ pub const NATIVE_SEARCH_TOOL_NAMES: &[&str] = &[
     "SearchFiles",
     "search_files",
 ];
-
-pub const SIMPLE_NATIVE_SEARCH_KEYS: &[&str] =
-    &["query", "pattern", "path", "directory", "root", "limit"];

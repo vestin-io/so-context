@@ -12,12 +12,10 @@ const CLAUDE_RULES_FILE: &str = "so-context.md";
 const SHARED_READ_GUIDANCE: &str = r#"Prefer `mcp__so-context__so_read` over native file-read tools for source and config files.
 Use `so_read` instead of native `Read` / `View` / `cat` / `head` when you want file contents in shared project context.
 Use `mode: "full"` for exact file text and `mode: "outline"` when you only need structure.
-If a native file-read attempt is denied, immediately retry with `so_read` instead of retrying the native tool.
 Do not reread the same file through native read tools just to confirm content that `so_read` already returned."#;
 
 const SHARED_SEARCH_GUIDANCE: &str = r#"Prefer `mcp__so-context__so_search` over native grep-style tools when indexed project search is enough.
 Use `so_search` instead of native `Grep` / `rg` when you want attributable project search hits in shared context.
-If a native search attempt is denied, immediately retry with `so_search` instead of retrying the native tool.
 Keep native grep-style tools only when you need raw grep semantics, an unindexed project fallback, or shell-native pipelines."#;
 
 const SHARED_SHELL_GUIDANCE: &str = r#"Prefer `mcp__so-context__so_shell` over native shell tools for short, one-shot shell commands.

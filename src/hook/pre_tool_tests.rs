@@ -49,10 +49,6 @@ fn rewrites_short_bash_commands_through_shell_cli() {
     }))
     .expect("expected rewrite output");
 
-    assert_eq!(
-        output.pointer("/hookSpecificOutput/permissionDecision"),
-        Some(&Value::String("allow".into()))
-    );
     let rewritten = output
         .pointer("/hookSpecificOutput/updatedInput/command")
         .and_then(|value| value.as_str())
@@ -70,10 +66,6 @@ fn rewrites_short_exec_command_aliases_too() {
     }))
     .expect("expected rewrite output");
 
-    assert_eq!(
-        output.pointer("/hookSpecificOutput/permissionDecision"),
-        Some(&Value::String("allow".into()))
-    );
     let rewritten = output
         .pointer("/hookSpecificOutput/updatedInput/cmd")
         .and_then(|value| value.as_str())
@@ -98,110 +90,26 @@ fn rewrites_env_prefixed_commands() {
 }
 
 #[test]
-fn blocks_native_read_and_suggests_so_read() {
+fn passes_native_read_through() {
     let output = hook(json!({
         "tool_name": "Read",
         "tool_input": { "path": "/tmp/example.rs" }
-    }))
-    .expect("expected deny output");
+    }));
 
-    assert_eq!(
-        output.pointer("/hookSpecificOutput/permissionDecision"),
-        Some(&Value::String("deny".into()))
-    );
-    let reason = output
-        .pointer("/hookSpecificOutput/permissionDecisionReason")
-        .and_then(|value| value.as_str())
-        .unwrap();
-    assert!(reason.contains("mcp__so-context__so_read"));
-    assert!(reason.contains("\"path\":\"/tmp/example.rs\""));
-    assert!(reason.contains("\"mode\":\"full\""));
+    assert!(output.is_none());
 }
 
 #[test]
-fn preserves_excerpt_arguments_for_native_read_reroute() {
-    let output = hook(json!({
-        "tool_name": "Read",
-        "tool_input": {
-            "path": "/tmp/example.rs",
-            "start_line": 12,
-            "end_line": 20,
-            "line_numbers": true
-        }
-    }))
-    .expect("expected deny output");
-
-    let reason = output
-        .pointer("/hookSpecificOutput/permissionDecisionReason")
-        .and_then(|value| value.as_str())
-        .unwrap();
-    assert!(reason.contains("\"path\":\"/tmp/example.rs\""));
-    assert!(reason.contains("\"start_line\":12"));
-    assert!(reason.contains("\"end_line\":20"));
-    assert!(reason.contains("\"line_numbers\":true"));
-    assert!(!reason.contains("\"mode\":\"full\""));
-}
-
-#[test]
-fn blocks_native_read_file_path_alias_and_suggests_so_read() {
-    let output = hook(json!({
-        "tool_name": "read_file",
-        "tool_input": { "file_path": "/tmp/example.rs" }
-    }))
-    .expect("expected deny output");
-
-    let reason = output
-        .pointer("/hookSpecificOutput/permissionDecisionReason")
-        .and_then(|value| value.as_str())
-        .unwrap();
-    assert!(reason.contains("mcp__so-context__so_read"));
-    assert!(reason.contains("\"path\":\"/tmp/example.rs\""));
-    assert!(!reason.contains("\"file_path\""));
-}
-
-#[test]
-fn blocks_native_search_and_suggests_so_search() {
+fn passes_native_search_through() {
     let output = hook(json!({
         "tool_name": "Grep",
         "tool_input": {
             "pattern": "ConfigRepository",
             "path": "/tmp/project"
         }
-    }))
-    .expect("expected deny output");
+    }));
 
-    assert_eq!(
-        output.pointer("/hookSpecificOutput/permissionDecision"),
-        Some(&Value::String("deny".into()))
-    );
-    let reason = output
-        .pointer("/hookSpecificOutput/permissionDecisionReason")
-        .and_then(|value| value.as_str())
-        .unwrap();
-    assert!(reason.contains("mcp__so-context__so_search"));
-    assert!(reason.contains("\"query\":\"ConfigRepository\""));
-    assert!(reason.contains("\"path\":\"/tmp/project\""));
-}
-
-#[test]
-fn blocks_native_search_directory_alias_and_suggests_so_search() {
-    let output = hook(json!({
-        "tool_name": "grep",
-        "tool_input": {
-            "pattern": "ConfigRepository",
-            "directory": "/tmp/project"
-        }
-    }))
-    .expect("expected deny output");
-
-    let reason = output
-        .pointer("/hookSpecificOutput/permissionDecisionReason")
-        .and_then(|value| value.as_str())
-        .unwrap();
-    assert!(reason.contains("mcp__so-context__so_search"));
-    assert!(reason.contains("\"query\":\"ConfigRepository\""));
-    assert!(reason.contains("\"path\":\"/tmp/project\""));
-    assert!(!reason.contains("\"directory\""));
+    assert!(output.is_none());
 }
 
 #[test]
@@ -290,25 +198,6 @@ fn opencode_host_injects_session_id_for_flattened_self_tool_names() {
 }
 
 #[test]
-fn opencode_host_uses_flattened_retry_tool_names() {
-    let output = hook_for_host(
-        HostKind::OpenCode,
-        json!({
-            "tool_name": "Read",
-            "tool_input": { "path": "/tmp/example.rs" }
-        }),
-    )
-    .expect("expected deny output");
-
-    let reason = output
-        .pointer("/hookSpecificOutput/permissionDecisionReason")
-        .and_then(|value| value.as_str())
-        .unwrap();
-    assert!(reason.contains("`so-context_so_read`"));
-    assert!(!reason.contains("mcp__so-context__so_read"));
-}
-
-#[test]
 fn opencode_host_rewrites_shell_with_host_identity() {
     let output = hook_for_host(
         HostKind::OpenCode,
@@ -326,4 +215,43 @@ fn opencode_host_rewrites_shell_with_host_identity() {
         .unwrap();
     assert!(rewritten.contains("SO_CONTEXT_CLIENT=opencode"));
     assert!(rewritten.contains("SO_CONTEXT_SESSION_ID=session-nested"));
+}
+
+#[test]
+fn opencode_host_shapes_so_shell_input_via_shared_patch_contract() {
+    let output = hook_for_host(
+        HostKind::OpenCode,
+        json!({
+            "tool_name": "so-context_so_shell",
+            "session": { "id": "session-nested" },
+            "tool_input": {
+                "argv": ["git", "-C", "my repo", "status"],
+                "cwd": "/tmp/project",
+                "full": false,
+                "full_reason": "tee_missing_or_expired"
+            }
+        }),
+    )
+    .expect("expected patch output");
+
+    assert_eq!(
+        output.pointer("/hookSpecificOutput/updatedInput/command"),
+        Some(&Value::String("git -C 'my repo' status".into()))
+    );
+    assert_eq!(
+        output.pointer("/hookSpecificOutput/updatedInput/full_reason"),
+        None
+    );
+    assert_eq!(
+        output.pointer("/hookSpecificOutput/inputKeyOrder/0"),
+        Some(&Value::String("command".into()))
+    );
+    assert_eq!(
+        output.pointer("/hookSpecificOutput/inputKeyOrder/1"),
+        Some(&Value::String("argv".into()))
+    );
+    assert_eq!(
+        output.pointer("/hookSpecificOutput/inputKeyOrder/4"),
+        Some(&Value::String("_so_session_id".into()))
+    );
 }

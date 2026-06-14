@@ -36,18 +36,11 @@ pub(crate) fn evaluate_pre_tool_hook_for_host(host_kind: HostKind, input: &Value
 
     match RoutingService::new().evaluate_tool_call(&request) {
         RoutingDecision::PassThrough => None,
-        RoutingDecision::EnrichInput(updated_input) => Some(json!({
+        RoutingDecision::PatchInput(patch) => Some(json!({
             "hookSpecificOutput": {
                 "hookEventName": PRE_TOOL_USE_EVENT,
-                "permissionDecision": "allow",
-                "updatedInput": updated_input,
-            }
-        })),
-        RoutingDecision::Deny { retry } => Some(json!({
-            "hookSpecificOutput": {
-                "hookEventName": PRE_TOOL_USE_EVENT,
-                "permissionDecision": "deny",
-                "permissionDecisionReason": retry.render_reason(request.host_kind),
+                "updatedInput": patch.updated_input,
+                "inputKeyOrder": patch.input_key_order,
             }
         })),
     }

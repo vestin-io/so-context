@@ -4,7 +4,6 @@
 //!   - MCP server entry in `~/.config/opencode/opencode.json`
 //!   - Plugin file at `~/.config/opencode/plugins/so-context.ts`
 //!   - Managed instructions entry in `~/.config/opencode/opencode.json`
-//!   - Managed top-level permission overrides for native read/grep
 
 use super::instructions;
 use anyhow::{Context, Result};
@@ -13,7 +12,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::host_adapter::{HostKind, capability_profile};
-use crate::routing_session::{NATIVE_READ_TOOL_NAMES, NATIVE_SEARCH_TOOL_NAMES};
 use crate::shell::NATIVE_SHELL_TOOL_NAMES;
 
 const SERVER_NAME: &str = "so-context";
@@ -22,15 +20,21 @@ const MANAGED_PERMISSION_READ_KEY: &str = "read";
 const MANAGED_PERMISSION_GREP_KEY: &str = "grep";
 
 pub(crate) fn install_into_home(home: &Path, binary: &str) -> Result<()> {
-    let permission_backup = install_mcp_at(&config_path_for(home), binary)?;
-    install_plugin_at(&plugin_path_for(home), binary, &permission_backup)?;
+    let plugin_path = plugin_path_for(home);
+    let legacy_permission_backup = read_permission_backup_from_plugin(&plugin_path)?;
+    install_mcp_at(
+        &config_path_for(home),
+        binary,
+        legacy_permission_backup.as_ref(),
+    )?;
+    install_plugin_at(&plugin_path, binary)?;
     Ok(())
 }
 
 pub(crate) fn uninstall_from_home(home: &Path) -> Result<()> {
     let plugin_path = plugin_path_for(home);
-    let permission_backup = read_permission_backup_from_plugin(&plugin_path)?;
-    uninstall_mcp_at(&config_path_for(home), permission_backup.as_ref())?;
+    let legacy_permission_backup = read_permission_backup_from_plugin(&plugin_path)?;
+    uninstall_mcp_at(&config_path_for(home), legacy_permission_backup.as_ref())?;
     uninstall_plugin_at(&plugin_path)?;
     Ok(())
 }
@@ -39,7 +43,11 @@ pub(crate) fn uninstall_from_home(home: &Path) -> Result<()> {
 // MCP server entry
 // ---------------------------------------------------------------------------
 
-fn install_mcp_at(path: &Path, binary: &str) -> Result<Value> {
+fn install_mcp_at(
+    path: &Path,
+    binary: &str,
+    legacy_permission_backup: Option<&Value>,
+) -> Result<()> {
     let profile = capability_profile(HostKind::OpenCode);
     fs::create_dir_all(path.parent().unwrap())
         .with_context(|| format!("create dir {}", path.parent().unwrap().display()))?;
@@ -50,7 +58,6 @@ fn install_mcp_at(path: &Path, binary: &str) -> Result<Value> {
     } else {
         Value::Object(Map::new())
     };
-    let previous_permission = root.get("permission").cloned().unwrap_or(Value::Null);
 
     {
         let mcp = root
@@ -72,8 +79,8 @@ fn install_mcp_at(path: &Path, binary: &str) -> Result<Value> {
     }
 
     let object = root.as_object_mut().unwrap();
+    restore_legacy_managed_permissions_if_unchanged(object, legacy_permission_backup);
     install_instructions(object);
-    install_managed_permissions(object, &previous_permission);
 
     let text = serde_json::to_string_pretty(&root)?;
     fs::write(path, text).with_context(|| format!("write {}", path.display()))?;
@@ -82,14 +89,14 @@ fn install_mcp_at(path: &Path, binary: &str) -> Result<Value> {
         profile.display_name,
         path.display()
     );
-    Ok(previous_permission)
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
 // Uninstall
 // ---------------------------------------------------------------------------
 
-fn uninstall_mcp_at(path: &Path, permission_backup: Option<&Value>) -> Result<()> {
+fn uninstall_mcp_at(path: &Path, legacy_permission_backup: Option<&Value>) -> Result<()> {
     let profile = capability_profile(HostKind::OpenCode);
     if !path.exists() {
         println!(
@@ -112,7 +119,7 @@ fn uninstall_mcp_at(path: &Path, permission_backup: Option<&Value>) -> Result<()
 
     if let Some(object) = root.as_object_mut() {
         uninstall_instructions(object);
-        restore_permissions_if_unchanged(object, permission_backup);
+        restore_legacy_managed_permissions_if_unchanged(object, legacy_permission_backup);
     }
 
     let text = serde_json::to_string_pretty(&root)?;
@@ -143,12 +150,12 @@ fn uninstall_plugin_at(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn install_plugin_at(path: &Path, binary: &str, permission_backup: &Value) -> Result<()> {
+fn install_plugin_at(path: &Path, binary: &str) -> Result<()> {
     let profile = capability_profile(HostKind::OpenCode);
     fs::create_dir_all(path.parent().unwrap())
         .with_context(|| format!("create dir {}", path.parent().unwrap().display()))?;
 
-    let source = render_plugin_source(binary, permission_backup)?;
+    let source = render_plugin_source(binary)?;
     fs::write(path, source).with_context(|| format!("write {}", path.display()))?;
     println!(
         "{}: wrote plugin to {}",
@@ -158,28 +165,16 @@ fn install_plugin_at(path: &Path, binary: &str, permission_backup: &Value) -> Re
     Ok(())
 }
 
-fn render_plugin_source(binary: &str, permission_backup: &Value) -> Result<String> {
+fn render_plugin_source(binary: &str) -> Result<String> {
     let profile = capability_profile(HostKind::OpenCode);
     let escaped_binary = binary.replace('\\', "\\\\").replace('"', "\\\"");
     let tool_prefix = profile.self_tool_naming.tool_prefix;
     let session_id_paths = serde_json::to_string(profile.identity_paths.session_id_paths)?;
-    let native_read_tool_names = serde_json::to_string(&NATIVE_READ_TOOL_NAMES)?;
-    let native_search_tool_names = serde_json::to_string(&NATIVE_SEARCH_TOOL_NAMES)?;
     let native_shell_tool_names = serde_json::to_string(&NATIVE_SHELL_TOOL_NAMES)?;
-    let escaped_permission_backup = serde_json::to_string(permission_backup)?;
     Ok(include_str!("so-context.ts")
         .replace("__SO_CONTEXT_BINARY__", &escaped_binary)
         .replace("__SO_CONTEXT_TOOL_PREFIX__", tool_prefix)
         .replace("__SO_CONTEXT_SESSION_ID_PATHS__", &session_id_paths)
-        .replace("__SO_CONTEXT_PERMISSION_BACKUP_JSON__", &escaped_permission_backup)
-        .replace(
-            "__SO_CONTEXT_NATIVE_READ_TOOL_NAMES__",
-            &native_read_tool_names,
-        )
-        .replace(
-            "__SO_CONTEXT_NATIVE_SEARCH_TOOL_NAMES__",
-            &native_search_tool_names,
-        )
         .replace(
             "__SO_CONTEXT_NATIVE_SHELL_TOOL_NAMES__",
             &native_shell_tool_names,
@@ -198,54 +193,21 @@ fn plugin_path_for(home: &Path) -> PathBuf {
     config_dir_for(home).join("plugins").join("so-context.ts")
 }
 
-fn install_managed_permissions(root: &mut Map<String, Value>, previous_permission: &Value) {
-    root.insert(
-        "permission".to_string(),
-        managed_permission_value(previous_permission),
-    );
-}
-
-fn managed_permission_value(previous_permission: &Value) -> Value {
-    match previous_permission {
-        Value::Object(existing) => {
-            let mut permission = existing.clone();
-            permission.insert(
-                MANAGED_PERMISSION_READ_KEY.to_string(),
-                Value::String("ask".to_string()),
-            );
-            permission.insert(
-                MANAGED_PERMISSION_GREP_KEY.to_string(),
-                Value::String("ask".to_string()),
-            );
-            Value::Object(permission)
-        }
-        Value::String(action) => {
-            let mut permission = Map::new();
-            permission.insert("*".to_string(), Value::String(action.clone()));
-            permission.insert(
-                MANAGED_PERMISSION_READ_KEY.to_string(),
-                Value::String("ask".to_string()),
-            );
-            permission.insert(
-                MANAGED_PERMISSION_GREP_KEY.to_string(),
-                Value::String("ask".to_string()),
-            );
-            Value::Object(permission)
-        }
-        _ => serde_json::json!({
-            "read": "ask",
-            "grep": "ask"
-        }),
+fn restore_legacy_managed_permissions_if_unchanged(
+    root: &mut Map<String, Value>,
+    legacy_permission_backup: Option<&Value>,
+) {
+    if legacy_permission_backup.is_none() {
+        remove_pure_legacy_managed_permissions(root);
+        return;
     }
-}
 
-fn restore_permissions_if_unchanged(root: &mut Map<String, Value>, permission_backup: Option<&Value>) {
-    let Some(previous_permission) = permission_backup else {
+    let Some(previous_permission) = legacy_permission_backup else {
         return;
     };
 
     let current_permission = root.get("permission").cloned().unwrap_or(Value::Null);
-    if current_permission != managed_permission_value(previous_permission) {
+    if !current_permission_matches_legacy_managed(&current_permission, previous_permission) {
         return;
     }
 
@@ -255,6 +217,66 @@ fn restore_permissions_if_unchanged(root: &mut Map<String, Value>, permission_ba
     }
 
     root.insert("permission".to_string(), previous_permission.clone());
+}
+
+fn remove_pure_legacy_managed_permissions(root: &mut Map<String, Value>) {
+    let Some(permission) = root.get("permission").and_then(Value::as_object) else {
+        return;
+    };
+
+    if permission.len() != 2 {
+        return;
+    }
+
+    let has_read =
+        permission.get(MANAGED_PERMISSION_READ_KEY) == Some(&Value::String("ask".to_string()));
+    let has_grep =
+        permission.get(MANAGED_PERMISSION_GREP_KEY) == Some(&Value::String("ask".to_string()));
+
+    if has_read && has_grep {
+        root.remove("permission");
+    }
+}
+
+fn current_permission_matches_legacy_managed(
+    current_permission: &Value,
+    previous_permission: &Value,
+) -> bool {
+    let Some(current) = current_permission.as_object() else {
+        return false;
+    };
+
+    match previous_permission {
+        Value::Null => {
+            current.len() == 2
+                && current.get(MANAGED_PERMISSION_READ_KEY)
+                    == Some(&Value::String("ask".to_string()))
+                && current.get(MANAGED_PERMISSION_GREP_KEY)
+                    == Some(&Value::String("ask".to_string()))
+        }
+        Value::String(action) => {
+            current.len() == 3
+                && current.get("*") == Some(&Value::String(action.clone()))
+                && current.get(MANAGED_PERMISSION_READ_KEY)
+                    == Some(&Value::String("ask".to_string()))
+                && current.get(MANAGED_PERMISSION_GREP_KEY)
+                    == Some(&Value::String("ask".to_string()))
+        }
+        Value::Object(previous) => {
+            if current.get(MANAGED_PERMISSION_READ_KEY) != Some(&Value::String("ask".to_string()))
+                || current.get(MANAGED_PERMISSION_GREP_KEY)
+                    != Some(&Value::String("ask".to_string()))
+            {
+                return false;
+            }
+
+            let mut current_without_managed = current.clone();
+            current_without_managed.remove(MANAGED_PERMISSION_READ_KEY);
+            current_without_managed.remove(MANAGED_PERMISSION_GREP_KEY);
+            current_without_managed == *previous
+        }
+        _ => false,
+    }
 }
 
 fn install_instructions(root: &mut Map<String, Value>) {

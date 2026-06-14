@@ -14,6 +14,9 @@ fn codex_profile_matches_current_hook_shape() {
     );
     assert_eq!(profile.identity_paths.session_id_paths, &["session_id"]);
     assert_eq!(profile.identity_paths.agent_id_paths, &["agent_id"]);
+    assert_eq!(profile.tool_namespace.other_mcp_prefixes, &["mcp__"]);
+    assert_eq!(profile.tool_namespace.flattened_mcp_separator, None);
+    assert!(!profile.tool_namespace.reserved_native_tool_names);
 }
 
 #[test]
@@ -24,6 +27,7 @@ fn claude_profile_matches_current_runtime_contract() {
     assert_eq!(profile.display_name, "Claude");
     assert_eq!(profile.self_tool_naming.tool_prefix, "mcp__so-context__");
     assert_eq!(profile.identity_paths.session_id_paths, &["session_id"]);
+    assert_eq!(profile.tool_namespace.other_mcp_prefixes, &["mcp__"]);
 }
 
 #[test]
@@ -39,4 +43,7 @@ fn opencode_profile_matches_plugin_based_integration() {
         &["session.id", "sessionID"]
     );
     assert!(profile.identity_paths.connection_id_paths.is_empty());
+    assert_eq!(profile.tool_namespace.other_mcp_prefixes, &["mcp__"]);
+    assert_eq!(profile.tool_namespace.flattened_mcp_separator, Some('_'));
+    assert!(profile.tool_namespace.reserved_native_tool_names);
 }

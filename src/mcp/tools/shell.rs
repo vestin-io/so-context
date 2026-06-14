@@ -21,6 +21,11 @@ use crate::shell::{
 
 const FULL_REASON_TEE_MISSING_OR_EXPIRED: &str = "tee_missing_or_expired";
 
+enum ShellToolRequest {
+    Argv(Vec<String>),
+    Command(String),
+}
+
 pub fn route(wm: Arc<WatchManager>) -> ToolRoute<BuiltinServer> {
     ToolRoute::new_dyn(
         Tool::new(
@@ -56,7 +61,7 @@ fn handler(
         None => (connection_id.clone(), "connection"),
     };
 
-    let argv = parse_argv(&args)?;
+    let shell_request = parse_shell_request(&args)?;
     let full = parse_full_request(&args)?;
     let statuses = wm.status();
     let cwd = resolve_cwd(&args, &client, &connection_id, &statuses)?;
@@ -73,7 +78,10 @@ fn handler(
         client: client.clone(),
         session_id: session_id.clone(),
     }));
-    let result = runner.run_in_dir(&argv, Some(cwd.clone()));
+    let result = match &shell_request {
+        ShellToolRequest::Argv(argv) => runner.run_in_dir(argv, Some(cwd.clone())),
+        ShellToolRequest::Command(command) => runner.run_command_string(command, Some(cwd.clone())),
+    };
     let duration_ms = timer.elapsed_ms();
 
     match result {
@@ -106,12 +114,16 @@ fn handler(
             };
             if !client_prefers_plain_text {
                 tool_result.structured_content = Some(serde_json::Value::Object(
-                    build_shell_structured(&output, argv, cwd_display, full),
+                    build_shell_structured(&output, cwd_display, full),
                 ));
             }
             Ok(tool_result)
         }
         Err(error) => {
+            let error_argv = match &shell_request {
+                ShellToolRequest::Argv(argv) => argv.clone(),
+                ShellToolRequest::Command(command) => output_argv_for_command(command),
+            };
             enqueue(build_shell_error_event(
                 ShellEventContext::mcp_shell(
                     client,
@@ -120,7 +132,7 @@ fn handler(
                     session_source,
                     project_root.clone(),
                 ),
-                &argv,
+                &error_argv,
                 Some(cwd.as_path()),
                 full,
                 duration_ms,
@@ -134,17 +146,64 @@ fn handler(
     }
 }
 
-fn parse_argv(args: &JsonObject) -> Result<Vec<String>, rmcp::ErrorData> {
-    let argv = args
-        .get("argv")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| rmcp::ErrorData::invalid_params("missing array argument: argv", None))?;
-    if argv.is_empty() {
-        return Err(rmcp::ErrorData::invalid_params(
-            "argv must contain at least one string",
+fn parse_shell_request(args: &JsonObject) -> Result<ShellToolRequest, rmcp::ErrorData> {
+    let command = parse_command(args)?;
+    let argv = parse_optional_argv(args)?;
+
+    match (command, argv) {
+        (Some(_command), Some(argv)) => {
+            if argv.is_empty() {
+                return Err(rmcp::ErrorData::invalid_params(
+                    "argv must contain at least one string when provided",
+                    None,
+                ));
+            }
+            Ok(ShellToolRequest::Argv(argv))
+        }
+        (Some(command), None) => Ok(ShellToolRequest::Command(command)),
+        (None, Some(argv)) => {
+            if argv.is_empty() {
+                return Err(rmcp::ErrorData::invalid_params(
+                    "argv must contain at least one string when provided",
+                    None,
+                ));
+            }
+            Ok(ShellToolRequest::Argv(argv))
+        }
+        (None, None) => Err(rmcp::ErrorData::invalid_params(
+            "missing command input: provide command or argv",
             None,
-        ));
+        )),
     }
+}
+
+fn parse_command(args: &JsonObject) -> Result<Option<String>, rmcp::ErrorData> {
+    match args.get("command") {
+        Some(serde_json::Value::String(command)) => {
+            let trimmed = command.trim();
+            if trimmed.is_empty() {
+                return Err(rmcp::ErrorData::invalid_params(
+                    "command must not be empty when provided",
+                    None,
+                ));
+            }
+            Ok(Some(trimmed.to_string()))
+        }
+        Some(_) => Err(rmcp::ErrorData::invalid_params(
+            "command must be a string when provided",
+            None,
+        )),
+        None => Ok(None),
+    }
+}
+
+fn parse_optional_argv(args: &JsonObject) -> Result<Option<Vec<String>>, rmcp::ErrorData> {
+    let Some(argv) = args.get("argv") else {
+        return Ok(None);
+    };
+    let argv = argv
+        .as_array()
+        .ok_or_else(|| rmcp::ErrorData::invalid_params("argv must be an array of strings", None))?;
 
     argv.iter()
         .map(|value| {
@@ -152,7 +211,12 @@ fn parse_argv(args: &JsonObject) -> Result<Vec<String>, rmcp::ErrorData> {
                 rmcp::ErrorData::invalid_params("argv entries must be strings", None)
             })
         })
-        .collect()
+        .collect::<Result<Vec<_>, _>>()
+        .map(Some)
+}
+
+fn output_argv_for_command(command: &str) -> Vec<String> {
+    crate::shell::logical_argv_for_shell_command(command)
 }
 
 fn parse_full_request(args: &JsonObject) -> Result<bool, rmcp::ErrorData> {
@@ -262,11 +326,15 @@ fn schema() -> Arc<JsonObject> {
         serde_json::json!({
             "type": "object",
             "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "Preferred for shell-style commands and host UI display. Executes through the current shell when argv is omitted. When both command and argv are provided, argv remains the exact command that is executed."
+                },
                 "argv": {
                     "type": "array",
                     "items": { "type": "string" },
                     "minItems": 1,
-                    "description": "Command and arguments to execute without a shell wrapper."
+                    "description": "Exact command and arguments to execute without a shell wrapper. Use this when you need precise argv semantics."
                 },
                 "cwd": {
                     "type": "string",
@@ -287,7 +355,10 @@ fn schema() -> Arc<JsonObject> {
                     "description": "Agent session ID injected by the so-context PreToolUse hook. Do not set manually."
                 }
             },
-            "required": ["argv"]
+            "anyOf": [
+                { "required": ["command"] },
+                { "required": ["argv"] }
+            ]
         })
         .as_object()
         .cloned()

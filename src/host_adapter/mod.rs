@@ -53,24 +53,26 @@ impl ToolNamespace {
             return Self::SoContextMcp;
         }
 
-        match host_kind {
-            HostKind::OpenCode => {
-                if is_known_native_tool_name(tool_name) {
-                    Self::Native
-                } else if tool_name.contains('_') || tool_name.starts_with("mcp__") {
-                    Self::OtherMcp
-                } else {
-                    Self::Native
-                }
-            }
-            _ => {
-                if tool_name.starts_with("mcp__") {
-                    Self::OtherMcp
-                } else {
-                    Self::Native
-                }
-            }
+        let namespace_profile = profile.tool_namespace;
+        if namespace_profile.reserved_native_tool_names && is_known_native_tool_name(tool_name) {
+            return Self::Native;
         }
+
+        if namespace_profile
+            .other_mcp_prefixes
+            .iter()
+            .any(|prefix| tool_name.starts_with(prefix))
+        {
+            return Self::OtherMcp;
+        }
+
+        if let Some(separator) = namespace_profile.flattened_mcp_separator
+            && tool_name.contains(separator)
+        {
+            return Self::OtherMcp;
+        }
+
+        Self::Native
     }
 }
 

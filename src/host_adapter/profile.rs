@@ -13,10 +13,6 @@ pub struct SelfToolNaming {
 }
 
 impl SelfToolNaming {
-    pub fn tool_name(&self, tool_basename: &str) -> String {
-        format!("{}{}", self.tool_prefix, tool_basename)
-    }
-
     pub fn matches(&self, tool_name: &str) -> bool {
         tool_name.starts_with(self.tool_prefix)
     }
@@ -37,11 +33,19 @@ pub struct IdentityPathProfile {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ToolNamespaceProfile {
+    pub other_mcp_prefixes: &'static [&'static str],
+    pub flattened_mcp_separator: Option<char>,
+    pub reserved_native_tool_names: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostCapabilityProfile {
     pub kind: HostKind,
     pub display_name: &'static str,
     pub self_tool_naming: SelfToolNaming,
     pub identity_paths: IdentityPathProfile,
+    pub tool_namespace: ToolNamespaceProfile,
 }
 
 const MCP_QUALIFIED_SELF_TOOL_NAMING: SelfToolNaming = SelfToolNaming {
@@ -66,11 +70,24 @@ const OPENCODE_IDENTITY_PATHS: IdentityPathProfile = IdentityPathProfile {
     connection_id_paths: &[],
 };
 
+const MCP_QUALIFIED_TOOL_NAMESPACE: ToolNamespaceProfile = ToolNamespaceProfile {
+    other_mcp_prefixes: &["mcp__"],
+    flattened_mcp_separator: None,
+    reserved_native_tool_names: false,
+};
+
+const OPENCODE_TOOL_NAMESPACE: ToolNamespaceProfile = ToolNamespaceProfile {
+    other_mcp_prefixes: &["mcp__"],
+    flattened_mcp_separator: Some('_'),
+    reserved_native_tool_names: true,
+};
+
 const CODEX_PROFILE: HostCapabilityProfile = HostCapabilityProfile {
     kind: HostKind::Codex,
     display_name: "Codex",
     self_tool_naming: MCP_QUALIFIED_SELF_TOOL_NAMING,
     identity_paths: STANDARD_HOOK_IDENTITY_PATHS,
+    tool_namespace: MCP_QUALIFIED_TOOL_NAMESPACE,
 };
 
 const CLAUDE_PROFILE: HostCapabilityProfile = HostCapabilityProfile {
@@ -78,6 +95,7 @@ const CLAUDE_PROFILE: HostCapabilityProfile = HostCapabilityProfile {
     display_name: "Claude",
     self_tool_naming: MCP_QUALIFIED_SELF_TOOL_NAMING,
     identity_paths: STANDARD_HOOK_IDENTITY_PATHS,
+    tool_namespace: MCP_QUALIFIED_TOOL_NAMESPACE,
 };
 
 const OPENCODE_PROFILE: HostCapabilityProfile = HostCapabilityProfile {
@@ -85,6 +103,7 @@ const OPENCODE_PROFILE: HostCapabilityProfile = HostCapabilityProfile {
     display_name: "OpenCode",
     self_tool_naming: OPENCODE_SELF_TOOL_NAMING,
     identity_paths: OPENCODE_IDENTITY_PATHS,
+    tool_namespace: OPENCODE_TOOL_NAMESPACE,
 };
 
 const UNKNOWN_PROFILE: HostCapabilityProfile = HostCapabilityProfile {
@@ -92,6 +111,7 @@ const UNKNOWN_PROFILE: HostCapabilityProfile = HostCapabilityProfile {
     display_name: "Unknown",
     self_tool_naming: MCP_QUALIFIED_SELF_TOOL_NAMING,
     identity_paths: STANDARD_HOOK_IDENTITY_PATHS,
+    tool_namespace: MCP_QUALIFIED_TOOL_NAMESPACE,
 };
 
 pub fn capability_profile(kind: HostKind) -> HostCapabilityProfile {

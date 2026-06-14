@@ -5,7 +5,7 @@
 //! Writes:
 //!   - `[mcp_servers.so-context]`      — MCP stdio bridge
 //!   - `[[hooks.PreToolUse]]`          — injects `_so_session_id` into so-context tool calls
-//!     and reroutes selected native read/shell calls through so-context tools
+//!     and reroutes selected native shell calls through the so-context shell CLI
 //!   - `[[hooks.PostCompact]]`         — resets file-visit cache after context compaction
 //!   - `~/.codex/AGENTS.md` snippet    — prefer `so_read`/`so_shell` over native read/shell tools
 //!
@@ -27,8 +27,8 @@ use crate::routing_session::{NATIVE_READ_TOOL_NAMES, NATIVE_SEARCH_TOOL_NAMES};
 use crate::shell::NATIVE_SHELL_TOOL_NAMES;
 
 const SERVER_NAME: &str = "so-context";
-const NATIVE_READ_MATCHERS: &[&str] = NATIVE_READ_TOOL_NAMES;
-const NATIVE_SEARCH_MATCHERS: &[&str] = NATIVE_SEARCH_TOOL_NAMES;
+const LEGACY_NATIVE_READ_MATCHERS: &[&str] = NATIVE_READ_TOOL_NAMES;
+const LEGACY_NATIVE_SEARCH_MATCHERS: &[&str] = NATIVE_SEARCH_TOOL_NAMES;
 const NATIVE_SHELL_MATCHERS: &[&str] = NATIVE_SHELL_TOOL_NAMES;
 
 pub(crate) fn install_into_home(home: &Path, binary: &str) -> Result<()> {
@@ -125,6 +125,7 @@ fn config_path_for(home: &Path) -> PathBuf {
 // ---------------------------------------------------------------------------
 
 fn install_pre_tool_use_hook(doc: &mut DocumentMut, binary: &str) {
+    remove_pre_tool_use_hook(doc, binary);
     let profile = capability_profile(HostKind::Codex);
     let self_tool_matcher = profile.self_tool_naming.hook_matcher();
     if doc.get("hooks").is_none() {
@@ -147,28 +148,6 @@ fn install_pre_tool_use_hook(doc: &mut DocumentMut, binary: &str) {
         make_pre_tool_handler(binary, "Tagging so-context call with session ID"),
         binary,
     );
-    for matcher in NATIVE_READ_MATCHERS {
-        install_pre_tool_group(
-            event_aot,
-            matcher,
-            make_pre_tool_handler(
-                binary,
-                "Native file read detected; routing to mcp__so-context__so_read",
-            ),
-            binary,
-        );
-    }
-    for matcher in NATIVE_SEARCH_MATCHERS {
-        install_pre_tool_group(
-            event_aot,
-            matcher,
-            make_pre_tool_handler(
-                binary,
-                "Native search detected; routing to mcp__so-context__so_search",
-            ),
-            binary,
-        );
-    }
     for matcher in NATIVE_SHELL_MATCHERS {
         install_pre_tool_group(
             event_aot,
@@ -356,8 +335,8 @@ fn remove_pre_tool_use_hook(doc: &mut DocumentMut, binary: &str) {
             .and_then(|m| m.as_str())
             .map(|m| {
                 m == self_tool_matcher
-                    || NATIVE_READ_MATCHERS.contains(&m)
-                    || NATIVE_SEARCH_MATCHERS.contains(&m)
+                    || LEGACY_NATIVE_READ_MATCHERS.contains(&m)
+                    || LEGACY_NATIVE_SEARCH_MATCHERS.contains(&m)
                     || NATIVE_SHELL_MATCHERS.contains(&m)
             })
             .unwrap_or(false);

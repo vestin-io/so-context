@@ -12,13 +12,13 @@ pub const RAW_OUTPUT_FETCH_POLICY: &str =
 
 pub fn build_shell_structured(
     output: &RunOutput,
-    argv: Vec<String>,
     cwd_display: String,
     full: bool,
 ) -> Map<String, Value> {
     let mut structured = Map::from_iter([
         ("run_id".into(), output.run_id.clone().into()),
-        ("argv".into(), argv_value(argv)),
+        ("command".into(), output.invocation.command_line().into()),
+        ("argv".into(), argv_value(output.invocation.argv.clone())),
         ("cwd".into(), cwd_display.into()),
         ("exit_code".into(), output.exit_code.into()),
         ("full".into(), full.into()),
@@ -45,6 +45,10 @@ pub fn build_shell_output_structured(
 ) -> Map<String, Value> {
     let mut structured = Map::from_iter([
         ("run_id".into(), output.run_id.clone().into()),
+        (
+            "command".into(),
+            crate::shell::types::ShellInvocation::render_argv(&output.argv).into(),
+        ),
         ("argv".into(), argv_value(output.argv.clone())),
         ("cwd".into(), cwd_value(output.cwd.as_deref())),
         ("exit_code".into(), output.exit_code.into()),

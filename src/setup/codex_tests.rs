@@ -65,7 +65,7 @@ command = "/usr/local/bin/custom-hook"
 }
 
 #[test]
-fn install_pre_tool_use_hook_adds_native_read_matcher_group() {
+fn install_pre_tool_use_hook_adds_native_shell_matcher_group() {
     let mut doc: DocumentMut = r#"
 [hooks]
 "#
@@ -75,18 +75,18 @@ fn install_pre_tool_use_hook_adds_native_read_matcher_group() {
     install_pre_tool_use_hook(&mut doc, "/opt/bin/so-context");
 
     let groups = doc["hooks"]["PreToolUse"].as_array_of_tables().unwrap();
-    let read_group = groups
+    let shell_group = groups
         .iter()
-        .find(|group| group.get("matcher").and_then(|v| v.as_str()) == Some("Read"))
-        .expect("expected Read matcher group");
-    let hooks = read_group
+        .find(|group| group.get("matcher").and_then(|v| v.as_str()) == Some("Bash"))
+        .expect("expected Bash matcher group");
+    let hooks = shell_group
         .get("hooks")
         .and_then(|v| v.as_array_of_tables())
         .unwrap();
     let hook = hooks.iter().next().unwrap();
     assert_eq!(
         hook.get("statusMessage").and_then(|v| v.as_str()),
-        Some("Native file read detected; routing to mcp__so-context__so_read")
+        Some("Short shell command detected; routing through so-context shell CLI")
     );
 }
 

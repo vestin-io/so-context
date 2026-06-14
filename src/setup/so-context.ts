@@ -6,18 +6,15 @@
 //
 // Hooks used:
 //   tool.execute.before  — asks `so-context hook pre-tool --host opencode`
-//                          whether to inject `_so_session_id`, deny, or pass
-//   permission.ask       — blocks native read/search permissions so OpenCode
-//                          retries through so-context MCP tools instead
+//                          whether to inject `_so_session_id`, rewrite shell args,
+//                          or pass through unchanged
 //   session.compacted    — calls `so-context hook post-compact` to reset cache
-// __SO_CONTEXT_PERMISSION_BACKUP__=__SO_CONTEXT_PERMISSION_BACKUP_JSON__
 
 import type { Plugin } from "@opencode-ai/plugin";
 
 type HookDecision = {
-  permissionDecision?: string;
-  permissionDecisionReason?: string;
   updatedInput?: Record<string, unknown>;
+  inputKeyOrder?: string[];
 };
 
 type HookResult =
@@ -29,11 +26,7 @@ type PluginShell = any;
 const SO_CONTEXT_BINARY = "__SO_CONTEXT_BINARY__";
 const SO_CONTEXT_TOOL_PREFIX = "__SO_CONTEXT_TOOL_PREFIX__";
 const SESSION_ID_PATHS: string[] = __SO_CONTEXT_SESSION_ID_PATHS__;
-const NATIVE_READ_TOOL_NAMES = new Set(__SO_CONTEXT_NATIVE_READ_TOOL_NAMES__);
-const NATIVE_SEARCH_TOOL_NAMES = new Set(__SO_CONTEXT_NATIVE_SEARCH_TOOL_NAMES__);
 const NATIVE_SHELL_TOOL_NAMES = new Set(__SO_CONTEXT_NATIVE_SHELL_TOOL_NAMES__);
-const NATIVE_READ_PERMISSION_TYPES = new Set(["read"]);
-const NATIVE_SEARCH_PERMISSION_TYPES = new Set(["grep", "search"]);
 
 function readStringPath(input: unknown, path: string): string | null {
   const value = path.split(".").reduce<unknown>((current, segment) => {
@@ -85,8 +78,6 @@ async function runPreToolHook(
 function shouldDelegateToSharedHook(toolName: string): boolean {
   return (
     toolName.startsWith(SO_CONTEXT_TOOL_PREFIX) ||
-    NATIVE_READ_TOOL_NAMES.has(toolName) ||
-    NATIVE_SEARCH_TOOL_NAMES.has(toolName) ||
     NATIVE_SHELL_TOOL_NAMES.has(toolName)
   );
 }
@@ -103,6 +94,31 @@ function replaceOutputArgs(output: { args?: Record<string, unknown> }, updatedIn
   Object.assign(output.args, updatedInput);
 }
 
+function applyInputKeyOrder(
+  output: { args?: Record<string, unknown> },
+  inputKeyOrder: string[],
+): void {
+  if (!output.args || typeof output.args !== "object") return;
+  if (!Array.isArray(inputKeyOrder) || inputKeyOrder.length === 0) return;
+
+  const args = output.args;
+  const reordered: Record<string, unknown> = {};
+  const seen = new Set<string>();
+
+  for (const key of inputKeyOrder) {
+    if (!(key in args) || seen.has(key)) continue;
+    reordered[key] = args[key];
+    seen.add(key);
+  }
+
+  for (const [key, value] of Object.entries(args)) {
+    if (seen.has(key)) continue;
+    reordered[key] = value;
+  }
+
+  output.args = reordered;
+}
+
 function fallbackInjectSessionId(output: { args?: Record<string, unknown> }, sessionId: string): void {
   if (!output.args || typeof output.args !== "object") {
     output.args = { _so_session_id: sessionId };
@@ -116,22 +132,8 @@ function hookFailureMessage(toolName: string, message: string): string {
   return `[so-context] shared pre-tool hook failed for ${toolName}: ${message}`;
 }
 
-function shouldDenyNativePermission(input: { type?: unknown }): boolean {
-  const permissionType = String(input.type ?? "").trim().toLowerCase();
-  return (
-    NATIVE_READ_PERMISSION_TYPES.has(permissionType) ||
-    NATIVE_SEARCH_PERMISSION_TYPES.has(permissionType)
-  );
-}
-
 export const SoContextPlugin: Plugin = async ({ $ }) => {
   return {
-    "permission.ask": async (input, output) => {
-      if (shouldDenyNativePermission(input as { type?: unknown })) {
-        output.status = "deny";
-      }
-    },
-
     "tool.execute.before": async (input, output) => {
       const toolName = String(input.tool ?? "");
       if (!shouldDelegateToSharedHook(toolName)) return;
@@ -159,17 +161,12 @@ export const SoContextPlugin: Plugin = async ({ $ }) => {
         return;
       }
 
-      if (
-        hookOutput.permissionDecision === "allow" &&
-        hookOutput.updatedInput &&
-        typeof hookOutput.updatedInput === "object"
-      ) {
+      if (hookOutput.updatedInput && typeof hookOutput.updatedInput === "object") {
         replaceOutputArgs(output as any, hookOutput.updatedInput);
-        return;
       }
-
-      if (hookOutput.permissionDecision === "deny") {
-        throw new Error(String(hookOutput.permissionDecisionReason ?? "so-context blocked this tool call"));
+      if (Array.isArray(hookOutput.inputKeyOrder)) {
+        applyInputKeyOrder(output as any, hookOutput.inputKeyOrder);
+        return;
       }
     },
 

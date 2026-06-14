@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use rmcp::model::JsonObject;
 
-use super::{parse_full_request, render_tool_text, resolve_cwd};
+use super::{parse_full_request, parse_shell_request, render_tool_text, resolve_cwd};
 use crate::daemon::watch_manager::{Consumer, ProjectStatus, WatchState};
 use crate::mcp::tools::shell_contract::build_shell_structured;
 use crate::mcp::tools::{infer_connection_project_for_path, infer_connection_project_root};
@@ -162,6 +162,46 @@ fn rejects_full_without_tee_missing_reason() {
 }
 
 #[test]
+fn accepts_command_only_shell_request() {
+    let args: JsonObject = serde_json::json!({ "command": "git status" })
+        .as_object()
+        .cloned()
+        .unwrap();
+
+    let request = parse_shell_request(&args).expect("valid shell request");
+    match request {
+        super::ShellToolRequest::Command(command) => assert_eq!(command, "git status"),
+        super::ShellToolRequest::Argv(_) => panic!("expected command request"),
+    }
+}
+
+#[test]
+fn prefers_argv_when_command_and_argv_are_both_present() {
+    let args: JsonObject = serde_json::json!({
+        "command": "git status",
+        "argv": ["git", "diff", "--stat"]
+    })
+    .as_object()
+    .cloned()
+    .unwrap();
+
+    let request = parse_shell_request(&args).expect("valid shell request");
+    match request {
+        super::ShellToolRequest::Argv(argv) => {
+            assert_eq!(argv, vec!["git", "diff", "--stat"]);
+        }
+        super::ShellToolRequest::Command(_) => panic!("expected argv request"),
+    }
+}
+
+#[test]
+fn rejects_missing_command_and_argv() {
+    let args: JsonObject = serde_json::json!({}).as_object().cloned().unwrap();
+
+    assert!(parse_shell_request(&args).is_err());
+}
+
+#[test]
 fn accepts_full_with_tee_missing_reason() {
     let args: JsonObject = serde_json::json!({
         "full": true,
@@ -187,13 +227,9 @@ fn compressed_output_advertises_follow_up_tool() {
         requested_full: false,
         capture: CaptureMetadata::default(),
     };
-    let content = build_shell_structured(
-        &output,
-        vec!["git".into(), "status".into()],
-        "/tmp/project".into(),
-        false,
-    );
+    let content = build_shell_structured(&output, "/tmp/project".into(), false);
 
+    assert_eq!(content["command"], "git status");
     assert_eq!(content["content_kind"], "compressed_summary");
     assert_eq!(content["preferred_response_source"], "compressed_summary");
     assert_eq!(content["raw_output_available"], true);
@@ -213,13 +249,9 @@ fn raw_fallback_output_does_not_advertise_follow_up_tool() {
         requested_full: false,
         capture: CaptureMetadata::default(),
     };
-    let content = build_shell_structured(
-        &output,
-        vec!["git".into(), "status".into()],
-        "/tmp/project".into(),
-        false,
-    );
+    let content = build_shell_structured(&output, "/tmp/project".into(), false);
 
+    assert_eq!(content["command"], "git status");
     assert_eq!(content["content_kind"], "raw_output");
     assert_eq!(content["preferred_response_source"], "current_text_content");
     assert_eq!(content["raw_output_available"], true);
@@ -230,7 +262,16 @@ fn raw_fallback_output_does_not_advertise_follow_up_tool() {
 fn full_output_is_marked_raw() {
     let output = RunOutput {
         run_id: "run-123".into(),
-        invocation: ShellInvocation::new(vec!["sed".into(), "-n".into(), "1,10p".into()]),
+        invocation: ShellInvocation::shell_command(
+            vec![
+                "sed".into(),
+                "-n".into(),
+                "1,10p".into(),
+                "src/main.rs".into(),
+            ],
+            "/bin/zsh".into(),
+            "sed -n '1,10p' src/main.rs".into(),
+        ),
         pattern: ShellPattern::Cat,
         rendered: None,
         full_output: "fn main() {}\n".into(),
@@ -239,18 +280,9 @@ fn full_output_is_marked_raw() {
         requested_full: true,
         capture: CaptureMetadata::default(),
     };
-    let content = build_shell_structured(
-        &output,
-        vec![
-            "sed".into(),
-            "-n".into(),
-            "1,10p".into(),
-            "src/main.rs".into(),
-        ],
-        "/tmp/project".into(),
-        true,
-    );
+    let content = build_shell_structured(&output, "/tmp/project".into(), true);
 
+    assert_eq!(content["command"], "sed -n '1,10p' src/main.rs");
     assert_eq!(content["content_kind"], "raw_output");
     assert_eq!(content["preferred_response_source"], "current_text_content");
     assert_eq!(content["raw_output_available"], true);

@@ -10,6 +10,10 @@ fn codex_uses_mcp_qualified_tool_names() {
         ToolNamespace::for_host(HostKind::Codex, "mcp__other__search"),
         ToolNamespace::OtherMcp
     );
+    assert_eq!(
+        ToolNamespace::for_host(HostKind::Codex, "github_list_prs"),
+        ToolNamespace::Native
+    );
 }
 
 #[test]
