@@ -18,6 +18,14 @@ impl IdentityContext {
             .filter(|value| !value.is_empty())
             .or_else(|| self.agent_id.as_deref().filter(|value| !value.is_empty()))
     }
+
+    pub fn shell_session_id(&self) -> Option<&str> {
+        self.tool_context_id()
+    }
+
+    pub fn shell_agent_id(&self) -> Option<&str> {
+        self.agent_id.as_deref().filter(|value| !value.is_empty())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -34,7 +42,6 @@ pub struct NormalizedToolCall {
 pub enum RetryTool {
     Read,
     Search,
-    Shell,
 }
 
 impl RetryTool {
@@ -42,7 +49,6 @@ impl RetryTool {
         match self {
             Self::Read => "so_read",
             Self::Search => "so_search",
-            Self::Shell => "so_shell",
         }
     }
 }
@@ -74,16 +80,6 @@ impl RetryDirective {
             arguments,
             rationale: "I routed this native search through {tool} so the hits stay attributable and reusable in shared project context",
             usage_note: "Keep native grep-style tools only when you need raw grep semantics or the project is not indexed.",
-        }
-    }
-
-    pub fn native_shell(arguments: Value) -> Self {
-        Self {
-            tool: RetryTool::Shell,
-            argument_label: "argv",
-            arguments,
-            rationale: "I routed this short shell command through our context-aware {tool} tool to improve shared project context for the next steps",
-            usage_note: "Keep the native shell only for long-running, streaming, or interactive commands.",
         }
     }
 
@@ -129,7 +125,6 @@ pub fn retry_policy_json(host_kind: HostKind) -> Value {
     json!({
         "read": RetryDirective::native_read(Value::Null).policy_json(host_kind),
         "search": RetryDirective::native_search(Value::Null).policy_json(host_kind),
-        "shell": RetryDirective::native_shell(Value::Null).policy_json(host_kind),
     })
 }
 

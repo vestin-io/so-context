@@ -28,12 +28,13 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, ErrorCode, params};
 use serde::{Deserialize, Serialize};
 
 const EVENT_BATCH_SIZE: usize = 64;
 const EVENT_FLUSH_INTERVAL: Duration = Duration::from_millis(100);
 const EVENT_BUSY_TIMEOUT_MS: u64 = 1_000;
+const CLI_PERSIST_RETRY_DELAYS_MS: &[u64] = &[50, 100, 250];
 static EVENT_TX: OnceLock<Sender<EventRecord>> = OnceLock::new();
 
 /// Returns the path to the global events database.
@@ -122,6 +123,15 @@ pub fn enqueue(event: EventRecord) {
         tx
     });
     let _ = tx.send(event);
+}
+
+/// Inserts a single event synchronously.
+///
+/// Use this for short-lived CLI commands that may exit before the background
+/// writer thread has a chance to flush queued events.
+pub fn persist_now(event: &EventRecord) -> Result<(), String> {
+    let conn = open_db()?;
+    persist_with_retry(&conn, event).map_err(|e| format!("insert event: {e}"))
 }
 
 fn run_writer(rx: Receiver<EventRecord>) {
@@ -226,6 +236,31 @@ fn insert_event(conn: &Connection, event: &EventRecord) -> rusqlite::Result<usiz
             event.estimated_origin_size,
             event.actual_size,
         ],
+    )
+}
+
+fn persist_with_retry(conn: &Connection, event: &EventRecord) -> rusqlite::Result<()> {
+    for (attempt, delay_ms) in CLI_PERSIST_RETRY_DELAYS_MS.iter().enumerate() {
+        match insert_event(conn, event) {
+            Ok(_) => return Ok(()),
+            Err(error) if is_retryable_sqlite_error(&error) => {
+                thread::sleep(Duration::from_millis(*delay_ms));
+                if attempt + 1 == CLI_PERSIST_RETRY_DELAYS_MS.len() {
+                    return insert_event(conn, event).map(|_| ());
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    insert_event(conn, event).map(|_| ())
+}
+
+fn is_retryable_sqlite_error(error: &rusqlite::Error) -> bool {
+    matches!(
+        error,
+        rusqlite::Error::SqliteFailure(sqlite_error, _)
+            if matches!(sqlite_error.code, ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked)
     )
 }
 

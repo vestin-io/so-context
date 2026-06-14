@@ -12,14 +12,16 @@ const CLAUDE_RULES_FILE: &str = "so-context.md";
 const SHARED_READ_GUIDANCE: &str = r#"Prefer `mcp__so-context__so_read` over native file-read tools for source and config files.
 Use `so_read` instead of native `Read` / `View` / `cat` / `head` when you want file contents in shared project context.
 Use `mode: "full"` for exact file text and `mode: "outline"` when you only need structure.
+If a native file-read attempt is denied, immediately retry with `so_read` instead of retrying the native tool.
 Do not reread the same file through native read tools just to confirm content that `so_read` already returned."#;
 
 const SHARED_SEARCH_GUIDANCE: &str = r#"Prefer `mcp__so-context__so_search` over native grep-style tools when indexed project search is enough.
 Use `so_search` instead of native `Grep` / `rg` when you want attributable project search hits in shared context.
+If a native search attempt is denied, immediately retry with `so_search` instead of retrying the native tool.
 Keep native grep-style tools only when you need raw grep semantics, an unindexed project fallback, or shell-native pipelines."#;
 
 const SHARED_SHELL_GUIDANCE: &str = r#"Prefer `mcp__so-context__so_shell` over native shell tools for short, one-shot shell commands.
-Expect short native shell calls to be blocked and retried through `mcp__so-context__so_shell`.
+Some hosts internally rewrite short native shell calls through `so-context shell`; treat that as an implementation detail, and still prefer direct `so_shell` calls when choosing tools yourself.
 Prefer compressed `so_shell` results first, and treat them as the default final answer.
 Only call `so_shell_output` when the user explicitly asks for verbatim raw output or the compressed result is missing required detail.
 Do not call `so_shell_output` just to confirm, double-check, or restate a compressed result that already answers the request.
@@ -38,6 +40,26 @@ fn claude_rules_body() -> String {
         "## so-context\n\n{}\n\n{}\n\n{}\n\nUse `mcp__so-context__so_read` for:\n- reading source files\n- reading config files\n- replacing native `Read` / `View` when you want file contents preserved in shared context\n\nUse `mcp__so-context__so_search` for:\n- indexed project search hits\n- replacing native `Grep` / `rg` when raw grep semantics are not required\n\nUse `mcp__so-context__so_shell` for commands like:\n- `pwd`\n- `git status`\n- `git diff`\n- `cargo test`\n- `rg ...`\n\nKeep the native shell only for:\n- long-running or streaming commands\n- interactive commands that need stdin/TTY\n- background jobs, servers, watchers, or shells that should stay open\n",
         SHARED_READ_GUIDANCE, SHARED_SEARCH_GUIDANCE, SHARED_SHELL_GUIDANCE
     )
+}
+
+pub fn opencode_instructions_body() -> String {
+    let read_guidance = opencode_guidance(SHARED_READ_GUIDANCE);
+    let search_guidance = opencode_guidance(SHARED_SEARCH_GUIDANCE);
+    let shell_guidance = opencode_guidance(SHARED_SHELL_GUIDANCE);
+    format!(
+        "## so-context\n\n{}\n\n{}\n\n{}\n\nUse `so-context_so_read` for:\n- reading source files\n- reading config files\n- replacing native `Read` / `View` when you want file contents preserved in shared context\n\nUse `so-context_so_search` for:\n- indexed project search hits\n- replacing native `Grep` / `rg` when raw grep semantics are not required\n\nUse `so-context_so_shell` for commands like:\n- `pwd`\n- `git status`\n- `git diff`\n- `cargo test`\n- `rg ...`\n\nKeep the native shell only for:\n- long-running or streaming commands\n- interactive commands that need stdin/TTY\n- background jobs, servers, watchers, or shells that should stay open\n",
+        read_guidance, search_guidance, shell_guidance
+    )
+}
+
+fn opencode_guidance(text: &str) -> String {
+    text.replace("`mcp__so-context__so_read`", "`so-context_so_read`")
+        .replace("`mcp__so-context__so_search`", "`so-context_so_search`")
+        .replace("`mcp__so-context__so_shell`", "`so-context_so_shell`")
+        .replace("`so_read`", "`so-context_so_read`")
+        .replace("`so_search`", "`so-context_so_search`")
+        .replace("`so_shell_output`", "`so-context_so_shell_output`")
+        .replace("`so_shell`", "`so-context_so_shell`")
 }
 
 pub fn install_codex_instructions(home: &Path) -> Result<()> {

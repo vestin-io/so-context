@@ -1,3 +1,5 @@
+#[path = "core/event_spool.rs"]
+mod core_event_spool;
 #[path = "core/events.rs"]
 pub mod core_events;
 #[path = "core/graph/mod.rs"]
@@ -27,6 +29,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use core_metrics::{MetricsWindow, render_metrics_text};
 use daemon::Daemon;
 use host_adapter::HostKind;
+use shell::run_shell_cli_command;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -70,9 +73,10 @@ enum HookCommands {
     /// PreToolUse hook handler for supported agent hosts.
     ///
     /// Reads the hook JSON from stdin. For so-context MCP tools it injects
-    /// `_so_session_id`. For selected native read and short, one-shot native
-    /// shell calls it blocks the tool call and tells the host to retry with
-    /// the host-specific so-context read/search/shell tool names.
+    /// `_so_session_id`. For selected native read/search calls it asks the
+    /// host to retry with the host-specific so-context tools. For short,
+    /// one-shot native shell calls it rewrites the command through
+    /// `so-context shell`.
     /// Exit 0 with no output for everything else (agent continues normally).
     ///
     /// Register this on the host's pre-tool interception surface with the
@@ -189,6 +193,18 @@ enum Commands {
         #[arg(long, value_enum, default_value = "text")]
         format: MetricsFormatArg,
     },
+    /// Execute a shell command and print a deterministic compressed summary.
+    Shell {
+        /// Print raw command output instead of the compressed shell view.
+        #[arg(long)]
+        full: bool,
+        /// Execute the given command string through the current shell, preserving shell expansion.
+        #[arg(short = 'c', long = "command", conflicts_with = "argv")]
+        command: Option<String>,
+        /// Command and arguments to execute.
+        #[arg(required_unless_present = "command", num_args = 1.., trailing_var_arg = true, allow_hyphen_values = true)]
+        argv: Vec<String>,
+    },
     /// Install so-context as an MCP server in Claude, OpenCode, and Codex configs.
     Setup {
         /// Path to the so-context binary (default: current executable).
@@ -275,6 +291,11 @@ async fn main() -> Result<()> {
             }
             Ok(())
         }
+        Commands::Shell {
+            full,
+            command,
+            argv,
+        } => run_shell_cli_command(full, command, argv),
         Commands::Setup { binary } => {
             let bin = resolve_binary(binary);
             setup::install_all(&bin)

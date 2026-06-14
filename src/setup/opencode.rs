@@ -3,7 +3,10 @@
 //! Writes:
 //!   - MCP server entry in `~/.config/opencode/opencode.json`
 //!   - Plugin file at `~/.config/opencode/plugins/so-context.ts`
+//!   - Managed instructions entry in `~/.config/opencode/opencode.json`
+//!   - Managed top-level permission overrides for native read/grep
 
+use super::instructions;
 use anyhow::{Context, Result};
 use serde_json::{Map, Value};
 use std::fs;
@@ -14,16 +17,21 @@ use crate::routing_session::{NATIVE_READ_TOOL_NAMES, NATIVE_SEARCH_TOOL_NAMES};
 use crate::shell::NATIVE_SHELL_TOOL_NAMES;
 
 const SERVER_NAME: &str = "so-context";
+const PERMISSION_BACKUP_MARKER: &str = "__SO_CONTEXT_PERMISSION_BACKUP__=";
+const MANAGED_PERMISSION_READ_KEY: &str = "read";
+const MANAGED_PERMISSION_GREP_KEY: &str = "grep";
 
 pub(crate) fn install_into_home(home: &Path, binary: &str) -> Result<()> {
-    install_mcp_at(&config_path_for(home), binary)?;
-    install_plugin_at(&plugin_path_for(home), binary)?;
+    let permission_backup = install_mcp_at(&config_path_for(home), binary)?;
+    install_plugin_at(&plugin_path_for(home), binary, &permission_backup)?;
     Ok(())
 }
 
 pub(crate) fn uninstall_from_home(home: &Path) -> Result<()> {
-    uninstall_mcp_at(&config_path_for(home))?;
-    uninstall_plugin_at(&plugin_path_for(home))?;
+    let plugin_path = plugin_path_for(home);
+    let permission_backup = read_permission_backup_from_plugin(&plugin_path)?;
+    uninstall_mcp_at(&config_path_for(home), permission_backup.as_ref())?;
+    uninstall_plugin_at(&plugin_path)?;
     Ok(())
 }
 
@@ -31,7 +39,7 @@ pub(crate) fn uninstall_from_home(home: &Path) -> Result<()> {
 // MCP server entry
 // ---------------------------------------------------------------------------
 
-fn install_mcp_at(path: &Path, binary: &str) -> Result<()> {
+fn install_mcp_at(path: &Path, binary: &str) -> Result<Value> {
     let profile = capability_profile(HostKind::OpenCode);
     fs::create_dir_all(path.parent().unwrap())
         .with_context(|| format!("create dir {}", path.parent().unwrap().display()))?;
@@ -42,23 +50,30 @@ fn install_mcp_at(path: &Path, binary: &str) -> Result<()> {
     } else {
         Value::Object(Map::new())
     };
+    let previous_permission = root.get("permission").cloned().unwrap_or(Value::Null);
 
-    let mcp = root
-        .as_object_mut()
-        .unwrap()
-        .entry("mcp")
-        .or_insert(Value::Object(Map::new()))
-        .as_object_mut()
-        .unwrap();
+    {
+        let mcp = root
+            .as_object_mut()
+            .unwrap()
+            .entry("mcp")
+            .or_insert(Value::Object(Map::new()))
+            .as_object_mut()
+            .unwrap();
 
-    mcp.insert(
-        SERVER_NAME.to_string(),
-        serde_json::json!({
-            "type": "local",
-            "command": [binary, "mcp"],
-            "enabled": true
-        }),
-    );
+        mcp.insert(
+            SERVER_NAME.to_string(),
+            serde_json::json!({
+                "type": "local",
+                "command": [binary, "mcp"],
+                "enabled": true
+            }),
+        );
+    }
+
+    let object = root.as_object_mut().unwrap();
+    install_instructions(object);
+    install_managed_permissions(object, &previous_permission);
 
     let text = serde_json::to_string_pretty(&root)?;
     fs::write(path, text).with_context(|| format!("write {}", path.display()))?;
@@ -67,14 +82,14 @@ fn install_mcp_at(path: &Path, binary: &str) -> Result<()> {
         profile.display_name,
         path.display()
     );
-    Ok(())
+    Ok(previous_permission)
 }
 
 // ---------------------------------------------------------------------------
 // Uninstall
 // ---------------------------------------------------------------------------
 
-fn uninstall_mcp_at(path: &Path) -> Result<()> {
+fn uninstall_mcp_at(path: &Path, permission_backup: Option<&Value>) -> Result<()> {
     let profile = capability_profile(HostKind::OpenCode);
     if !path.exists() {
         println!(
@@ -93,6 +108,11 @@ fn uninstall_mcp_at(path: &Path) -> Result<()> {
         .and_then(|v| v.as_object_mut())
     {
         mcp.remove(SERVER_NAME);
+    }
+
+    if let Some(object) = root.as_object_mut() {
+        uninstall_instructions(object);
+        restore_permissions_if_unchanged(object, permission_backup);
     }
 
     let text = serde_json::to_string_pretty(&root)?;
@@ -123,12 +143,12 @@ fn uninstall_plugin_at(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn install_plugin_at(path: &Path, binary: &str) -> Result<()> {
+fn install_plugin_at(path: &Path, binary: &str, permission_backup: &Value) -> Result<()> {
     let profile = capability_profile(HostKind::OpenCode);
     fs::create_dir_all(path.parent().unwrap())
         .with_context(|| format!("create dir {}", path.parent().unwrap().display()))?;
 
-    let source = render_plugin_source(binary)?;
+    let source = render_plugin_source(binary, permission_backup)?;
     fs::write(path, source).with_context(|| format!("write {}", path.display()))?;
     println!(
         "{}: wrote plugin to {}",
@@ -138,7 +158,7 @@ fn install_plugin_at(path: &Path, binary: &str) -> Result<()> {
     Ok(())
 }
 
-fn render_plugin_source(binary: &str) -> Result<String> {
+fn render_plugin_source(binary: &str, permission_backup: &Value) -> Result<String> {
     let profile = capability_profile(HostKind::OpenCode);
     let escaped_binary = binary.replace('\\', "\\\\").replace('"', "\\\"");
     let tool_prefix = profile.self_tool_naming.tool_prefix;
@@ -146,10 +166,12 @@ fn render_plugin_source(binary: &str) -> Result<String> {
     let native_read_tool_names = serde_json::to_string(&NATIVE_READ_TOOL_NAMES)?;
     let native_search_tool_names = serde_json::to_string(&NATIVE_SEARCH_TOOL_NAMES)?;
     let native_shell_tool_names = serde_json::to_string(&NATIVE_SHELL_TOOL_NAMES)?;
+    let escaped_permission_backup = serde_json::to_string(permission_backup)?;
     Ok(include_str!("so-context.ts")
         .replace("__SO_CONTEXT_BINARY__", &escaped_binary)
         .replace("__SO_CONTEXT_TOOL_PREFIX__", tool_prefix)
         .replace("__SO_CONTEXT_SESSION_ID_PATHS__", &session_id_paths)
+        .replace("__SO_CONTEXT_PERMISSION_BACKUP_JSON__", &escaped_permission_backup)
         .replace(
             "__SO_CONTEXT_NATIVE_READ_TOOL_NAMES__",
             &native_read_tool_names,
@@ -174,6 +196,116 @@ fn config_path_for(home: &Path) -> PathBuf {
 
 fn plugin_path_for(home: &Path) -> PathBuf {
     config_dir_for(home).join("plugins").join("so-context.ts")
+}
+
+fn install_managed_permissions(root: &mut Map<String, Value>, previous_permission: &Value) {
+    root.insert(
+        "permission".to_string(),
+        managed_permission_value(previous_permission),
+    );
+}
+
+fn managed_permission_value(previous_permission: &Value) -> Value {
+    match previous_permission {
+        Value::Object(existing) => {
+            let mut permission = existing.clone();
+            permission.insert(
+                MANAGED_PERMISSION_READ_KEY.to_string(),
+                Value::String("ask".to_string()),
+            );
+            permission.insert(
+                MANAGED_PERMISSION_GREP_KEY.to_string(),
+                Value::String("ask".to_string()),
+            );
+            Value::Object(permission)
+        }
+        Value::String(action) => {
+            let mut permission = Map::new();
+            permission.insert("*".to_string(), Value::String(action.clone()));
+            permission.insert(
+                MANAGED_PERMISSION_READ_KEY.to_string(),
+                Value::String("ask".to_string()),
+            );
+            permission.insert(
+                MANAGED_PERMISSION_GREP_KEY.to_string(),
+                Value::String("ask".to_string()),
+            );
+            Value::Object(permission)
+        }
+        _ => serde_json::json!({
+            "read": "ask",
+            "grep": "ask"
+        }),
+    }
+}
+
+fn restore_permissions_if_unchanged(root: &mut Map<String, Value>, permission_backup: Option<&Value>) {
+    let Some(previous_permission) = permission_backup else {
+        return;
+    };
+
+    let current_permission = root.get("permission").cloned().unwrap_or(Value::Null);
+    if current_permission != managed_permission_value(previous_permission) {
+        return;
+    }
+
+    if previous_permission.is_null() {
+        root.remove("permission");
+        return;
+    }
+
+    root.insert("permission".to_string(), previous_permission.clone());
+}
+
+fn install_instructions(root: &mut Map<String, Value>) {
+    let managed = instructions::opencode_instructions_body();
+    let instructions = root
+        .entry("instructions")
+        .or_insert_with(|| Value::Array(Vec::new()));
+
+    let Some(items) = instructions.as_array_mut() else {
+        *instructions = Value::Array(vec![Value::String(managed)]);
+        return;
+    };
+
+    items.retain(|item| !is_managed_instruction(item));
+    items.push(Value::String(managed));
+}
+
+fn uninstall_instructions(root: &mut Map<String, Value>) {
+    let Some(items) = root.get_mut("instructions").and_then(Value::as_array_mut) else {
+        return;
+    };
+
+    items.retain(|item| !is_managed_instruction(item));
+}
+
+fn is_managed_instruction(item: &Value) -> bool {
+    item.as_str()
+        .map(|value| value.starts_with("## so-context\n\n"))
+        .unwrap_or(false)
+}
+
+fn read_permission_backup_from_plugin(path: &Path) -> Result<Option<Value>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let source = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let Some(line) = source
+        .lines()
+        .find(|line| line.contains(PERMISSION_BACKUP_MARKER))
+    else {
+        return Ok(None);
+    };
+
+    let Some(raw_backup) = line.split(PERMISSION_BACKUP_MARKER).nth(1) else {
+        return Ok(None);
+    };
+
+    let backup = serde_json::from_str(raw_backup.trim())
+        .with_context(|| format!("parse permission backup from {}", path.display()))?;
+    Ok(Some(backup))
 }
 
 #[cfg(test)]

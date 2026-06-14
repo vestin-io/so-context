@@ -21,16 +21,16 @@ fn retry_reason_uses_mcp_qualified_tool_names_for_hook_hosts() {
 #[test]
 fn retry_reason_uses_flattened_tool_names_for_opencode() {
     let retry = RetryDirective {
-        tool: RetryTool::Shell,
-        argument_label: "argv",
-        arguments: json!(["git", "status"]),
-        rationale: "I routed this short shell command through our context-aware {tool} tool to improve shared project context for the next steps",
-        usage_note: "Keep the native shell only for long-running, streaming, or interactive commands.",
+        tool: RetryTool::Search,
+        argument_label: "arguments",
+        arguments: json!({ "query": "ConfigRepository" }),
+        rationale: "I routed this native search through {tool} so the hits stay attributable and reusable in shared project context",
+        usage_note: "Keep native grep-style tools only when you need raw grep semantics or the project is not indexed.",
     };
 
     let reason = retry.render_reason(HostKind::OpenCode);
-    assert!(reason.contains("`so-context_so_shell`"));
-    assert!(reason.contains("[\"git\",\"status\"]"));
+    assert!(reason.contains("`so-context_so_search`"));
+    assert!(reason.contains("\"query\":\"ConfigRepository\""));
 }
 
 #[test]
@@ -48,11 +48,5 @@ fn retry_policy_json_renders_host_specific_tool_names() {
             .pointer("/search/argument_label")
             .and_then(|value| value.as_str()),
         Some("arguments")
-    );
-    assert_eq!(
-        policy
-            .pointer("/shell/tool_name")
-            .and_then(|value| value.as_str()),
-        Some("so-context_so_shell")
     );
 }

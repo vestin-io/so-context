@@ -7,7 +7,10 @@
 // Hooks used:
 //   tool.execute.before  — asks `so-context hook pre-tool --host opencode`
 //                          whether to inject `_so_session_id`, deny, or pass
+//   permission.ask       — blocks native read/search permissions so OpenCode
+//                          retries through so-context MCP tools instead
 //   session.compacted    — calls `so-context hook post-compact` to reset cache
+// __SO_CONTEXT_PERMISSION_BACKUP__=__SO_CONTEXT_PERMISSION_BACKUP_JSON__
 
 import type { Plugin } from "@opencode-ai/plugin";
 
@@ -29,6 +32,8 @@ const SESSION_ID_PATHS: string[] = __SO_CONTEXT_SESSION_ID_PATHS__;
 const NATIVE_READ_TOOL_NAMES = new Set(__SO_CONTEXT_NATIVE_READ_TOOL_NAMES__);
 const NATIVE_SEARCH_TOOL_NAMES = new Set(__SO_CONTEXT_NATIVE_SEARCH_TOOL_NAMES__);
 const NATIVE_SHELL_TOOL_NAMES = new Set(__SO_CONTEXT_NATIVE_SHELL_TOOL_NAMES__);
+const NATIVE_READ_PERMISSION_TYPES = new Set(["read"]);
+const NATIVE_SEARCH_PERMISSION_TYPES = new Set(["grep", "search"]);
 
 function readStringPath(input: unknown, path: string): string | null {
   const value = path.split(".").reduce<unknown>((current, segment) => {
@@ -111,8 +116,22 @@ function hookFailureMessage(toolName: string, message: string): string {
   return `[so-context] shared pre-tool hook failed for ${toolName}: ${message}`;
 }
 
+function shouldDenyNativePermission(input: { type?: unknown }): boolean {
+  const permissionType = String(input.type ?? "").trim().toLowerCase();
+  return (
+    NATIVE_READ_PERMISSION_TYPES.has(permissionType) ||
+    NATIVE_SEARCH_PERMISSION_TYPES.has(permissionType)
+  );
+}
+
 export const SoContextPlugin: Plugin = async ({ $ }) => {
   return {
+    "permission.ask": async (input, output) => {
+      if (shouldDenyNativePermission(input as { type?: unknown })) {
+        output.status = "deny";
+      }
+    },
+
     "tool.execute.before": async (input, output) => {
       const toolName = String(input.tool ?? "");
       if (!shouldDelegateToSharedHook(toolName)) return;

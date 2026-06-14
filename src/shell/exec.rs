@@ -55,9 +55,9 @@ pub(super) fn execute_full(invocation: ShellInvocation) -> Result<ShellResult> {
 }
 
 fn execute_with_limits(invocation: ShellInvocation, limits: ExecLimits) -> Result<ShellResult> {
-    let mut command = Command::new(invocation.program());
+    let mut command = Command::new(invocation.execution_program());
     command
-        .args(invocation.args())
+        .args(invocation.execution_args())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     if let Some(cwd) = invocation.cwd() {

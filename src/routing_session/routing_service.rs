@@ -6,7 +6,7 @@ use crate::routing_session::{
     RoutingDecision,
 };
 use crate::shell::{
-    NATIVE_SHELL_TOOL_NAMES, parse_simple_shell_command, rewrite_env_prefix, should_prefer_so_shell,
+    NATIVE_SHELL_TOOL_NAMES, ShellRedirectContext, rewrite_native_shell_tool_input,
 };
 
 pub struct RoutingService;
@@ -22,7 +22,7 @@ impl RoutingService {
         }
 
         if NATIVE_SHELL_TOOL_NAMES.contains(&request.tool_name.as_str()) {
-            return self.deny_native_shell_if_needed(request);
+            return self.rewrite_native_shell_if_needed(request);
         }
 
         if NATIVE_READ_TOOL_NAMES.contains(&request.tool_name.as_str()) {
@@ -51,36 +51,16 @@ impl RoutingService {
         RoutingDecision::EnrichInput(tool_input)
     }
 
-    fn deny_native_shell_if_needed(&self, request: &NormalizedToolCall) -> RoutingDecision {
-        let Some(command) = request
-            .routing_input
-            .get("command")
-            .and_then(|value| value.as_str())
-        else {
-            return RoutingDecision::PassThrough;
+    fn rewrite_native_shell_if_needed(&self, request: &NormalizedToolCall) -> RoutingDecision {
+        let context = ShellRedirectContext {
+            client: Some(request.host_kind.as_str().to_string()).filter(|value| value != "unknown"),
+            session_id: request.identity.shell_session_id().map(ToString::to_string),
+            agent_id: request.identity.shell_agent_id().map(ToString::to_string),
         };
 
-        let command = command.trim();
-        if command.is_empty() {
-            return RoutingDecision::PassThrough;
-        }
-
-        let Some(argv) = parse_simple_shell_command(command) else {
-            return RoutingDecision::PassThrough;
-        };
-        let inspected_argv = rewrite_env_prefix(argv);
-        if !should_prefer_so_shell(&inspected_argv) {
-            return RoutingDecision::PassThrough;
-        }
-
-        RoutingDecision::Deny {
-            retry: RetryDirective::native_shell(Value::Array(
-                inspected_argv
-                    .into_iter()
-                    .map(Value::String)
-                    .collect::<Vec<_>>(),
-            )),
-        }
+        rewrite_native_shell_tool_input(&request.tool_input, &context)
+            .map(RoutingDecision::EnrichInput)
+            .unwrap_or(RoutingDecision::PassThrough)
     }
 
     fn deny_native_read_if_needed(&self, request: &NormalizedToolCall) -> RoutingDecision {

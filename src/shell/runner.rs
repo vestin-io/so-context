@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Result, bail};
 
+use super::command_string::{current_shell_program, logical_argv_for_shell_command};
 use super::exec;
 use super::output_spool::{self, SpoolOwner};
 use super::patterns;
@@ -45,6 +46,10 @@ impl ShellRunner {
         Self { options }
     }
 
+    pub fn run(&self, argv: &[String]) -> Result<RunOutput> {
+        self.run_in_dir(argv, None)
+    }
+
     pub fn run_in_dir(&self, argv: &[String], cwd: Option<PathBuf>) -> Result<RunOutput> {
         if argv.is_empty() {
             bail!("shell command requires at least one argument");
@@ -53,6 +58,28 @@ impl ShellRunner {
         let invocation = match cwd {
             Some(cwd) => ShellInvocation::with_cwd(argv.to_vec(), cwd),
             None => ShellInvocation::new(argv.to_vec()),
+        };
+        self.run_invocation(invocation)
+    }
+
+    pub fn run_command_string(&self, command: &str, cwd: Option<PathBuf>) -> Result<RunOutput> {
+        let command = command.trim();
+        if command.is_empty() {
+            bail!("shell command string must not be empty");
+        }
+
+        let logical_argv = logical_argv_for_shell_command(command);
+        let shell_program = current_shell_program();
+        let invocation = match cwd {
+            Some(cwd) => ShellInvocation::shell_command_with_cwd(
+                logical_argv,
+                shell_program,
+                command.to_string(),
+                cwd,
+            ),
+            None => {
+                ShellInvocation::shell_command(logical_argv, shell_program, command.to_string())
+            }
         };
         self.run_invocation(invocation)
     }

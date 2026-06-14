@@ -42,58 +42,59 @@ fn prefers_session_id_over_agent_id_for_so_context_tools() {
 }
 
 #[test]
-fn blocks_short_bash_commands_and_suggests_so_shell() {
+fn rewrites_short_bash_commands_through_shell_cli() {
     let output = hook(json!({
         "tool_name": "Bash",
         "tool_input": { "command": "git status" }
     }))
-    .expect("expected deny output");
+    .expect("expected rewrite output");
 
     assert_eq!(
         output.pointer("/hookSpecificOutput/permissionDecision"),
-        Some(&Value::String("deny".into()))
+        Some(&Value::String("allow".into()))
     );
-    let reason = output
-        .pointer("/hookSpecificOutput/permissionDecisionReason")
+    let rewritten = output
+        .pointer("/hookSpecificOutput/updatedInput/command")
         .and_then(|value| value.as_str())
         .unwrap();
-    assert!(reason.contains("mcp__so-context__so_shell"));
-    assert!(reason.contains("improve shared project context"));
-    assert!(reason.contains("[\"git\",\"status\"]"));
+    assert!(rewritten.contains("SO_CONTEXT_SESSION_SOURCE=hook"));
+    assert!(rewritten.contains(" shell -c "));
+    assert!(rewritten.ends_with("'git status'"));
 }
 
 #[test]
-fn blocks_short_exec_command_aliases_too() {
+fn rewrites_short_exec_command_aliases_too() {
     let output = hook(json!({
         "tool_name": "exec_command",
         "tool_input": { "cmd": "pwd" }
     }))
-    .expect("expected deny output");
+    .expect("expected rewrite output");
 
     assert_eq!(
         output.pointer("/hookSpecificOutput/permissionDecision"),
-        Some(&Value::String("deny".into()))
+        Some(&Value::String("allow".into()))
     );
-    let reason = output
-        .pointer("/hookSpecificOutput/permissionDecisionReason")
+    let rewritten = output
+        .pointer("/hookSpecificOutput/updatedInput/cmd")
         .and_then(|value| value.as_str())
         .unwrap();
-    assert!(reason.contains("[\"pwd\"]"));
+    assert!(rewritten.contains(" shell -c "));
+    assert!(rewritten.ends_with("pwd"));
 }
 
 #[test]
-fn blocks_env_prefixed_commands() {
+fn rewrites_env_prefixed_commands() {
     let output = hook(json!({
         "tool_name": "Bash",
         "tool_input": { "command": "FOO=bar git status" }
     }))
-    .expect("expected deny output");
+    .expect("expected rewrite output");
 
-    let reason = output
-        .pointer("/hookSpecificOutput/permissionDecisionReason")
+    let rewritten = output
+        .pointer("/hookSpecificOutput/updatedInput/command")
         .and_then(|value| value.as_str())
         .unwrap();
-    assert!(reason.contains("[\"env\",\"FOO=bar\",\"git\",\"status\"]"));
+    assert!(rewritten.ends_with("'FOO=bar git status'"));
 }
 
 #[test]
@@ -305,4 +306,24 @@ fn opencode_host_uses_flattened_retry_tool_names() {
         .unwrap();
     assert!(reason.contains("`so-context_so_read`"));
     assert!(!reason.contains("mcp__so-context__so_read"));
+}
+
+#[test]
+fn opencode_host_rewrites_shell_with_host_identity() {
+    let output = hook_for_host(
+        HostKind::OpenCode,
+        json!({
+            "tool_name": "exec_command",
+            "session": { "id": "session-nested" },
+            "tool_input": { "cmd": "pwd", "tty": false }
+        }),
+    )
+    .expect("expected rewrite output");
+
+    let rewritten = output
+        .pointer("/hookSpecificOutput/updatedInput/cmd")
+        .and_then(|value| value.as_str())
+        .unwrap();
+    assert!(rewritten.contains("SO_CONTEXT_CLIENT=opencode"));
+    assert!(rewritten.contains("SO_CONTEXT_SESSION_ID=session-nested"));
 }

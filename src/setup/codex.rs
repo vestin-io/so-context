@@ -175,7 +175,7 @@ fn install_pre_tool_use_hook(doc: &mut DocumentMut, binary: &str) {
             matcher,
             make_pre_tool_handler(
                 binary,
-                "Short shell command detected; routing to mcp__so-context__so_shell",
+                "Short shell command detected; routing through so-context shell CLI",
             ),
             binary,
         );
